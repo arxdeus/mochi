@@ -47,6 +47,7 @@ struct Runtime:
     var compact_keep: Int
     var compactions: Int
     var retries: Int
+    var system_prompt: String
 
     def __init__(
         out self,
@@ -70,6 +71,10 @@ struct Runtime:
         self.compact_keep = compact_keep
         self.compactions = 0
         self.retries = 0
+        self.system_prompt = ""
+
+    def set_system_prompt(mut self, prompt: String):
+        self.system_prompt = prompt
 
     def set_messages(mut self, messages: List[Message]):
         self.messages = messages.copy()
@@ -116,9 +121,14 @@ struct Runtime:
         self.remote.enqueue_result(name^, result^)
 
     def request_body(self) raises -> JsonValue:
+        var request_messages = self.messages.copy()
+        if self.system_prompt != "":
+            request_messages.insert(0, Message("system", self.system_prompt))
         if self.provider.spec.responses_api:
-            return build_responses_request_body(self.model, self.messages, self.definitions)
-        return build_request_body(self.model, self.messages, self.definitions)
+            return build_responses_request_body(
+                self.model, request_messages, self.definitions
+            )
+        return build_request_body(self.model, request_messages, self.definitions)
 
     def run(mut self, prompt: String, cancel: CancellationToken) -> RuntimeResult:
         self.messages.append(Message("user", prompt))

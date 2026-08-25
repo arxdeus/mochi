@@ -27,6 +27,28 @@ def schema() raises -> JsonValue:
     )
 
 
+def test_system_prompt_is_sent_but_not_persisted() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    runtime.set_system_prompt("system instructions")
+    runtime.set_messages([Message("user", "prior")])
+    var body = runtime.request_body()
+    var messages = body.get("messages")
+    assert_equal(messages.array_value[0].get("role").string_value, "system")
+    assert_equal(
+        messages.array_value[0].get("content").string_value,
+        "system instructions",
+    )
+    assert_equal(len(runtime.messages), 1)
+    assert_equal(runtime.messages[0].content, "prior")
+
+
 def test_request_body_messages_and_tool_definitions() raises:
     var messages: List[Message] = [Message("system", "help"), Message("user", "read it")]
     var assistant = Message("assistant", "checking")

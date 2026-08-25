@@ -420,6 +420,34 @@
           "normalization": "Expand existing OpenAI SSE oracle to canonical adapter output."
         }
       }
+    },
+    {
+      "id": "agent.system_prompt.instructions",
+      "area": "agent",
+      "owner": "mochi_agent",
+      "status": "partial",
+      "description": "System prompt includes environment plus root-to-CWD project/local/global instruction files without persisting the synthetic system message.",
+      "upstream_refs": [
+        "maki-agent/src/agent/instructions.rs:47-175"
+      ],
+      "mojo_refs": [
+        "src/mochi/prompt.mojo",
+        "src/mochi/runtime.mojo",
+        "tests/prompt_test.mojo",
+        "tests/runtime_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Instruction discovery order, environment fields, and provider-only synthetic system message."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Exact upstream prompt template and slots remain pending."
+        }
+      }
     }
   ]
 }

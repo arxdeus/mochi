@@ -18,6 +18,7 @@ from mochi.json import JsonValue, serialize_json
 from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
 from mochi.permissions import PermissionEffect, PermissionManager
 from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
+from mochi.prompt import build_system_prompt, load_instruction_text
 from mochi.provider import (
     OpenAICompatibleProvider,
     OpenAIOAuthCredentials,
@@ -93,6 +94,15 @@ def main() raises:
         config.model,
     )
     runtime.set_messages(session.runtime_messages())
+    runtime.set_system_prompt(
+        build_system_prompt(
+            cwd,
+            config.model,
+            _platform(),
+            _date(),
+            load_instruction_text(cwd),
+        )
+    )
     for definition in standard_tool_definitions():
         runtime.add_tool(definition.copy())
 
@@ -151,6 +161,19 @@ def main() raises:
         _cleanup(http_transports, plugin_clients)
         raise error
     _cleanup(http_transports, plugin_clients)
+
+
+def _platform() -> String:
+    var value = getenv("OSTYPE", "")
+    if value != "":
+        return value
+    return "unknown"
+
+
+def _date() -> String:
+    var seconds: c_long = 0
+    _ = external_call["time", c_long](Pointer(to=seconds))
+    return String(seconds)
 
 
 def _now_ms() -> Int:
