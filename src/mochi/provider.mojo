@@ -104,6 +104,43 @@ struct ProviderRegistry(Copyable, Movable):
         return result^
 
 
+def builtin_provider_registry() raises -> ProviderRegistry:
+    var registry = ProviderRegistry()
+    registry.register(ProviderSpec("openai", "https://api.openai.com/v1"))
+    registry.register(ProviderSpec("openrouter", "https://openrouter.ai/api/v1"))
+    registry.register(ProviderSpec("xai", "https://api.x.ai/v1"))
+    registry.register(ProviderSpec("deepseek", "https://api.deepseek.com/v1"))
+    registry.register(ProviderSpec("mistral", "https://api.mistral.ai/v1"))
+    registry.register(ProviderSpec("zai", "https://api.z.ai/api/paas/v4"))
+    registry.register(ProviderSpec("groq", "https://api.groq.com/openai/v1"))
+    registry.register(ProviderSpec("together", "https://api.together.xyz/v1"))
+    registry.register(ProviderSpec("fireworks", "https://api.fireworks.ai/inference/v1"))
+    registry.register(ProviderSpec("perplexity", "https://api.perplexity.ai"))
+    registry.register(ProviderSpec("cerebras", "https://api.cerebras.ai/v1"))
+    registry.register(ProviderSpec("moonshot", "https://api.moonshot.ai/v1"))
+    registry.register(ProviderSpec("ollama", "http://127.0.0.1:11434/v1"))
+    registry.register(ProviderSpec("lmstudio", "http://127.0.0.1:1234/v1"))
+    registry.register(ProviderSpec("vllm", "http://127.0.0.1:8000/v1"))
+    return registry^
+
+
+def builtin_model_catalog() -> List[ModelInfo]:
+    return [
+        ModelInfo.id_only("gpt-5.3-codex"),
+        ModelInfo.id_only("gpt-5.2-codex"),
+        ModelInfo.id_only("gpt-4.1"),
+        ModelInfo.id_only("gpt-4.1-mini"),
+        ModelInfo.id_only("claude-opus-4-6"),
+        ModelInfo.id_only("claude-sonnet-4-6"),
+        ModelInfo.id_only("gemini-2.5-pro"),
+        ModelInfo.id_only("gemini-2.5-flash"),
+        ModelInfo.id_only("grok-4"),
+        ModelInfo.id_only("deepseek-chat"),
+        ModelInfo.id_only("mistral-large-latest"),
+        ModelInfo.id_only("glm-4.5"),
+    ]
+
+
 struct ApiKeyState(Copyable, Movable):
     var keys: List[String]
     var index: Int

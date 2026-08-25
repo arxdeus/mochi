@@ -33,6 +33,8 @@ from mochi.provider import (
     SSEParser,
     ToolCallAssembler,
     ToolCallDelta,
+    builtin_model_catalog,
+    builtin_provider_registry,
     extract_chatgpt_account_id,
     form_encode,
     openai_device_login_with,
@@ -55,6 +57,21 @@ def test_provider_registry_and_spec() raises:
         registry.register(ProviderSpec("custom", "https://other.invalid"))
     with assert_raises():
         _ = registry.get("missing")
+
+
+def test_builtin_provider_and_model_catalog() raises:
+    var registry = builtin_provider_registry()
+    assert_true(registry.contains("openai"))
+    assert_true(registry.contains("openrouter"))
+    assert_true(registry.contains("deepseek"))
+    assert_true(registry.contains("ollama"))
+    assert_equal(
+        registry.get("openrouter").chat_url(),
+        "https://openrouter.ai/api/v1/chat/completions",
+    )
+    var models = builtin_model_catalog()
+    assert_true(len(models) >= 12)
+    assert_equal(models[0].id, "gpt-5.3-codex")
 
 
 def test_sse_incremental_multiline_and_finish() raises:
