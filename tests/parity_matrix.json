@@ -500,6 +500,33 @@
           "normalization": "Upstream Lua configuration execution is intentionally replaced by declarative JSON; behavioral field parity remains pending."
         }
       }
+    },
+    {
+      "id": "storage.workspace.stores",
+      "area": "storage",
+      "owner": "mochi_storage",
+      "status": "partial",
+      "description": "Bounded input history, project-scoped Markdown note/plan storage, preferences, and deterministic project IDs persist without Python or Lua.",
+      "upstream_refs": [
+        "maki-storage",
+        "plugins/memory/init.lua"
+      ],
+      "mojo_refs": [
+        "src/mochi/workspace.mojo",
+        "tests/workspace_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "History dedup/bounds, safe note names, preference JSON, deterministic project scope."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Production memory command/tool integration and exact path migration remain pending."
+        }
+      }
     }
   ]
 }
