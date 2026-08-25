@@ -5,6 +5,8 @@ from std.sys import argv
 from std.sys._libc import close, exit, pipe
 
 from mochi.cli import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER_URL,
     VERSION,
     _words,
     help_text,
@@ -13,6 +15,7 @@ from mochi.cli import (
     standard_tool_definitions,
     validate_protocol_metadata,
 )
+from mochi.config import load_layered_config
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, serialize_json
 from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
@@ -43,6 +46,20 @@ def main() raises:
         arguments.append(String(command_line[index]))
 
     var config = parse_args(arguments^)
+    var startup_cwd = getenv("PWD", ".")
+    var startup_paths = StoragePaths.resolve()
+    var layered = load_layered_config(
+        startup_paths.config + "/config.json",
+        startup_cwd + "/.maki/config.json",
+    )
+    if layered.model and config.model == DEFAULT_MODEL:
+        config.model = layered.model.value()
+    if layered.provider_url and config.provider_url == DEFAULT_PROVIDER_URL:
+        config.provider_url = layered.provider_url.value()
+    if layered.output_format and config.output_format == "text":
+        config.output_format = layered.output_format.value()
+    if layered.yolo and not config.yolo:
+        config.yolo = layered.yolo.value()
     if config.show_help:
         print(help_text(), end="")
         return
@@ -71,8 +88,8 @@ def main() raises:
         spec.account_id = credentials.account_id
         provider = OpenAICompatibleProvider(spec^)
         provider.set_oauth(credentials.oauth_state())
-    var cwd = getenv("PWD", ".")
-    var paths = StoragePaths.resolve()
+    var cwd = startup_cwd
+    var paths = startup_paths.copy()
     var session_store = SessionStore(paths.state + "/sessions")
     var session: Session
     if config.session_id:
@@ -93,6 +110,7 @@ def main() raises:
         registry^,
         permissions^,
         config.model,
+        max_turns=layered.max_turns.value() if layered.max_turns else 50,
     )
     runtime.set_messages(session.runtime_messages())
     runtime.set_system_prompt(
