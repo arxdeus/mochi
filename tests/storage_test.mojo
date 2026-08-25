@@ -78,6 +78,14 @@ def test_maki_id_base58_and_legacy_uuid_round_trip() raises:
     assert_equal(len(decode_base58("1111111111111111")), 16)
 
 
+def test_generated_maki_id_is_canonical_uuid_v7() raises:
+    var generated = MakiId.generate()
+    assert_equal(len(generated.bytes), 16)
+    assert_equal(Int(generated.bytes[6] >> 4), 7)
+    assert_equal(Int(generated.bytes[8] >> 6), 2)
+    assert_true(MakiId.parse(generated.encode()) == generated)
+
+
 def test_maki_id_rejects_invalid_values() raises:
     with assert_raises():
         _ = MakiId.parse("")

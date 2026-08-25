@@ -1,5 +1,5 @@
 from std.ffi import CStringSlice, c_int, c_long, c_pid_t, external_call
-from std.os import Process
+from std.os import Process, getenv
 from std.os.path import exists
 from std.sys import argv
 from std.sys._libc import close, exit, pipe
@@ -28,6 +28,8 @@ from mochi.provider import (
     save_openai_oauth_credentials,
 )
 from mochi.runtime import Runtime, RuntimeResult
+from mochi.session import Session, SessionStore
+from mochi.storage import MakiId, SessionRef, StoragePaths
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken
 
@@ -67,12 +69,30 @@ def main() raises:
         spec.account_id = credentials.account_id
         provider = OpenAICompatibleProvider(spec^)
         provider.set_oauth(credentials.oauth_state())
+    var cwd = getenv("PWD", ".")
+    var paths = StoragePaths.resolve()
+    var session_store = SessionStore(paths.state + "/sessions")
+    var session: Session
+    if config.session_id:
+        var reference = SessionRef(config.session_id.value())
+        session = session_store.load(reference.as_str())
+        config.model = session.model
+    elif config.continue_session:
+        var latest = session_store.latest(cwd)
+        if latest:
+            session = latest.value().copy()
+            config.model = session.model
+        else:
+            session = _new_session(config.model, cwd)
+    else:
+        session = _new_session(config.model, cwd)
     var runtime = Runtime(
         provider^,
         registry^,
         permissions^,
         config.model,
     )
+    runtime.set_messages(session.runtime_messages())
     for definition in standard_tool_definitions():
         runtime.add_tool(definition.copy())
 
@@ -118,9 +138,15 @@ def main() raises:
         if config.print_mode and not config.prompt:
             config.prompt = Optional(read_stdin())
         if config.prompt:
-            _run_prompt(runtime, config.prompt.value(), config.output_format)
+            _run_prompt(
+                runtime,
+                session,
+                session_store,
+                config.prompt.value(),
+                config.output_format,
+            )
         else:
-            _interactive(runtime, config.output_format)
+            _interactive(runtime, session, session_store, config.output_format)
     except error:
         _cleanup(http_transports, plugin_clients)
         raise error
@@ -202,12 +228,37 @@ def _cleanup(
             plugin_clients[i].cancel()
 
 
-def _run_prompt(mut runtime: Runtime, prompt: String, output_format: String):
+def _new_session(model: String, cwd: String) raises -> Session:
+    var now = _now_ms()
+    var id = SessionRef.from_id(MakiId.generate()).as_str()
+    return Session(id^, model, cwd, now)
+
+
+def _run_prompt(
+    mut runtime: Runtime,
+    mut session: Session,
+    store: SessionStore,
+    prompt: String,
+    output_format: String,
+):
     var result = runtime.run(prompt, CancellationToken())
+    try:
+        session.update_from_result(
+            result.messages, result.usage, runtime.model, _now_ms()
+        )
+        store.save(session)
+    except error:
+        print("Session save failed:", error)
     _print_result(result, output_format)
 
 
-def _interactive(mut runtime: Runtime, output_format: String) raises:
+def _interactive(
+    mut runtime: Runtime,
+    mut session: Session,
+    store: SessionStore,
+    output_format: String,
+) raises:
+
     while True:
         print("> ", end="")
         var line = _read_line()
@@ -223,7 +274,7 @@ def _interactive(mut runtime: Runtime, output_format: String) raises:
         elif prompt == "/help":
             print("Commands: /login, /model [MODEL], /help, exit")
         elif prompt != "":
-            _run_prompt(runtime, prompt^, output_format)
+            _run_prompt(runtime, session, store, prompt^, output_format)
 
 
 def _interactive_login(mut runtime: Runtime):

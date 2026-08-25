@@ -7,6 +7,7 @@ from mochi.mcp import McpSession, StdioTransport, StreamableHttpTransport
 from mochi.plugin import PluginExecutable, PluginProtocol
 from mochi.provider import ProviderSpec
 from mochi.runtime import ToolDefinition
+from mochi.storage import SessionRef
 
 
 comptime VERSION = "0.1.0"
@@ -35,6 +36,8 @@ struct CliConfig(Copyable, Movable):
     var show_version: Bool
     var openai_oauth: Bool
     var openai_oauth_login: Bool
+    var continue_session: Bool
+    var session_id: Optional[String]
 
     def __init__(out self):
         self.model = DEFAULT_MODEL
@@ -51,6 +54,8 @@ struct CliConfig(Copyable, Movable):
         self.show_version = False
         self.openai_oauth = False
         self.openai_oauth_login = False
+        self.continue_session = False
+        self.session_id = None
 
     def provider_spec(self) -> ProviderSpec:
         var spec = ProviderSpec("custom", self.provider_url)
@@ -81,6 +86,13 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
             config.openai_oauth_login = True
         elif argument == "--yolo":
             config.yolo = True
+        elif argument == "--continue" or argument == "-c":
+            config.continue_session = True
+        elif argument == "--session" or argument == "--resume" or argument == "-s":
+            var value = _option_value(arguments, index, argument)
+            _ = SessionRef(value)
+            config.session_id = Optional(value^)
+            index += 1
         elif argument == "--model":
             config.model = _option_value(arguments, index, argument)
             index += 1
@@ -122,6 +134,8 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
         raise Error("--openai-oauth cannot be combined with --provider-key")
     if config.openai_oauth and config.provider_url != DEFAULT_PROVIDER_URL:
         raise Error("--openai-oauth cannot be combined with --provider-url")
+    if config.continue_session and config.session_id:
+        raise Error("--continue cannot be combined with --session")
     return config^
 
 
@@ -222,6 +236,9 @@ Options:
   -h, --help                    Show this help
       --version                 Show version
       --model MODEL             Model name (default: gpt-4.1-mini)
+  -c, --continue                Resume the latest session for this directory
+  -s, --session ID              Resume a specific session
+      --resume ID               Alias for --session
       --provider-url URL        OpenAI-compatible API base URL
       --provider-key KEY        API key; may be repeated
       --openai-oauth            Use ChatGPT/Codex OAuth Responses API

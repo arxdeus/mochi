@@ -365,6 +365,35 @@
           "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
         }
       }
+    },
+    {
+      "id": "storage.session.resume_continue",
+      "area": "storage",
+      "owner": "mochi_storage",
+      "status": "partial",
+      "description": "Explicit session resume and latest-for-CWD continuation restore runtime history and persist subsequent turns.",
+      "upstream_refs": [
+        "src/cmd/tui.rs:191-210",
+        "maki-storage/src/sessions.rs:1656-1665"
+      ],
+      "mojo_refs": [
+        "src/mochi/main.mojo",
+        "src/mochi/session.mojo",
+        "tests/session_test.mojo",
+        "tests/cli_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "CLI selection, restored ordered messages, model, usage, title, and CWD latest index."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Add a focused upstream resume oracle after production seam behavior stabilizes."
+        }
+      }
     }
   ]
 }

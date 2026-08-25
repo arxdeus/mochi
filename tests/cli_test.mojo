@@ -8,6 +8,8 @@ def test_defaults() raises:
     assert_equal(config.model, "gpt-4.1-mini")
     assert_equal(config.output_format, "text")
     assert_false(config.print_mode)
+    assert_false(config.continue_session)
+    assert_false(config.session_id)
 
 
 def test_all_options() raises:
@@ -43,6 +45,27 @@ def test_openai_oauth_rejects_conflicting_provider_options() raises:
         _ = parse_args(["--openai-oauth", "--provider-url", "https://example.test"])
     with assert_raises():
         _ = parse_args(["--openai-oauth", "--openai-oauth-login"])
+
+
+def test_session_resume_options() raises:
+    var continued = parse_args(["--continue"])
+    assert_true(continued.continue_session)
+    var explicit = parse_args([
+        "--session", "01965087-4c71-7f00-8000-000000000000"
+    ])
+    assert_true(explicit.session_id)
+    var resumed = parse_args([
+        "--resume", "01965087-4c71-7f00-8000-000000000000"
+    ])
+    assert_true(resumed.session_id)
+    with assert_raises():
+        _ = parse_args([
+            "--continue",
+            "--session",
+            "01965087-4c71-7f00-8000-000000000000",
+        ])
+    with assert_raises():
+        _ = parse_args(["--session", "invalid"])
 
 
 def test_invalid_output_format() raises:

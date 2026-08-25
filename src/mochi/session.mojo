@@ -2,6 +2,7 @@ from std.ffi import c_int, external_call, get_errno
 from std.os import listdir, makedirs, remove
 from std.os.path import exists
 from mochi.json import JsonValue, parse_json, serialize_json
+from mochi.types import Message, ToolCall, Usage
 
 
 comptime LOG_FORMAT_VERSION = 2
@@ -62,6 +63,37 @@ struct Session(Copyable, Movable):
 
     def add_message(mut self, var message: JsonValue):
         self.messages.append(message^)
+
+    def replace_runtime_messages(mut self, messages: List[Message]) raises:
+        self.messages.clear()
+        for message in messages:
+            self.messages.append(message_to_json(message))
+
+    def runtime_messages(self) raises -> List[Message]:
+        var result = List[Message]()
+        for message in self.messages:
+            result.append(message_from_json(message))
+        return result^
+
+    def update_from_result(
+        mut self,
+        messages: List[Message],
+        usage: Usage,
+        model: String,
+        updated_at: Int,
+    ) raises:
+        self.replace_runtime_messages(messages)
+        self.model = model
+        self.updated_at = updated_at
+        var token_usage = JsonValue.object()
+        token_usage.set("input_tokens", JsonValue.integer(usage.input_tokens))
+        token_usage.set("output_tokens", JsonValue.integer(usage.output_tokens))
+        self.token_usage = token_usage^
+        if self.title == DEFAULT_TITLE:
+            for message in messages:
+                if message.role == "user" and message.content != "":
+                    self.title = _title(message.content)
+                    break
 
     def set_output(mut self, var id: String, var output: JsonValue):
         for i in range(len(self.output_ids)):
@@ -172,6 +204,51 @@ struct Session(Copyable, Movable):
         return result^
 
 
+def message_to_json(message: Message) raises -> JsonValue:
+    var value = JsonValue.object()
+    value.set("role", JsonValue.string(message.role))
+    value.set("content", JsonValue.string(message.content))
+    if message.name != "":
+        value.set("name", JsonValue.string(message.name))
+    if message.tool_call_id != "":
+        value.set("tool_call_id", JsonValue.string(message.tool_call_id))
+    if len(message.tool_calls) > 0:
+        var calls = JsonValue.array()
+        for call in message.tool_calls:
+            var item = JsonValue.object()
+            item.set("id", JsonValue.string(call.id))
+            item.set("name", JsonValue.string(call.name))
+            item.set("arguments", JsonValue.string(call.arguments))
+            calls.append(item^)
+        value.set("tool_calls", calls^)
+    return value^
+
+
+def message_from_json(value: JsonValue) raises -> Message:
+    if value.kind != JsonValue.OBJECT:
+        raise Error("session message must be an object")
+    var message = Message(
+        _required_string(value, "role"), _required_string(value, "content")
+    )
+    if value.contains("name") and not value.get("name").is_null():
+        message.name = _required_string(value, "name")
+    if value.contains("tool_call_id") and not value.get("tool_call_id").is_null():
+        message.tool_call_id = _required_string(value, "tool_call_id")
+    if value.contains("tool_calls"):
+        var calls = value.get("tool_calls")
+        if calls.kind != JsonValue.ARRAY:
+            raise Error("session tool_calls must be an array")
+        for call in calls.array_value:
+            message.tool_calls.append(
+                ToolCall(
+                    _required_string(call, "id"),
+                    _required_string(call, "name"),
+                    _required_string(call, "arguments"),
+                )
+            )
+    return message^
+
+
 struct SessionStore(Copyable, Movable):
     var directory: String
 
@@ -251,6 +328,17 @@ struct SessionStore(Copyable, Movable):
     def _save_index(self, index: JsonValue) raises:
         makedirs(self.directory, exist_ok=True)
         _atomic_write(self.directory + "/" + CWD_INDEX_FILE, serialize_json(index))
+
+
+def _title(text: String) -> String:
+    var result = String("")
+    for cp in text.codepoint_slices():
+        if result.count_codepoints() >= 80:
+            break
+        if String(cp) == "\n" or String(cp) == "\r":
+            break
+        result += String(cp)
+    return String(result.strip())
 
 
 def _required_string(value: JsonValue, key: String) raises -> String:

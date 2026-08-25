@@ -71,6 +71,9 @@ struct Runtime:
         self.compactions = 0
         self.retries = 0
 
+    def set_messages(mut self, messages: List[Message]):
+        self.messages = messages.copy()
+
     def add_tool(mut self, var definition: ToolDefinition) raises:
         if self.tools.index_of(definition.name) < 0:
             raise Error("tool definition is not registered: " + definition.name)

@@ -1,3 +1,4 @@
+from std.ffi import c_int, c_long, external_call
 from std.os import getenv
 from std.os.path import exists
 
@@ -144,6 +145,24 @@ struct MakiId(Copyable, Movable):
         if len(bytes) != 16:
             raise Error("id decoded to " + String(len(bytes)) + " bytes, expected 16")
         self.bytes = bytes^
+
+    @staticmethod
+    def generate() raises -> Self:
+        var seconds: c_long = 0
+        _ = external_call["time", c_long](Pointer(to=seconds))
+        var milliseconds = UInt(Int(seconds) * 1000)
+        var bytes = List[UInt8](length=16, fill=0)
+        for reverse in range(6):
+            bytes[5 - reverse] = UInt8(milliseconds & 255)
+            milliseconds >>= 8
+        bytes[6] = UInt8(0x70 | (Int(seconds) & 0x0F))
+        bytes[7] = UInt8((Int(seconds) >> 4) & 255)
+        var state = UInt(external_call["getpid", c_int]()) ^ UInt(Int(seconds))
+        for i in range(8, 16):
+            state = state * 6364136223846793005 + 1442695040888963407
+            bytes[i] = UInt8((state >> 24) & 255)
+        bytes[8] = UInt8((bytes[8] & 0x3F) | 0x80)
+        return Self(bytes^)
 
     @staticmethod
     def parse(value: String) raises -> Self:
