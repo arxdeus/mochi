@@ -527,6 +527,32 @@
           "normalization": "Production memory command/tool integration and exact path migration remain pending."
         }
       }
+    },
+    {
+      "id": "ops.logging.telemetry",
+      "area": "operations",
+      "owner": "mochi_ops",
+      "status": "partial",
+      "description": "Structured JSONL logging rotates bounded backups and telemetry events have deterministic codecs.",
+      "upstream_refs": [
+        "maki-otel"
+      ],
+      "mojo_refs": [
+        "src/mochi/ops.mojo",
+        "tests/ops_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "JSONL fields, rotation, telemetry codec."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "OTLP export and production instrumentation remain pending."
+        }
+      }
     }
   ]
 }
