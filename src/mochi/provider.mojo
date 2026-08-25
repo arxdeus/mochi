@@ -972,6 +972,8 @@ struct OpenAIProviderAdapter(Provider, Movable):
             body = _responses_body(request.model.id, messages, request.tools)
         else:
             body = _chat_body(request.model.id, messages, request.tools)
+        if self.inner.fixture_error != "":
+            raise Error(self.inner.fixture_error)
         var transport = FlokiTransport()
         var result: ProviderResult
         try:

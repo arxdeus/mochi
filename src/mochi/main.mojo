@@ -410,9 +410,9 @@ def _interactive_login(mut runtime: Runtime):
             var transport = FlokiTransport()
             credentials = openai_device_login_with(transport, _now_ms(), path)
             print("Authenticated successfully.")
-        runtime.provider.spec.responses_api = True
-        runtime.provider.spec.account_id = credentials.account_id
-        runtime.provider.set_oauth(credentials.oauth_state())
+        runtime.provider.inner.spec.responses_api = True
+        runtime.provider.inner.spec.account_id = credentials.account_id
+        runtime.provider.inner.set_oauth(credentials.oauth_state())
         if "codex" not in runtime.model:
             runtime.model = "gpt-5.3-codex"
         print("Model:", runtime.model)

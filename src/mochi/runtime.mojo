@@ -2,15 +2,30 @@
 
 from std.ffi import c_int, external_call
 
-from mochi.json import JsonValue, serialize_json
+from mochi.domain import (
+    ContentBlock,
+    DomainMessage,
+    DomainProviderEvent,
+    Model,
+    ModelFamily,
+    ModelInfo,
+    ModelPricing,
+    ModelTier,
+    Role,
+    StreamResponse,
+    ThinkingSupport,
+)
+from mochi.json import JsonValue, parse_json, serialize_json
 from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
 from mochi.permissions import PermissionEffect, PermissionManager
 from mochi.provider import (
     OpenAICompatibleProvider,
+    OpenAIProviderAdapter,
     ProviderResult,
     ProviderSpec,
     RetryState,
 )
+from mochi.provider_contract import ProviderEventSink, ProviderRequest
 from mochi.plugin import PluginClient
 from mochi.tools import (
     PreparedTool,
@@ -31,6 +46,16 @@ struct ToolDefinition(Copyable, Movable):
     var parameters: JsonValue
 
 
+struct RuntimeEventSink(ProviderEventSink, Copyable, Movable):
+    var events: List[DomainProviderEvent]
+
+    def __init__(out self):
+        self.events = List[DomainProviderEvent]()
+
+    def emit(mut self, event: DomainProviderEvent) raises:
+        self.events.append(event.copy())
+
+
 @fieldwise_init
 struct RuntimeResult(Copyable, Movable):
     var text: String
@@ -43,7 +68,7 @@ struct RuntimeResult(Copyable, Movable):
 
 
 struct Runtime:
-    var provider: OpenAICompatibleProvider
+    var provider: OpenAIProviderAdapter
     var tools: ToolRegistry
     var permissions: PermissionManager
     var remote: RemoteToolRouter
@@ -75,7 +100,8 @@ struct Runtime:
         max_context_chars: Int = 100000,
         compact_keep: Int = 12,
     ):
-        self.provider = provider^
+        var info = ModelInfo.id_only(model)
+        self.provider = OpenAIProviderAdapter(provider^, info)
         self.tools = tools^
         self.permissions = permissions^
         self.remote = RemoteToolRouter()
@@ -203,7 +229,7 @@ struct Runtime:
         var request_messages = self.messages.copy()
         if self.system_prompt != "":
             request_messages.insert(0, Message("system", self.system_prompt))
-        if self.provider.spec.responses_api:
+        if self.provider.inner.spec.responses_api:
             return build_responses_request_body(
                 self.model, request_messages, self.definitions
             )
@@ -243,17 +269,27 @@ struct Runtime:
     def _complete_with_retry(
         mut self, cancel: CancellationToken
     ) raises -> ProviderResult:
-        var retry = RetryState(self.provider.max_retries())
+        var retry = RetryState(self.provider.inner.max_retries())
         while True:
             cancel.check()
             try:
-                return self.provider.complete_json(self.request_body())
+                var request = ProviderRequest(
+                    _runtime_model(self.model, self.provider.inner.spec.name),
+                    cancel.copy(),
+                    _domain_messages(self.messages),
+                    self.system_prompt,
+                    _contract_tools(self.definitions),
+                )
+                var sink = RuntimeEventSink()
+                return _legacy_result(
+                    self.provider.stream_message(request^, sink)
+                )
             except error:
-                var status = self.provider.last_http_status()
+                var status = self.provider.inner.last_http_status()
                 var auth_failure = status == 401 or status == 403
                 var retryable = status == 0 or RetryState.retryable_status(status)
                 if auth_failure:
-                    retryable = self.provider.recover_auth()
+                    retryable = self.provider.inner.recover_auth()
                 if not retryable or not retry.can_retry():
                     raise error
                 var delay = retry.next_delay_ms()
@@ -378,6 +414,84 @@ struct Runtime:
             self.compactions,
             self.retries,
         )
+
+
+def _runtime_model(id: String, provider: String) -> Model:
+    return Model(
+        id,
+        provider,
+        ModelTier.medium(),
+        ModelFamily.generic(),
+        ThinkingSupport.no(),
+        None,
+        ModelPricing(),
+        None,
+        100000,
+    )
+
+
+def _domain_messages(messages: List[Message]) raises -> List[DomainMessage]:
+    var result = List[DomainMessage]()
+    for legacy in messages:
+        var message = (
+            DomainMessage.assistant(legacy.content)
+            if legacy.role == "assistant"
+            else DomainMessage.user(legacy.content)
+        )
+        if legacy.role == "tool":
+            message = DomainMessage(Role.user())
+            message.add_block(
+                ContentBlock.tool_result(legacy.tool_call_id, legacy.content)
+            )
+        for call in legacy.tool_calls:
+            var input = JsonValue.object()
+            if call.arguments != "":
+                input = parse_json(call.arguments)
+            message.add_block(ContentBlock.tool_use(call.id, call.name, input^))
+        result.append(message^)
+    return result^
+
+
+def _contract_tools(definitions: List[ToolDefinition]) raises -> JsonValue:
+    var tools = JsonValue.array()
+    for definition in definitions:
+        var function = JsonValue.object()
+        function.set("name", JsonValue.string(definition.name))
+        function.set("description", JsonValue.string(definition.description))
+        function.set("parameters", definition.parameters.copy())
+        var tool = JsonValue.object()
+        tool.set("type", JsonValue.string("function"))
+        tool.set("function", function^)
+        tools.append(tool^)
+    return tools^
+
+
+def _legacy_result(response: StreamResponse) raises -> ProviderResult:
+    var message = Message("assistant", "")
+    for block in response.message.content:
+        if block.is_text():
+            message.content += block.text
+        elif block.is_tool_use():
+            message.tool_calls.append(
+                ToolCall(block.id, block.name, serialize_json(block.input))
+            )
+    var usage = Usage()
+    usage.input_tokens = response.usage.input_tokens()
+    usage.output_tokens = response.usage.output
+    var reason = String("")
+    if response.stop_reason:
+        var stop = response.stop_reason.value().copy()
+        if stop.is_tool_use():
+            reason = "tool_calls"
+        elif stop.is_max_tokens():
+            reason = "length"
+        else:
+            reason = "stop"
+    var result = ProviderResult()
+    result.message = message^
+    result.usage = usage^
+    result.stop_reason = reason
+    return result^
 
 
 def build_request_body(
