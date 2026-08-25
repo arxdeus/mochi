@@ -17,7 +17,11 @@ from mochi.domain import (
 )
 from mochi.json import JsonValue, parse_json, serialize_json
 from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
-from mochi.permissions import PermissionEffect, PermissionManager
+from mochi.permissions import (
+    PermissionAnswer,
+    PermissionEffect,
+    PermissionManager,
+)
 from mochi.provider import (
     OpenAICompatibleProvider,
     OpenAIProviderAdapter,
@@ -81,6 +85,7 @@ struct Runtime:
     var compactions: Int
     var retries: Int
     var system_prompt: String
+    var permission_answers: List[PermissionAnswer]
     var mcp_stdio_names: List[String]
     var mcp_stdio_clients: List[McpClient]
     var mcp_stdio_transports: List[StdioTransport]
@@ -114,6 +119,7 @@ struct Runtime:
         self.compactions = 0
         self.retries = 0
         self.system_prompt = ""
+        self.permission_answers = List[PermissionAnswer]()
         self.mcp_stdio_names = List[String]()
         self.mcp_stdio_clients = List[McpClient]()
         self.mcp_stdio_transports = List[StdioTransport]()
@@ -128,6 +134,9 @@ struct Runtime:
 
     def set_messages(mut self, messages: List[Message]):
         self.messages = messages.copy()
+
+    def answer_next_permission(mut self, answer: PermissionAnswer):
+        self.permission_answers.append(answer)
 
     def add_tool(mut self, var definition: ToolDefinition) raises:
         if self.tools.index_of(definition.name) < 0:
@@ -302,28 +311,41 @@ struct Runtime:
         try:
             var prepared = self.tools.prepare(call.name, call.arguments)
             var decision = self.tools.authorize(prepared, self.permissions)
-            if decision.effect != PermissionEffect.allow():
-                var label = (
-                    "denied"
-                    if decision.effect == PermissionEffect.deny()
-                    else "prompt"
-                )
-                content = "Permission " + label
+            if decision.effect == PermissionEffect.prompt():
+                if len(self.permission_answers) == 0:
+                    content = "Permission prompt"
+                    for scope in decision.scopes:
+                        content += ": " + scope
+                else:
+                    var answer = self.permission_answers.pop(0)
+                    self.permissions.apply_decision(
+                        prepared.name, decision.scopes, answer
+                    )
+                    if answer.is_allow():
+                        content = self._execute_prepared(prepared)
+                    else:
+                        content = "Permission denied"
+                        for scope in decision.scopes:
+                            content += ": " + scope
+            elif decision.effect == PermissionEffect.deny():
+                content = "Permission denied"
                 for scope in decision.scopes:
                     content += ": " + scope
             elif cancel.is_cancelled():
                 content = "Error: operation cancelled"
-            elif self.remote.is_remote(prepared.name):
-                var queued = self.remote.take_queued(prepared.name)
-                if queued:
-                    content = queued.value().content
-                else:
-                    content = self._dispatch_remote(prepared)
             else:
-                content = self.tools.execute(prepared).content
+                content = self._execute_prepared(prepared)
         except error:
             content = "Error: " + String(error)
         self.append_tool_result(call, ToolResult.success(content))
+
+    def _execute_prepared(mut self, prepared: PreparedTool) raises -> String:
+        if self.remote.is_remote(prepared.name):
+            var queued = self.remote.take_queued(prepared.name)
+            if queued:
+                return queued.value().content
+            return self._dispatch_remote(prepared)
+        return self.tools.execute(prepared).content
 
     def _dispatch_remote(mut self, prepared: PreparedTool) raises -> String:
         var protocol = self.remote.protocol_for(prepared.name)

@@ -1,6 +1,13 @@
 from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
-from mochi.permissions import PermissionEffect, PermissionManager, PermissionRule, glob_matches, scope_matches
+from mochi.permissions import (
+    PermissionAnswer,
+    PermissionEffect,
+    PermissionManager,
+    PermissionRule,
+    glob_matches,
+    scope_matches,
+)
 
 
 def test_scope_matching() raises:
@@ -47,6 +54,22 @@ def test_force_prompt_and_default_deny() raises:
     var deny_manager = PermissionManager(PermissionEffect.deny())
     var denied = deny_manager.check("write", ["file"])
     assert_true(denied.effect == PermissionEffect.deny())
+
+
+def test_permission_answers_and_session_rules() raises:
+    var manager = PermissionManager()
+    var scopes: List[String] = ["cargo test --all"]
+    manager.apply_decision("bash", scopes, PermissionAnswer.allow_once())
+    assert_equal(len(manager.rules), 0)
+    manager.apply_decision("bash", scopes, PermissionAnswer.allow_session())
+    assert_equal(len(manager.rules), 1)
+    assert_equal(manager.rules[0].scope, "cargo *")
+    assert_true(
+        manager.check("bash", ["cargo build"]).effect
+        == PermissionEffect.allow()
+    )
+    manager.apply_decision("bash", scopes, PermissionAnswer.allow_session())
+    assert_equal(len(manager.rules), 1)
 
 
 def main() raises:

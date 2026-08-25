@@ -28,6 +28,37 @@ struct PermissionEffect(ImplicitlyCopyable, Equatable):
         return self._code != other._code
 
 
+struct PermissionAnswer(ImplicitlyCopyable, Equatable):
+    comptime ALLOW_ONCE = 0
+    comptime ALLOW_SESSION = 1
+    comptime DENY = 2
+    var code: UInt8
+
+    def __init__(out self, code: UInt8):
+        self.code = code
+
+    @staticmethod
+    def allow_once() -> Self:
+        return Self(Self.ALLOW_ONCE)
+
+    @staticmethod
+    def allow_session() -> Self:
+        return Self(Self.ALLOW_SESSION)
+
+    @staticmethod
+    def deny() -> Self:
+        return Self(Self.DENY)
+
+    def is_allow(self) -> Bool:
+        return self.code == Self.ALLOW_ONCE or self.code == Self.ALLOW_SESSION
+
+    def __eq__(self, other: Self) -> Bool:
+        return self.code == other.code
+
+    def __ne__(self, other: Self) -> Bool:
+        return self.code != other.code
+
+
 @fieldwise_init
 struct PermissionRule(Copyable, Movable):
     """A tool glob, effect, and optional scope pattern."""
@@ -137,6 +168,29 @@ struct PermissionManager(Copyable, Movable):
     def add_rule(mut self, var rule: PermissionRule):
         self.rules.append(rule^)
 
+    def apply_decision(
+        mut self,
+        tool: String,
+        scopes: List[String],
+        answer: PermissionAnswer,
+    ):
+        if answer != PermissionAnswer.allow_session():
+            return
+        for scope in scopes:
+            var resolved = _generalize_allow_scope(tool, scope)
+            var duplicate = False
+            for rule in self.rules:
+                if (
+                    rule.tool == tool
+                    and rule.scope == resolved
+                    and rule.effect == PermissionEffect.allow()
+                ):
+                    duplicate = True
+            if not duplicate:
+                self.rules.append(
+                    PermissionRule(tool, PermissionEffect.allow(), resolved^)
+                )
+
     def check(self, tool: String, scopes: List[String], force_prompt: Bool = False) -> PermissionDecision:
         var pending = List[String]()
         for scope in scopes:
@@ -159,3 +213,12 @@ struct PermissionManager(Copyable, Movable):
         if self.default_effect == PermissionEffect.prompt():
             return PermissionDecision(PermissionEffect.prompt(), pending^)
         return PermissionDecision(self.default_effect)
+
+
+def _generalize_allow_scope(tool: String, scope: String) -> String:
+    if tool != "bash":
+        return scope
+    var parts = scope.split(" ")
+    if len(parts) == 0:
+        return scope
+    return String(parts[0]) + " *"

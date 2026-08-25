@@ -2,7 +2,12 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from mochi.json import JsonValue, parse_json, serialize_json
 from mochi.mcp import McpClient, StdioTransport
-from mochi.permissions import PermissionEffect, PermissionManager, PermissionRule
+from mochi.permissions import (
+    PermissionAnswer,
+    PermissionEffect,
+    PermissionManager,
+    PermissionRule,
+)
 from mochi.plugin import (
     PluginClient,
     PluginRegistration,
@@ -154,6 +159,39 @@ def test_dispatch_permissions_cancellation_and_compaction() raises:
     token.cancel()
     runtime.dispatch(ToolCall("r", "read", '{"path":"anything"}'), token)
     assert_true("cancelled" in runtime.messages[len(runtime.messages) - 1].content)
+
+
+def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        PermissionManager(),
+        "gpt-test",
+    )
+    runtime.answer_next_permission(PermissionAnswer.allow_session())
+    runtime.dispatch(
+        ToolCall("first", "bash", '{"command":"printf allowed"}'),
+        CancellationToken(),
+    )
+    assert_true("allowed" in runtime.messages[len(runtime.messages) - 1].content)
+    runtime.dispatch(
+        ToolCall("second", "bash", '{"command":"printf again"}'),
+        CancellationToken(),
+    )
+    assert_true("again" in runtime.messages[len(runtime.messages) - 1].content)
+
+    var denied = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        PermissionManager(),
+        "gpt-test",
+    )
+    denied.answer_next_permission(PermissionAnswer.deny())
+    denied.dispatch(
+        ToolCall("deny", "bash", '{"command":"printf blocked"}'),
+        CancellationToken(),
+    )
+    assert_true("Permission denied" in denied.messages[len(denied.messages) - 1].content)
 
 
 def test_remote_mcp_plugin_registration_and_dispatch() raises:
