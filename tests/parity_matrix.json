@@ -474,6 +474,32 @@
           "normalization": "stdio server runtime integration and injected MCP remain pending."
         }
       }
+    },
+    {
+      "id": "config.layered.merge",
+      "area": "config",
+      "owner": "mochi_config",
+      "status": "partial",
+      "description": "Global and project declarative configurations recursively merge with project precedence and typed validation.",
+      "upstream_refs": [
+        "maki-config/src/lib.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/config.mojo",
+        "tests/config_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Recursive object merge and typed field validation."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Upstream Lua configuration execution is intentionally replaced by declarative JSON; behavioral field parity remains pending."
+        }
+      }
     }
   ]
 }
