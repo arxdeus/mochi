@@ -251,6 +251,7 @@ struct StdioTransport(Movable):
     """
 
     var process: Optional[Process]
+    var pid: c_pid_t
     var write_fd: Int32
     var read_fd: Int32
     var read_buffer: String
@@ -260,6 +261,7 @@ struct StdioTransport(Movable):
     def __init__(out self):
         """Create a fixture-only transport that does not spawn a process."""
         self.process = None
+        self.pid = -1
         self.write_fd = -1
         self.read_fd = -1
         self.read_buffer = ""
@@ -267,10 +269,7 @@ struct StdioTransport(Movable):
         self.fixture_writes = List[String]()
 
     def __deinit__(deinit self):
-        if self.write_fd >= 0:
-            _ = close(c_int(self.write_fd))
-        if self.read_fd >= 0:
-            _ = close(c_int(self.read_fd))
+        self._cleanup()
 
     @staticmethod
     def spawn(var command: List[String]) raises -> Self:
@@ -307,6 +306,7 @@ struct StdioTransport(Movable):
         _ = close(output_fds[1])
         var result = Self()
         result.process = Process(child_pid=pid)
+        result.pid = pid
         result.write_fd = input_fds[1]
         result.read_fd = output_fds[0]
         return result^
@@ -343,6 +343,25 @@ struct StdioTransport(Movable):
             return
         var writer = FileDescriptor(Int(self.write_fd))
         writer.write_bytes(line.as_bytes())
+
+    def cancel(mut self):
+        self._cleanup()
+
+    def _cleanup(mut self):
+        if self.write_fd >= 0:
+            _ = close(c_int(self.write_fd))
+            self.write_fd = -1
+        if self.read_fd >= 0:
+            _ = close(c_int(self.read_fd))
+            self.read_fd = -1
+        if self.pid > 0:
+            _ = external_call["kill", c_int](self.pid, c_int(9))
+            var status = List[c_int](length=1, fill=0)
+            _ = external_call["waitpid", c_pid_t](
+                self.pid, status.unsafe_ptr(), c_int(0)
+            )
+            self.pid = -1
+            self.process = None
 
 
 struct StreamableHttpTransport(Copyable, Movable):

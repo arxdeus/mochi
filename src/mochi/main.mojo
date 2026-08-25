@@ -130,12 +130,6 @@ def main() raises:
     for definition in standard_tool_definitions():
         runtime.add_tool(definition.copy())
 
-    # Keep every process/HTTP session alive for the complete runtime scope.
-    var stdio_clients = List[McpClient]()
-    var stdio_transports = List[StdioTransport]()
-    var http_clients = List[McpClient]()
-    var http_transports = List[StreamableHttpTransport]()
-    var plugin_clients = List[PluginClient]()
     try:
         for endpoint in config.mcp_stdio:
             var transport = _spawn_stdio(_words(endpoint.value))
@@ -149,8 +143,7 @@ def main() raises:
                 "MCP", endpoint.name, "initialized; tools=", len(tools),
                 "capabilities=", serialize_json(capabilities),
             )
-            stdio_clients.append(client^)
-            stdio_transports.append(transport^)
+            runtime.attach_mcp_stdio(endpoint.name, client^, transport^)
         for endpoint in config.mcp_http:
             var transport = StreamableHttpTransport(endpoint.value)
             var client = McpClient(endpoint.name)
@@ -163,8 +156,7 @@ def main() raises:
                 "MCP", endpoint.name, "initialized; tools=", len(tools),
                 "capabilities=", serialize_json(capabilities),
             )
-            http_clients.append(client^)
-            http_transports.append(transport^)
+            runtime.attach_mcp_http(endpoint.name, client^, transport^)
         for path in config.plugins:
             var client = PluginClient(_spawn_plugin(PluginExecutable(path)))
             client.connect()
@@ -176,7 +168,7 @@ def main() raises:
                 "Plugin", registration.name, registration.version,
                 "initialized; tools=", len(registration.tools.array_value),
             )
-            plugin_clients.append(client^)
+            runtime.attach_plugin(registration.name, client^)
 
         if config.print_mode and not config.prompt:
             config.prompt = Optional(read_stdin())
@@ -206,9 +198,9 @@ def main() raises:
                 config.output_format,
             )
     except error:
-        _cleanup(http_transports, plugin_clients)
+        runtime.shutdown_remotes()
         raise error
-    _cleanup(http_transports, plugin_clients)
+    runtime.shutdown_remotes()
 
 
 def _run_acp() raises:
@@ -259,6 +251,7 @@ def _spawn_stdio(var command: List[String]) raises -> StdioTransport:
     var fds = _spawn_piped(command^)
     var transport = StdioTransport()
     transport.process = Process(child_pid=c_pid_t(fds[0]))
+    transport.pid = c_pid_t(fds[0])
     transport.write_fd = Int32(fds[1])
     transport.read_fd = Int32(fds[2])
     return transport^
@@ -304,22 +297,6 @@ def _spawn_piped(var command: List[String]) raises -> List[Int]:
     _ = close(input_fds[0])
     _ = close(output_fds[1])
     return [Int(pid), Int(input_fds[1]), Int(output_fds[0])]
-
-
-def _cleanup(
-    mut http_transports: List[StreamableHttpTransport],
-    mut plugin_clients: List[PluginClient],
-):
-    for i in range(len(http_transports)):
-        try:
-            http_transports[i].delete_session()
-        except:
-            pass
-    for i in range(len(plugin_clients)):
-        try:
-            plugin_clients[i].shutdown()
-        except:
-            plugin_clients[i].cancel()
 
 
 def _new_session(model: String, cwd: String) raises -> Session:

@@ -79,11 +79,22 @@ struct RemoteToolRouter(Copyable, Movable):
         self.endpoints.append(metadata.endpoint)
         self.names.append(metadata.name)
 
+    def route_index(self, name: String) -> Int:
+        for i in range(len(self.names)):
+            if self.names[i] == name:
+                return i
+        return -1
+
     def is_remote(self, name: String) -> Bool:
-        for registered in self.names:
-            if registered == name:
-                return True
-        return False
+        return self.route_index(name) >= 0
+
+    def protocol_for(self, name: String) -> String:
+        var index = self.route_index(name)
+        return self.protocols[index] if index >= 0 else ""
+
+    def endpoint_for(self, name: String) -> String:
+        var index = self.route_index(name)
+        return self.endpoints[index] if index >= 0 else ""
 
     def enqueue_result(mut self, var name: String, var result: ToolResult) raises:
         if not self.is_remote(name):
@@ -91,11 +102,17 @@ struct RemoteToolRouter(Copyable, Movable):
         self.result_names.append(name^)
         self.results.append(result^)
 
-    def execute(mut self, prepared: PreparedTool) -> ToolResult:
+    def take_queued(mut self, name: String) -> Optional[ToolResult]:
         for i in range(len(self.result_names)):
-            if self.result_names[i] == prepared.name:
+            if self.result_names[i] == name:
                 _ = self.result_names.pop(i)
-                return self.results.pop(i)
+                return Optional(self.results.pop(i))
+        return None
+
+    def execute(mut self, prepared: PreparedTool) -> ToolResult:
+        var queued = self.take_queued(prepared.name)
+        if queued:
+            return queued.value().copy()
         return ToolResult.failure("no remote result queued: " + prepared.name)
 
 

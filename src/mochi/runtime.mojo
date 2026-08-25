@@ -2,7 +2,8 @@
 
 from std.ffi import c_int, external_call
 
-from mochi.json import JsonValue
+from mochi.json import JsonValue, serialize_json
+from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
 from mochi.permissions import PermissionEffect, PermissionManager
 from mochi.provider import (
     OpenAICompatibleProvider,
@@ -10,7 +11,14 @@ from mochi.provider import (
     ProviderSpec,
     RetryState,
 )
-from mochi.tools import RemoteToolMetadata, RemoteToolRouter, ToolRegistry, ToolResult
+from mochi.plugin import PluginClient
+from mochi.tools import (
+    PreparedTool,
+    RemoteToolMetadata,
+    RemoteToolRouter,
+    ToolRegistry,
+    ToolResult,
+)
 from mochi.types import CancellationToken, Message, ToolCall, Usage
 
 
@@ -48,6 +56,14 @@ struct Runtime:
     var compactions: Int
     var retries: Int
     var system_prompt: String
+    var mcp_stdio_names: List[String]
+    var mcp_stdio_clients: List[McpClient]
+    var mcp_stdio_transports: List[StdioTransport]
+    var mcp_http_names: List[String]
+    var mcp_http_clients: List[McpClient]
+    var mcp_http_transports: List[StreamableHttpTransport]
+    var plugin_names: List[String]
+    var plugin_clients: List[PluginClient]
 
     def __init__(
         out self,
@@ -72,6 +88,14 @@ struct Runtime:
         self.compactions = 0
         self.retries = 0
         self.system_prompt = ""
+        self.mcp_stdio_names = List[String]()
+        self.mcp_stdio_clients = List[McpClient]()
+        self.mcp_stdio_transports = List[StdioTransport]()
+        self.mcp_http_names = List[String]()
+        self.mcp_http_clients = List[McpClient]()
+        self.mcp_http_transports = List[StreamableHttpTransport]()
+        self.plugin_names = List[String]()
+        self.plugin_clients = List[PluginClient]()
 
     def set_system_prompt(mut self, prompt: String):
         self.system_prompt = prompt
@@ -119,6 +143,61 @@ struct Runtime:
     ) raises:
         """Supply a fixture or an explicit result produced by a concrete client."""
         self.remote.enqueue_result(name^, result^)
+
+    def remote_protocol(self, name: String) -> String:
+        return self.remote.protocol_for(name)
+
+    def remote_endpoint(self, name: String) -> String:
+        return self.remote.endpoint_for(name)
+
+    def take_remote_result(mut self, name: String) -> Optional[ToolResult]:
+        return self.remote.take_queued(name)
+
+    def append_tool_result(mut self, call: ToolCall, result: ToolResult):
+        var message = Message("tool", result.content)
+        message.tool_call_id = call.id
+        message.name = call.name
+        self.messages.append(message^)
+
+    def attach_mcp_stdio(
+        mut self,
+        var name: String,
+        var client: McpClient,
+        var transport: StdioTransport,
+    ):
+        self.mcp_stdio_names.append(name^)
+        self.mcp_stdio_clients.append(client^)
+        self.mcp_stdio_transports.append(transport^)
+
+    def attach_mcp_http(
+        mut self,
+        var name: String,
+        var client: McpClient,
+        var transport: StreamableHttpTransport,
+    ):
+        self.mcp_http_names.append(name^)
+        self.mcp_http_clients.append(client^)
+        self.mcp_http_transports.append(transport^)
+
+    def attach_plugin(
+        mut self, var name: String, var client: PluginClient
+    ):
+        self.plugin_names.append(name^)
+        self.plugin_clients.append(client^)
+
+    def shutdown_remotes(mut self):
+        for i in range(len(self.mcp_stdio_transports)):
+            self.mcp_stdio_transports[i].cancel()
+        for i in range(len(self.mcp_http_transports)):
+            try:
+                self.mcp_http_transports[i].delete_session()
+            except:
+                pass
+        for i in range(len(self.plugin_clients)):
+            try:
+                self.plugin_clients[i].shutdown()
+            except:
+                self.plugin_clients[i].cancel()
 
     def request_body(self) raises -> JsonValue:
         var request_messages = self.messages.copy()
@@ -199,15 +278,50 @@ struct Runtime:
             elif cancel.is_cancelled():
                 content = "Error: operation cancelled"
             elif self.remote.is_remote(prepared.name):
-                content = self.remote.execute(prepared).content
+                var queued = self.remote.take_queued(prepared.name)
+                if queued:
+                    content = queued.value().content
+                else:
+                    content = self._dispatch_remote(prepared)
             else:
                 content = self.tools.execute(prepared).content
         except error:
             content = "Error: " + String(error)
-        var message = Message("tool", content)
-        message.tool_call_id = call.id
-        message.name = call.name
-        self.messages.append(message^)
+        self.append_tool_result(call, ToolResult.success(content))
+
+    def _dispatch_remote(mut self, prepared: PreparedTool) raises -> String:
+        var protocol = self.remote.protocol_for(prepared.name)
+        var endpoint = self.remote.endpoint_for(prepared.name)
+        if protocol == "mcp":
+            for i in range(len(self.mcp_stdio_names)):
+                if self.mcp_stdio_names[i] == endpoint:
+                    return serialize_json(
+                        self.mcp_stdio_clients[i].call_tool(
+                            self.mcp_stdio_transports[i],
+                            prepared.name,
+                            prepared.arguments.copy(),
+                        )
+                    )
+            for i in range(len(self.mcp_http_names)):
+                if self.mcp_http_names[i] == endpoint:
+                    return serialize_json(
+                        self.mcp_http_clients[i].call_tool(
+                            self.mcp_http_transports[i],
+                            prepared.name,
+                            prepared.arguments.copy(),
+                        )
+                    )
+        elif protocol == "plugin":
+            for i in range(len(self.plugin_names)):
+                if self.plugin_names[i] == endpoint:
+                    return serialize_json(
+                        self.plugin_clients[i].invoke(
+                            "tool", prepared.name, prepared.arguments.copy()
+                        )
+                    )
+        raise Error(
+            "remote endpoint is not attached: " + protocol + ":" + endpoint
+        )
 
     def context_chars(self) -> Int:
         var total = 0

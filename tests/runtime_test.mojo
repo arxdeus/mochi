@@ -1,7 +1,17 @@
 from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from mochi.json import JsonValue, parse_json, serialize_json
+from mochi.mcp import McpClient, StdioTransport
 from mochi.permissions import PermissionEffect, PermissionManager, PermissionRule
+from mochi.plugin import (
+    PluginClient,
+    PluginRegistration,
+    PluginTransport,
+    handshake_result,
+    invoke_result,
+    registration_result,
+    shutdown_result,
+)
 from mochi.provider import OpenAICompatibleProvider, ProviderSpec, RetryState
 from mochi.runtime import (
     Runtime,
@@ -195,6 +205,55 @@ def test_remote_mcp_plugin_registration_and_dispatch() raises:
         CancellationToken(),
     )
     assert_equal(runtime.messages[len(runtime.messages) - 1].content, '{"content":"formatted"}')
+
+
+def test_live_remote_mcp_and_plugin_dispatch() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    runtime.add_remote_tools(
+        "mcp", "search-server", parse_json('[{"name":"remote_search"}]')
+    )
+    var mcp_transport = StdioTransport()
+    mcp_transport.enqueue_fixture_response(
+        '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"found"}]}}'
+    )
+    runtime.attach_mcp_stdio(
+        "search-server", McpClient("search-server"), mcp_transport^
+    )
+    runtime.dispatch(
+        ToolCall("mcp-call", "remote_search", '{"query":"mojo"}'),
+        CancellationToken(),
+    )
+    assert_true('"text":"found"' in runtime.messages[len(runtime.messages) - 1].content)
+
+    var plugin_transport = PluginTransport()
+    plugin_transport.enqueue_fixture_response(handshake_result(1, "formatter"))
+    var registration = PluginRegistration("formatter", "1.0.0")
+    registration.tools.append(parse_json('{"name":"remote_format"}'))
+    plugin_transport.enqueue_fixture_response(registration_result(2, registration))
+    plugin_transport.enqueue_fixture_response(
+        invoke_result(3, parse_json('{"content":"formatted"}'))
+    )
+    plugin_transport.enqueue_fixture_response(shutdown_result(4))
+    var plugin = PluginClient(plugin_transport^)
+    plugin.connect()
+    runtime.add_remote_tools(
+        "plugin", "formatter", registration.tools.copy()
+    )
+    runtime.attach_plugin("formatter", plugin^)
+    runtime.dispatch(
+        ToolCall("plugin-call", "remote_format", '{"text":"mojo"}'),
+        CancellationToken(),
+    )
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1].content,
+        '{"content":"formatted"}',
+    )
+    runtime.shutdown_remotes()
 
 
 def test_provider_error_is_visible_in_result() raises:
