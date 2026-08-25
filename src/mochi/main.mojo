@@ -33,6 +33,7 @@ from mochi.session import Session, SessionStore
 from mochi.storage import MakiId, SessionRef, StoragePaths
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken
+from mochi.ui import UiEvent, UiReducer, UiState
 
 
 def main() raises:
@@ -281,23 +282,35 @@ def _interactive(
     store: SessionStore,
     output_format: String,
 ) raises:
-
+    var ui = UiState()
     while True:
+
         print("> ", end="")
         var line = _read_line()
         if not line:
             return
-        var prompt = String(line.value().strip())
-        if prompt == "exit" or prompt == "quit":
+        var raw = String(line.value())
+        if raw.strip() == "exit" or raw.strip() == "quit":
             return
-        if prompt == "/login":
-            _interactive_login(runtime)
-        elif prompt == "/model" or prompt.startswith("/model "):
-            _interactive_model(runtime, prompt)
-        elif prompt == "/help":
-            print("Commands: /login, /model [MODEL], /help, exit")
-        elif prompt != "":
-            _run_prompt(runtime, session, store, prompt^, output_format)
+        _ = UiReducer.reduce(ui, UiEvent.edit(raw^))
+        var action = UiReducer.reduce(ui, UiEvent.submit())
+        if action.is_none():
+            continue
+        if action.is_command():
+            var command = "/" + action.name
+            if action.text != "":
+                command += " " + action.text
+            if action.name == "login":
+                _interactive_login(runtime)
+            elif action.name == "model":
+                _interactive_model(runtime, command^)
+            elif action.name == "help":
+                print("Commands: /login, /model [MODEL], /help, exit")
+            else:
+                print("Unknown command:", action.name)
+            continue
+        _run_prompt(runtime, session, store, action.text, output_format)
+        _ = UiReducer.reduce(ui, UiEvent.complete())
 
 
 def _interactive_login(mut runtime: Runtime):
