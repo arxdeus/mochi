@@ -38,6 +38,7 @@ from mochi.storage import MakiId, SessionRef, StoragePaths
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken
 from mochi.ui import UiEvent, UiReducer, UiState
+from mochi.workspace import InputHistory, NoteStore, project_id
 
 
 def main() raises:
@@ -188,7 +189,22 @@ def main() raises:
                 config.output_format,
             )
         else:
-            _interactive(runtime, session, session_store, config.output_format)
+            var history = InputHistory(paths.state + "/input_history")
+            history.load()
+            var memories = NoteStore(
+                paths.state
+                + "/projects/"
+                + project_id(cwd)
+                + "/memories"
+            )
+            _interactive(
+                runtime,
+                session,
+                session_store,
+                history,
+                memories,
+                config.output_format,
+            )
     except error:
         _cleanup(http_transports, plugin_clients)
         raise error
@@ -334,6 +350,8 @@ def _interactive(
     mut runtime: Runtime,
     mut session: Session,
     store: SessionStore,
+    mut history: InputHistory,
+    mut memories: NoteStore,
     output_format: String,
 ) raises:
     var ui = UiState()
@@ -344,6 +362,7 @@ def _interactive(
         if not line:
             return
         var raw = String(line.value())
+        history.add(String(raw.strip()))
         if raw.strip() == "exit" or raw.strip() == "quit":
             return
         _ = UiReducer.reduce(ui, UiEvent.edit(raw^))
@@ -358,13 +377,41 @@ def _interactive(
                 _interactive_login(runtime)
             elif action.name == "model":
                 _interactive_model(runtime, command^)
+            elif action.name == "memory":
+                _interactive_memory(memories, action.text)
             elif action.name == "help":
-                print("Commands: /login, /model [MODEL], /help, exit")
+                print(
+                    "Commands: /login, /model [MODEL], /memory [list|read|write|delete], /help, exit"
+                )
             else:
                 print("Unknown command:", action.name)
             continue
         _run_prompt(runtime, session, store, action.text, output_format)
         _ = UiReducer.reduce(ui, UiEvent.complete())
+
+
+def _interactive_memory(mut memories: NoteStore, arguments: String):
+    try:
+        var parts = arguments.split(" ")
+        var command = "list" if arguments == "" else String(parts[0])
+        if command == "list":
+            for name in memories.list():
+                print(name)
+        elif command == "read" and len(parts) >= 2:
+            print(memories.read(String(parts[1])))
+        elif command == "delete" and len(parts) >= 2:
+            memories.delete(String(parts[1]))
+        elif command == "write" and len(parts) >= 3:
+            var content = String("")
+            for index in range(2, len(parts)):
+                if content != "":
+                    content += " "
+                content += String(parts[index])
+            memories.write(String(parts[1]), content^)
+        else:
+            print("Usage: /memory [list|read NAME|write NAME TEXT|delete NAME]")
+    except error:
+        print("Memory command failed:", error)
 
 
 def _interactive_login(mut runtime: Runtime):
