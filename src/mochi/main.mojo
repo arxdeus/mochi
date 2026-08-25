@@ -4,6 +4,7 @@ from std.os.path import exists
 from std.sys import argv
 from std.sys._libc import close, exit, pipe
 
+from mochi.acp import AcpMessage, AcpSession
 from mochi.cli import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_URL,
@@ -60,6 +61,9 @@ def main() raises:
         config.output_format = layered.output_format.value()
     if layered.yolo and not config.yolo:
         config.yolo = layered.yolo.value()
+    if config.acp:
+        _run_acp()
+        return
     if config.show_help:
         print(help_text(), end="")
         return
@@ -137,6 +141,9 @@ def main() raises:
             var client = McpClient(endpoint.name)
             var capabilities = client.initialize(transport)
             var tools = client.list_tools(transport)
+            runtime.add_remote_tools(
+                "mcp", endpoint.name, _json_array(tools)
+            )
             print(
                 "MCP", endpoint.name, "initialized; tools=", len(tools),
                 "capabilities=", serialize_json(capabilities),
@@ -148,6 +155,9 @@ def main() raises:
             var client = McpClient(endpoint.name)
             var capabilities = client.initialize(transport)
             var tools = client.list_tools(transport)
+            runtime.add_remote_tools(
+                "mcp", endpoint.name, _json_array(tools)
+            )
             print(
                 "MCP", endpoint.name, "initialized; tools=", len(tools),
                 "capabilities=", serialize_json(capabilities),
@@ -158,6 +168,9 @@ def main() raises:
             var client = PluginClient(_spawn_plugin(PluginExecutable(path)))
             client.connect()
             var registration = client.protocol.registration.value().copy()
+            runtime.add_remote_tools(
+                "plugin", registration.name, registration.tools.copy()
+            )
             print(
                 "Plugin", registration.name, registration.version,
                 "initialized; tools=", len(registration.tools.array_value),
@@ -182,6 +195,22 @@ def main() raises:
     _cleanup(http_transports, plugin_clients)
 
 
+def _run_acp() raises:
+    var session = AcpSession()
+    while True:
+        var line = _read_line()
+        if not line:
+            return
+        try:
+            var request = AcpMessage.parse(line.value())
+            print(session.handle(request).line(), end="")
+        except error:
+            print(
+                AcpMessage.failure(0, -32600, String(error)).line(),
+                end="",
+            )
+
+
 def _platform() -> String:
     var value = getenv("OSTYPE", "")
     if value != "":
@@ -193,6 +222,13 @@ def _date() -> String:
     var seconds: c_long = 0
     _ = external_call["time", c_long](Pointer(to=seconds))
     return String(seconds)
+
+
+def _json_array(values: List[JsonValue]) raises -> JsonValue:
+    var result = JsonValue.array()
+    for value in values:
+        result.append(value.copy())
+    return result^
 
 
 def _now_ms() -> Int:

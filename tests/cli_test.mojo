@@ -10,6 +10,7 @@ def test_defaults() raises:
     assert_false(config.print_mode)
     assert_false(config.continue_session)
     assert_false(config.session_id)
+    assert_false(config.acp)
 
 
 def test_all_options() raises:
@@ -28,6 +29,10 @@ def test_all_options() raises:
     assert_equal(config.mcp_stdio[0].name, "local")
     assert_equal(config.mcp_http[0].value, "https://example.test/mcp")
     assert_equal(config.prompt.value(), "hello")
+
+
+def test_acp_mode() raises:
+    assert_true(parse_args(["--acp"]).acp)
 
 
 def test_openai_oauth_login_command() raises:
