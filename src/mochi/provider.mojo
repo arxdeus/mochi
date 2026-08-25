@@ -4,9 +4,26 @@ from std.ffi import c_int, c_long, external_call
 from std.os import getenv, makedirs, remove
 from std.time import sleep
 
+from mochi.domain import (
+    ContentBlock,
+    DomainMessage,
+    DomainProviderEvent,
+    MochiError,
+    Model,
+    ModelInfo,
+    StopReason,
+    StreamResponse,
+    TokenUsage,
+)
 from mochi.http import FlokiTransport, HttpHeader, HttpRequest, HttpResponse, HttpTransport
 from mochi.json import JsonValue, parse_json, serialize_json
-from mochi.types import Message, ProviderEvent, ToolCall, Usage
+from mochi.provider_contract import (
+    Provider,
+    ProviderEventSink,
+    ProviderRequest,
+    provider_error_text,
+)
+from mochi.types import CancellationToken, Message, ProviderEvent, ToolCall, Usage
 
 
 comptime OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -803,12 +820,23 @@ struct OpenAICompatibleProvider:
     def complete_json_with[T: HttpTransport](
         mut self, mut transport: T, body: JsonValue
     ) raises -> ProviderResult:
+        return self.complete_json_with_cancel(
+            transport, body, CancellationToken()
+        )
+
+    def complete_json_with_cancel[T: HttpTransport](
+        mut self,
+        mut transport: T,
+        body: JsonValue,
+        cancel: CancellationToken,
+    ) raises -> ProviderResult:
         self.last_status = 0
         var state = _ProviderStreamState()
-        var response = transport.perform_stream(
+        var response = transport.perform_stream_cancellable(
             self.build_request(body),
             _accept_provider_chunk,
             Pointer(to=state).unsafe_bitcast[NoneType]().unsafe_origin_cast[MutUntrackedOrigin](),
+            cancel.copy(),
         )
         self.last_status = response.status
         if state.error != "":
@@ -880,6 +908,236 @@ struct OpenAICompatibleProvider:
         if not self.has_oauth:
             return self.rotate_key()
         return False
+
+
+struct OpenAIProviderAdapter(Provider, Movable):
+    var inner: OpenAICompatibleProvider
+    var model_info: ModelInfo
+    var last_error: Optional[MochiError]
+
+    def __init__(out self, var inner: OpenAICompatibleProvider, model: ModelInfo):
+        self.inner = inner^
+        self.model_info = model.copy()
+        self.last_error = None
+
+    def list_models(mut self) raises -> List[ModelInfo]:
+        return [self.model_info.copy()]
+
+    def stream_message[S: ProviderEventSink](
+        mut self, request: ProviderRequest, mut sink: S
+    ) raises -> StreamResponse:
+        self.last_error = None
+        if request.cancel.is_cancelled():
+            return self._fail(MochiError.cancelled())
+        var messages = _legacy_messages(request.messages, request.system)
+        var body: JsonValue
+        if self.inner.spec.responses_api:
+            body = _responses_body(request.model.id, messages, request.tools)
+        else:
+            body = _chat_body(request.model.id, messages, request.tools)
+        var transport = FlokiTransport()
+        var result: ProviderResult
+        try:
+            result = self.inner.complete_json_with_cancel(
+                transport, body, request.cancel.copy()
+            )
+        except error:
+            if request.cancel.is_cancelled():
+                return self._fail(MochiError.cancelled())
+            if self.inner.last_http_status() != 0:
+                return self._fail(
+                    MochiError.api(self.inner.last_http_status(), String(error))
+                )
+            return self._fail(MochiError.http(String(error)))
+        if result.message.content != "":
+            sink.emit(DomainProviderEvent.text_delta(result.message.content))
+        for call in result.message.tool_calls:
+            sink.emit(DomainProviderEvent.tool_use_start(call.id, call.name))
+        return _stream_response(result)
+
+    def _fail(mut self, error: MochiError) raises -> StreamResponse:
+        self.last_error = Optional(error.copy())
+        raise Error(provider_error_text(error))
+
+
+struct OpenAIProviderAdapterWithTransport[
+    T: HttpTransport & Movable & Deinitable
+](Provider, Movable):
+    var inner: OpenAICompatibleProvider
+    var transport: Self.T
+    var model_info: ModelInfo
+    var last_error: Optional[MochiError]
+
+    def __init__(
+        out self,
+        var inner: OpenAICompatibleProvider,
+        var transport: Self.T,
+        model: ModelInfo,
+    ):
+        self.inner = inner^
+        self.transport = transport^
+        self.model_info = model.copy()
+        self.last_error = None
+
+    def list_models(mut self) raises -> List[ModelInfo]:
+        return [self.model_info.copy()]
+
+    def stream_message[S: ProviderEventSink](
+        mut self, request: ProviderRequest, mut sink: S
+    ) raises -> StreamResponse:
+        self.last_error = None
+        if request.cancel.is_cancelled():
+            return self._fail(MochiError.cancelled())
+        var messages = _legacy_messages(request.messages, request.system)
+        var body: JsonValue
+        if self.inner.spec.responses_api:
+            body = _responses_body(request.model.id, messages, request.tools)
+        else:
+            body = _chat_body(request.model.id, messages, request.tools)
+        var result: ProviderResult
+        try:
+            result = self.inner.complete_json_with_cancel(
+                self.transport, body, request.cancel.copy()
+            )
+        except error:
+            if request.cancel.is_cancelled():
+                return self._fail(MochiError.cancelled())
+            if self.inner.last_http_status() != 0:
+                return self._fail(
+                    MochiError.api(self.inner.last_http_status(), String(error))
+                )
+            return self._fail(MochiError.http(String(error)))
+        if result.message.content != "":
+            sink.emit(DomainProviderEvent.text_delta(result.message.content))
+        for call in result.message.tool_calls:
+            sink.emit(DomainProviderEvent.tool_use_start(call.id, call.name))
+        return _stream_response(result)
+
+    def _fail(mut self, error: MochiError) raises -> StreamResponse:
+        self.last_error = Optional(error.copy())
+        raise Error(provider_error_text(error))
+
+
+def _legacy_messages(
+    messages: List[DomainMessage], system: String
+) raises -> List[Message]:
+    var result = List[Message]()
+    if system != "":
+        result.append(Message("system", system))
+    for message in messages:
+        var role = "assistant" if message.role.is_assistant() else "user"
+        var legacy = Message(role, "")
+        for block in message.content:
+            if block.is_text():
+                legacy.content += block.text
+            elif block.is_tool_use():
+                legacy.tool_calls.append(
+                    ToolCall(block.id, block.name, block.input.serialize())
+                )
+            elif block.is_tool_result():
+                if legacy.content != "" or len(legacy.tool_calls) > 0:
+                    result.append(legacy.copy())
+                legacy = Message("tool", block.text)
+                legacy.tool_call_id = block.id
+            elif block.is_image():
+                raise Error("OpenAI compatibility adapter does not support image input")
+        result.append(legacy^)
+    return result^
+
+
+def _chat_body(model: String, messages: List[Message], tools: JsonValue) raises -> JsonValue:
+    var body = JsonValue.object()
+    body.set("model", JsonValue.string(model))
+    body.set("stream", JsonValue.boolean(True))
+    var raw_messages = JsonValue.array()
+    for message in messages:
+        var value = JsonValue.object()
+        value.set("role", JsonValue.string(message.role))
+        value.set("content", JsonValue.string(message.content))
+        if message.tool_call_id != "":
+            value.set("tool_call_id", JsonValue.string(message.tool_call_id))
+        if len(message.tool_calls) > 0:
+            var calls = JsonValue.array()
+            for call in message.tool_calls:
+                var function = JsonValue.object()
+                function.set("name", JsonValue.string(call.name))
+                function.set("arguments", JsonValue.string(call.arguments))
+                var item = JsonValue.object()
+                item.set("id", JsonValue.string(call.id))
+                item.set("type", JsonValue.string("function"))
+                item.set("function", function^)
+                calls.append(item^)
+            value.set("tool_calls", calls^)
+        raw_messages.append(value^)
+    body.set("messages", raw_messages^)
+    if tools.kind == JsonValue.ARRAY and len(tools.array_value) > 0:
+        body.set("tools", tools.copy())
+        body.set("tool_choice", JsonValue.string("auto"))
+    return body^
+
+
+def _responses_body(
+    model: String, messages: List[Message], tools: JsonValue
+) raises -> JsonValue:
+    var body = JsonValue.object()
+    body.set("model", JsonValue.string(model))
+    body.set("stream", JsonValue.boolean(True))
+    body.set("store", JsonValue.boolean(False))
+    var input = JsonValue.array()
+    for message in messages:
+        if message.role == "tool":
+            var output = JsonValue.object()
+            output.set("type", JsonValue.string("function_call_output"))
+            output.set("call_id", JsonValue.string(message.tool_call_id))
+            output.set("output", JsonValue.string(message.content))
+            input.append(output^)
+            continue
+        if message.content != "":
+            var item = JsonValue.object()
+            item.set("type", JsonValue.string("message"))
+            item.set("role", JsonValue.string(message.role))
+            var content = JsonValue.array()
+            var part = JsonValue.object()
+            part.set(
+                "type",
+                JsonValue.string(
+                    "output_text" if message.role == "assistant" else "input_text"
+                ),
+            )
+            part.set("text", JsonValue.string(message.content))
+            content.append(part^)
+            item.set("content", content^)
+            input.append(item^)
+        for call in message.tool_calls:
+            var raw_call = JsonValue.object()
+            raw_call.set("type", JsonValue.string("function_call"))
+            raw_call.set("call_id", JsonValue.string(call.id))
+            raw_call.set("name", JsonValue.string(call.name))
+            raw_call.set("arguments", JsonValue.string(call.arguments))
+            input.append(raw_call^)
+    body.set("input", input^)
+    if tools.kind == JsonValue.ARRAY and len(tools.array_value) > 0:
+        body.set("tools", tools.copy())
+    return body^
+
+
+def _stream_response(result: ProviderResult) raises -> StreamResponse:
+    var message = DomainMessage.assistant(result.message.content)
+    for call in result.message.tool_calls:
+        var input = JsonValue.object()
+        if call.arguments != "":
+            input = parse_json(call.arguments)
+            if input.kind != JsonValue.OBJECT:
+                raise Error("provider tool arguments must be an object")
+        message.add_block(ContentBlock.tool_use(call.id, call.name, input^))
+    var usage = TokenUsage(
+        result.usage.input_tokens, result.usage.output_tokens, 0, 0
+    )
+    return StreamResponse(
+        message^,
+        usage^,
+        Optional(StopReason.from_openai(result.stop_reason)),
+    )
 
 
 def _epoch_ms() -> Int:

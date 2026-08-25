@@ -6,12 +6,25 @@ from std.testing import (
     assert_true,
 )
 
+from mochi.domain import (
+    DomainMessage,
+    DomainProviderEvent,
+    Model,
+    ModelFamily,
+    ModelInfo,
+    ModelPricing,
+    ModelTier,
+    ThinkingSupport,
+)
 from mochi.http import HttpRequest, HttpResponse, MockTransport
-from mochi.json import parse_json
+from mochi.json import JsonValue, parse_json
+from mochi.provider_contract import ProviderEventSink, ProviderRequest
+from mochi.types import CancellationToken
 from mochi.provider import (
     ApiKeyState,
     OAuthState,
     OpenAICompatibleProvider,
+    OpenAIProviderAdapterWithTransport,
     OpenAIOAuthCredentials,
     OpenAIStreamParser,
     ProviderRegistry,
@@ -299,6 +312,93 @@ def test_openai_responses_tool_done_and_incomplete() raises:
     assert_equal(result.stop_reason, "length")
     assert_equal(len(result.message.tool_calls), 1)
     assert_equal(result.message.tool_calls[0].arguments, '{"path":"README.md"}')
+
+
+struct ContractEventLog(ProviderEventSink, Copyable, Movable):
+    var events: List[DomainProviderEvent]
+
+    def __init__(out self):
+        self.events = List[DomainProviderEvent]()
+
+    def emit(mut self, event: DomainProviderEvent) raises:
+        self.events.append(event.copy())
+
+
+def test_openai_provider_contract_adapter() raises:
+    var transport = MockTransport()
+    var chunks: List[String] = [
+        'data: {"choices":[{"delta":{"content":"hello","tool_calls":[{"index":0,"id":"call-1","function":{"name":"read","arguments":"{\\"path\\":\\"README.md\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":4,"completion_tokens":2}}\n\n',
+        "data: [DONE]\n\n",
+    ]
+    transport.enqueue_stream(HttpResponse(200, ""), chunks)
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("openai", "https://example.invalid/v1")
+    )
+    var adapter = OpenAIProviderAdapterWithTransport(
+        provider^, transport^, ModelInfo.id_only("gpt-test")
+    )
+    var model = Model(
+        "gpt-test",
+        "openai",
+        ModelTier.medium(),
+        ModelFamily.gpt(),
+        ThinkingSupport.no(),
+        None,
+        ModelPricing(),
+        Optional(4096),
+        32000,
+    )
+    var messages: List[DomainMessage] = [DomainMessage.user("hi")]
+    var request = ProviderRequest(
+        model^, CancellationToken(), messages^, system="system"
+    )
+    var sink = ContractEventLog()
+    var result = adapter.stream_message(request, sink)
+    assert_equal(result.message.content[0].text, "hello")
+    assert_true(result.message.has_tool_calls())
+    assert_equal(result.usage.input, 4)
+    assert_equal(result.usage.output, 2)
+    assert_true(result.stop_reason.value().is_tool_use())
+    assert_equal(len(sink.events), 2)
+    assert_true(sink.events[0].is_text_delta())
+    assert_true(sink.events[1].is_tool_use_start())
+    assert_equal(len(adapter.transport.requests), 1)
+    var wire = parse_json(adapter.transport.requests[0].body)
+    assert_equal(wire.get("model").string_value, "gpt-test")
+    assert_equal(
+        wire.get("messages").array_value[0].get("role").string_value,
+        "system",
+    )
+
+
+def test_openai_provider_contract_pre_cancel() raises:
+    var transport = MockTransport()
+    var adapter = OpenAIProviderAdapterWithTransport(
+        OpenAICompatibleProvider(
+            ProviderSpec("openai", "https://example.invalid/v1")
+        ),
+        transport^,
+        ModelInfo.id_only("gpt-test"),
+    )
+    var model = Model(
+        "gpt-test",
+        "openai",
+        ModelTier.medium(),
+        ModelFamily.gpt(),
+        ThinkingSupport.no(),
+        None,
+        ModelPricing(),
+        None,
+        32000,
+    )
+    var cancel = CancellationToken()
+    cancel.cancel()
+    var sink = ContractEventLog()
+    with assert_raises():
+        _ = adapter.stream_message(
+            ProviderRequest(model^, cancel.copy()), sink
+        )
+    assert_equal(len(adapter.transport.requests), 0)
 
 
 def main() raises:
