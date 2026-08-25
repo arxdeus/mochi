@@ -12,6 +12,7 @@ from mochi.provider import (
     ApiKeyState,
     OAuthState,
     OpenAICompatibleProvider,
+    OpenAIOAuthCredentials,
     OpenAIStreamParser,
     ProviderRegistry,
     ProviderSpec,
@@ -19,7 +20,10 @@ from mochi.provider import (
     SSEParser,
     ToolCallAssembler,
     ToolCallDelta,
+    extract_chatgpt_account_id,
     form_encode,
+    openai_device_login_with,
+    refresh_openai_oauth_with,
 )
 
 
@@ -222,6 +226,79 @@ def test_provider_auth_precedence_and_usage() raises:
     provider.set_oauth(oauth)
     assert_equal(provider.auth_token(), "oauth-token")
     assert_equal(provider.fetch_usage().total_tokens(), 0)
+
+
+def test_openai_oauth_device_refresh_and_responses_transport() raises:
+    var transport = MockTransport()
+    transport.enqueue(HttpResponse(200, '{"device_auth_id":"device","user_code":"ABCD","interval":"1"}'))
+    transport.enqueue(HttpResponse(403, "pending"))
+    transport.enqueue(HttpResponse(404, "pending"))
+    transport.enqueue(HttpResponse(200, '{"authorization_code":"code","code_verifier":"verify"}'))
+    transport.enqueue(HttpResponse(200, '{"access_token":"access","refresh_token":"refresh","expires_in":3600,"id_token":"e30.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0XzEyMyJ9.sig"}'))
+    var path = "/tmp/mochi-openai-oauth-test.json"
+    var credentials = openai_device_login_with(transport, 1000, path, False)
+    assert_equal(credentials.account_id, "acct_123")
+    assert_equal(len(transport.requests), 5)
+    assert_equal(transport.requests[0].url, "https://auth.openai.com/api/accounts/deviceauth/usercode")
+    assert_equal(transport.requests[4].url, "https://auth.openai.com/oauth/token")
+    assert_true("redirect_uri=https%3A%2F%2Fauth.openai.com%2Fdeviceauth%2Fcallback" in transport.requests[4].body)
+
+    var refresh_transport = MockTransport()
+    refresh_transport.enqueue(HttpResponse(200, '{"access_token":"new-access","refresh_token":"new-refresh","expires_in":60}'))
+    credentials = refresh_openai_oauth_with(refresh_transport, credentials, 5000)
+    assert_equal(credentials.access_token, "new-access")
+    assert_equal(credentials.expires_at_ms, 65000)
+    assert_true("client_id=app_EMoamEEZ73f0CkXaXp7hrann" in refresh_transport.requests[0].body)
+
+    var spec = ProviderSpec("openai-oauth", "")
+    spec.responses_api = True
+    spec.account_id = "acct_123"
+    var provider = OpenAICompatibleProvider(spec^)
+    provider.set_oauth(credentials.oauth_state())
+    var stream_transport = MockTransport()
+    var chunks: List[String] = [
+        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hello"}\n\n',
+        'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":1}}}\n\n',
+    ]
+    stream_transport.enqueue_stream(HttpResponse(200, ""), chunks)
+    var result = provider.complete_json_with(stream_transport, parse_json('{"stream":true}'))
+    assert_equal(result.message.content, "hello")
+    assert_equal(result.usage.input_tokens, 4)
+    var request = stream_transport.requests[0].copy()
+    assert_equal(request.url, "https://chatgpt.com/backend-api/codex/responses")
+    assert_equal(request.headers[2].name, "chatgpt-account-id")
+    assert_equal(request.headers[2].value, "acct_123")
+    assert_equal(request.headers[3].name, "originator")
+    assert_equal(request.headers[4].value, "responses=v1")
+    assert_equal(request.headers[5].value, "Bearer new-access")
+
+
+def test_openai_jwt_account_id() raises:
+    assert_equal(
+        extract_chatgpt_account_id("e30.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0XzEyMyJ9.sig"),
+        "acct_123",
+    )
+    assert_equal(
+        extract_chatgpt_account_id("e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF80NTYifX0.sig"),
+        "acct_456",
+    )
+    assert_equal(extract_chatgpt_account_id("invalid"), "")
+
+
+def test_openai_responses_tool_done_and_incomplete() raises:
+    var spec = ProviderSpec("openai-oauth", "")
+    spec.responses_api = True
+    var provider = OpenAICompatibleProvider(spec^)
+    var body = (
+        'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call","name":"read"}}\n\n'
+        'data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":{"path":"README.md"}}\n\n'
+        'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call","name":"read","arguments":{"path":"README.md"}}}\n\n'
+        'data: {"type":"response.incomplete","response":{"usage":{"input_tokens":2,"output_tokens":3}}}\n\n'
+    )
+    var result = provider.parse_response_body(body)
+    assert_equal(result.stop_reason, "length")
+    assert_equal(len(result.message.tool_calls), 1)
+    assert_equal(result.message.tool_calls[0].arguments, '{"path":"README.md"}')
 
 
 def main() raises:

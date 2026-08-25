@@ -1,6 +1,7 @@
 """Transport-neutral HTTP contracts and production/test transports."""
 
 from floki import Session
+from mochi.types import CancellationToken
 
 
 comptime HttpChunkCallback = def(String, Pointer[NoneType, MutUntrackedOrigin]) thin -> None
@@ -83,6 +84,14 @@ trait HttpTransport:
         userdata: Pointer[NoneType, MutUntrackedOrigin],
     ) raises -> HttpResponse: ...
 
+    def perform_stream_cancellable(
+        mut self,
+        request: HttpRequest,
+        callback: HttpChunkCallback,
+        userdata: Pointer[NoneType, MutUntrackedOrigin],
+        cancel: CancellationToken,
+    ) raises -> HttpResponse: ...
+
 
 struct FlokiTransport(HttpTransport, Movable):
     """Production transport adapting the maintained Floki-style Session subset."""
@@ -109,10 +118,21 @@ struct FlokiTransport(HttpTransport, Movable):
         callback: HttpChunkCallback,
         userdata: Pointer[NoneType, MutUntrackedOrigin],
     ) raises -> HttpResponse:
+        return self.perform_stream_cancellable(
+            request, callback, userdata, CancellationToken()
+        )
+
+    def perform_stream_cancellable(
+        mut self,
+        request: HttpRequest,
+        callback: HttpChunkCallback,
+        userdata: Pointer[NoneType, MutUntrackedOrigin],
+        cancel: CancellationToken,
+    ) raises -> HttpResponse:
         var lines = List[String]()
         for header in request.headers:
             lines.append(header.name + ": " + header.value)
-        var response = self.session.request_stream(
+        var response = self.session.request_stream_cancellable(
             request.method,
             request.url,
             lines^,
@@ -120,6 +140,7 @@ struct FlokiTransport(HttpTransport, Movable):
             request.timeout_ms,
             callback,
             userdata,
+            cancel.copy(),
         )
         var result = HttpResponse(response.status, response.body^)
         for entry in response.headers.items():
@@ -165,13 +186,28 @@ struct MockTransport(HttpTransport, Copyable, Movable):
         callback: HttpChunkCallback,
         userdata: Pointer[NoneType, MutUntrackedOrigin],
     ) raises -> HttpResponse:
+        return self.perform_stream_cancellable(
+            request, callback, userdata, CancellationToken()
+        )
+
+    def perform_stream_cancellable(
+        mut self,
+        request: HttpRequest,
+        callback: HttpChunkCallback,
+        userdata: Pointer[NoneType, MutUntrackedOrigin],
+        cancel: CancellationToken,
+    ) raises -> HttpResponse:
         self.requests.append(request.copy())
         if len(self.responses) == 0:
             raise Error("MockTransport has no queued response")
         var response = self.responses.pop(0)
         var response_chunks = self.chunks.pop(0)
         for chunk in response_chunks:
+            if cancel.is_cancelled():
+                raise Error("operation cancelled")
             callback(chunk, userdata)
+            if cancel.is_cancelled():
+                raise Error("operation cancelled")
         return response^
 
 

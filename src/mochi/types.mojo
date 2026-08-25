@@ -1,5 +1,10 @@
 """Core, provider-neutral domain types for Mochi."""
 
+from std.ffi import c_int, external_call
+
+
+comptime _CancellationHandle = MutPointer[NoneType, MutUntrackedOrigin]
+
 
 @fieldwise_init
 struct ToolCall(Copyable, Movable):
@@ -78,19 +83,51 @@ struct ProviderEvent(Copyable, Movable):
 
 
 struct CancellationToken(Copyable, Movable):
-    """A lightweight cooperative cancellation flag."""
+    """A shared, thread-safe hierarchical cooperative cancellation token."""
 
-    var _cancelled: Bool
+    var _handle: _CancellationHandle
 
     def __init__(out self):
-        self._cancelled = False
+        self._handle = external_call[
+            "mochi_cancellation_new", _CancellationHandle
+        ]()
 
-    def cancel(mut self):
-        self._cancelled = True
+    def __init__(out self, *, copy: Self):
+        self._handle = copy._handle
+        external_call["mochi_cancellation_retain", NoneType](self._handle)
+
+    def __deinit__(deinit self):
+        external_call["mochi_cancellation_release", NoneType](self._handle)
+
+    def cancel(self):
+        external_call["mochi_cancellation_cancel", NoneType](self._handle)
 
     def is_cancelled(self) -> Bool:
-        return self._cancelled
+        return Bool(
+            external_call["mochi_cancellation_is_cancelled", c_int](
+                self._handle
+            )
+        )
 
     def check(self) raises:
-        if self._cancelled:
+        if self.is_cancelled():
             raise Error("operation cancelled")
+
+    def cancel_after(self, milliseconds: Int) raises:
+        if milliseconds < 0:
+            raise Error("cancellation delay must not be negative")
+        var result = external_call[
+            "mochi_cancellation_cancel_after", c_int
+        ](self._handle, c_int(milliseconds))
+        if result != 0:
+            raise Error("unable to schedule cancellation")
+
+    def child(self) -> Self:
+        return Self(
+            _child_handle=external_call[
+                "mochi_cancellation_child", _CancellationHandle
+            ](self._handle)
+        )
+
+    def __init__(out self, *, _child_handle: _CancellationHandle):
+        self._handle = _child_handle

@@ -5,8 +5,8 @@ line over standard input/output.  This module deliberately does not load shared
 libraries or depend on Python.
 """
 
-from std.ffi import c_char, c_int, c_pid_t, external_call
-from std.sys._libc import close, dup2, execvp, exit, pipe
+from std.ffi import CStringSlice, c_int, c_pid_t, external_call
+from std.sys._libc import close, exit, pipe
 
 from mochi.json import JsonValue, parse_json, serialize_json
 
@@ -138,20 +138,22 @@ struct PluginTransport(Movable):
             _ = close(output_fds[1])
             raise Error("unable to fork plugin process")
         if pid == 0:
-            _ = dup2(input_fds[0], c_int(0))
-            _ = dup2(output_fds[1], c_int(1))
+            _ = external_call["dup2", c_int](input_fds[0], c_int(0))
+            _ = external_call["dup2", c_int](output_fds[1], c_int(1))
             _ = close(input_fds[0])
             _ = close(input_fds[1])
             _ = close(output_fds[0])
             _ = close(output_fds[1])
-            var argv = List[OptionalPointer[mut=False, c_char, ImmutAnyOrigin]](
+            var argv = List[Optional[CStringSlice[ImmutAnyOrigin]]](
                 length=len(command) + 1, fill={}
             )
             for i in range(len(command)):
-                argv[i] = rebind[
-                    OptionalPointer[mut=False, c_char, ImmutAnyOrigin]
-                ](command[i].as_c_string_slice().ptr())
-            _ = execvp(command[0].as_c_string_slice().ptr(), argv.unsafe_ptr())
+                argv[i] = rebind[CStringSlice[ImmutAnyOrigin]](
+                    command[i].as_c_string_slice()
+                )
+            _ = external_call["execvp", c_int](
+                command[0].as_c_string_slice(), argv.unsafe_ptr()
+            )
             exit(c_int(127))
         _ = close(input_fds[0])
         _ = close(output_fds[1])

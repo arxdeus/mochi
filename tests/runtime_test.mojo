@@ -8,6 +8,7 @@ from mochi.runtime import (
     ToolDefinition,
     apply_scripted_response,
     build_request_body,
+    build_responses_request_body,
     message_json,
 )
 from mochi.tools import ToolRegistry, ToolResult
@@ -52,6 +53,24 @@ def test_request_body_messages_and_tool_definitions() raises:
     var raw_tool = body.get("tools").array_value[0].copy()
     assert_equal(raw_tool.get("type").string_value, "function")
     assert_equal(raw_tool.get("function").get("name").string_value, "read")
+
+
+def test_responses_request_body() raises:
+    var messages: List[Message] = [Message("user", "inspect")]
+    var assistant = Message("assistant", "checking")
+    assistant.add_tool_call(ToolCall("call-1", "read", '{"path":"a.txt"}'))
+    messages.append(assistant^)
+    var output = Message("tool", "contents")
+    output.tool_call_id = "call-1"
+    messages.append(output^)
+    var definitions: List[ToolDefinition] = [ToolDefinition("read", "Read", schema())]
+    var body = build_responses_request_body("gpt-codex", messages, definitions)
+    assert_true(body.get("stream").bool_value)
+    assert_false(body.get("store").bool_value)
+    assert_equal(body.get("input").array_value[0].get("content").array_value[0].get("type").string_value, "input_text")
+    assert_equal(body.get("input").array_value[2].get("type").string_value, "function_call")
+    assert_equal(body.get("input").array_value[3].get("type").string_value, "function_call_output")
+    assert_equal(body.get("tools").array_value[0].get("name").string_value, "read")
 
 
 def test_scripted_response_updates_multi_turn_state_and_usage() raises:
@@ -154,6 +173,23 @@ def test_remote_mcp_plugin_registration_and_dispatch() raises:
         CancellationToken(),
     )
     assert_equal(runtime.messages[len(runtime.messages) - 1].content, '{"content":"formatted"}')
+
+
+def test_provider_error_is_visible_in_result() raises:
+    var spec = ProviderSpec("fixture", "https://invalid.local")
+    spec.max_retries = 0
+    var provider = OpenAICompatibleProvider(spec^)
+    provider.fail_with("fixture failure")
+    var runtime = Runtime(
+        provider^,
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var result = runtime.run("hello", CancellationToken())
+    assert_equal(result.stop_reason, "provider_error")
+    assert_equal(result.text, "Error: fixture failure")
+    assert_equal(result.text, runtime.messages[len(runtime.messages) - 1].content)
 
 
 def test_runtime_cancellation_max_turn_and_retry_helpers() raises:

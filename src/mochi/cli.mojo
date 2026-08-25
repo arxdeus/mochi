@@ -33,6 +33,8 @@ struct CliConfig(Copyable, Movable):
     var prompt: Optional[String]
     var show_help: Bool
     var show_version: Bool
+    var openai_oauth: Bool
+    var openai_oauth_login: Bool
 
     def __init__(out self):
         self.model = DEFAULT_MODEL
@@ -47,9 +49,12 @@ struct CliConfig(Copyable, Movable):
         self.prompt = None
         self.show_help = False
         self.show_version = False
+        self.openai_oauth = False
+        self.openai_oauth_login = False
 
     def provider_spec(self) -> ProviderSpec:
         var spec = ProviderSpec("custom", self.provider_url)
+        spec.responses_api = self.openai_oauth
         for key in self.provider_keys:
             spec.add_api_key(key)
         if len(spec.api_keys) == 0:
@@ -70,6 +75,10 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
             config.show_version = True
         elif argument == "--print":
             config.print_mode = True
+        elif argument == "--openai-oauth":
+            config.openai_oauth = True
+        elif argument == "--openai-oauth-login":
+            config.openai_oauth_login = True
         elif argument == "--yolo":
             config.yolo = True
         elif argument == "--model":
@@ -107,6 +116,12 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
         else:
             config.prompt = Optional(argument.copy())
         index += 1
+    if config.openai_oauth and config.openai_oauth_login:
+        raise Error("--openai-oauth and --openai-oauth-login cannot be combined")
+    if config.openai_oauth and len(config.provider_keys) > 0:
+        raise Error("--openai-oauth cannot be combined with --provider-key")
+    if config.openai_oauth and config.provider_url != DEFAULT_PROVIDER_URL:
+        raise Error("--openai-oauth cannot be combined with --provider-url")
     return config^
 
 
@@ -209,6 +224,8 @@ Options:
       --model MODEL             Model name (default: gpt-4.1-mini)
       --provider-url URL        OpenAI-compatible API base URL
       --provider-key KEY        API key; may be repeated
+      --openai-oauth            Use ChatGPT/Codex OAuth Responses API
+      --openai-oauth-login      Log in to ChatGPT/Codex with a device code
       --print                   Read one prompt from stdin when PROMPT is absent
       --output-format FORMAT    text, json, or stream-json
       --yolo                    Allow tool operations without prompting

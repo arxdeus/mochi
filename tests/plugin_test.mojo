@@ -7,6 +7,7 @@ from mochi.plugin import (
     METHOD_SHUTDOWN,
     PLUGIN_PROTOCOL_VERSION,
     PluginClient,
+    PluginExecutable,
     PluginProtocol,
     PluginRegistration,
     PluginTransport,
@@ -130,6 +131,18 @@ def test_transport_codec_and_client_orchestration() raises:
     assert_equal(client.protocol.state, PluginProtocol.CLOSED)
     var shutdown = RpcMessage.parse(client.transport.fixture_writes[3])
     assert_equal(shutdown.method, METHOD_SHUTDOWN)
+
+
+def test_transport_cancel_terminates_owned_child() raises:
+    var executable = PluginExecutable("/bin/sh")
+    executable.add_argument("-c")
+    executable.add_argument("sleep 30")
+    var transport = PluginTransport.spawn(executable)
+    assert_true(transport.pid > 0)
+    transport.cancel()
+    assert_equal(Int(transport.pid), -1)
+    assert_equal(Int(transport.write_fd), -1)
+    assert_equal(Int(transport.read_fd), -1)
 
 
 def test_transport_codec_rejects_unconnected_send() raises:

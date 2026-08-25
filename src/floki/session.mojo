@@ -9,6 +9,8 @@ from std.ffi import c_char, c_size_t
 from mojo_curl import CurlList, Easy, Result
 from mojo_curl.c.types import MutExternalPointer
 
+from mochi.types import CancellationToken
+
 
 comptime ChunkCallback = def(String, Pointer[NoneType, MutUntrackedOrigin]) thin -> None
 
@@ -25,12 +27,19 @@ struct _StreamState(Movable):
     var userdata: Pointer[NoneType, MutUntrackedOrigin]
     var body: String
     var error: String
+    var cancel: CancellationToken
 
-    def __init__(out self, callback: ChunkCallback, userdata: Pointer[NoneType, MutUntrackedOrigin]):
+    def __init__(
+        out self,
+        callback: ChunkCallback,
+        userdata: Pointer[NoneType, MutUntrackedOrigin],
+        var cancel: CancellationToken,
+    ):
         self.callback = callback
         self.userdata = userdata
         self.body = ""
         self.error = ""
+        self.cancel = cancel^
 
 
 def _write_stream(
@@ -41,10 +50,14 @@ def _write_stream(
 ) abi("C") -> c_size_t:
     var byte_count = Int(size * count)
     var state = userdata.unsafe_bitcast[_StreamState]()
+    if state[].cancel.is_cancelled():
+        return 0
     var bytes = contents.unsafe_bitcast[UInt8]()
     var chunk = String(unsafe_from_utf8=Span(unsafe_ptr=bytes, length=byte_count))
     state[].body += chunk
     state[].callback(chunk^, state[].userdata)
+    if state[].cancel.is_cancelled():
+        return 0
     if state[].error != "":
         return 0
     return size * count
@@ -70,7 +83,15 @@ struct Session(Movable):
             _ = chunk
             _ = userdata
 
-        return self.request_stream(method, url, headers, body, timeout_ms, collect, Pointer(to=self).unsafe_bitcast[NoneType]())
+        return self.request_stream(
+            method,
+            url,
+            headers,
+            body,
+            timeout_ms,
+            collect,
+            Pointer(to=self).unsafe_bitcast[NoneType](),
+        )
 
     def request_stream(
         mut self,
@@ -82,6 +103,30 @@ struct Session(Movable):
         callback: ChunkCallback,
         userdata: Pointer[NoneType, MutUntrackedOrigin],
     ) raises -> Response:
+        return self.request_stream_cancellable(
+            method,
+            url,
+            headers,
+            body,
+            timeout_ms,
+            callback,
+            userdata,
+            CancellationToken(),
+        )
+
+    def request_stream_cancellable(
+        mut self,
+        method: String,
+        url: String,
+        headers: List[String],
+        body: String,
+        timeout_ms: Int,
+        callback: ChunkCallback,
+        userdata: Pointer[NoneType, MutUntrackedOrigin],
+        var cancel: CancellationToken,
+    ) raises -> Response:
+        if cancel.is_cancelled():
+            raise Error("operation cancelled")
         self.easy.reset()
         self._check(self.easy.url(url), "URL")
         self._check(self.easy.signal(signal=False), "signal mode")
@@ -103,13 +148,15 @@ struct Session(Movable):
             if not header_list.is_empty():
                 self._check(self.easy.http_headers(header_list), "headers")
 
-            var state = _StreamState(callback, userdata)
+            var state = _StreamState(callback, userdata, cancel^)
             self._check(self.easy.write_function(_write_stream), "write callback")
             self._check(
                 self.easy.write_data(Pointer(to=state).unsafe_bitcast[NoneType]()),
                 "write callback data",
             )
             var result = self.easy.perform()
+            if state.cancel.is_cancelled():
+                raise Error("operation cancelled")
             if state.error != "":
                 raise Error("HTTP stream callback failed: " + state.error)
             if result != Result.OK:

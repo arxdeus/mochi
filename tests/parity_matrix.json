@@ -1,0 +1,370 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "tontinton/maki",
+    "commit": "4296034c0ec1a6cbf0b2474585011006c225df98"
+  },
+  "statuses": [
+    "missing",
+    "partial",
+    "parity",
+    "blocked"
+  ],
+  "check_kinds": [
+    "local",
+    "differential"
+  ],
+  "behaviors": [
+    {
+      "id": "agent.provider_error.result",
+      "area": "agent",
+      "owner": "mochi_agent",
+      "status": "partial",
+      "description": "A provider failure produces non-empty result text equal to the persisted assistant error message.",
+      "upstream_refs": [
+        "maki-agent/src/types.rs:553-629",
+        "maki-ui/src/app/tests.rs:332-340",
+        "maki-ui/src/components/status_bar.rs:171-174"
+      ],
+      "mojo_refs": [
+        "src/mochi/runtime.mojo:130-137",
+        "tests/runtime_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run sh -c 'mojo build -I src tests/runtime_test.mojo -o /tmp/mochi-runtime-test && /tmp/mochi-runtime-test'",
+          "normalization": "Exact stop reason, error text, and persisted assistant message."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Typed agent error event/result semantics, then CLI stdout/stderr/exit behavior in separate behavior IDs."
+        }
+      }
+    },
+    {
+      "id": "provider.openai.chat.streaming",
+      "area": "providers",
+      "owner": "mochi_provider",
+      "status": "partial",
+      "description": "Incremental OpenAI-compatible Chat Completions SSE text, usage, and tool-call assembly.",
+      "upstream_refs": [
+        "maki-providers/src/providers/openai_compat.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/provider.mojo",
+        "tests/provider_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run sh -c 'mojo build -I src tests/provider_test.mojo -o /tmp/mochi-provider-test && /tmp/mochi-provider-test'",
+          "normalization": "ProviderResult text, tool calls, usage, stop reason."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Reasoning, cache usage, error mapping, and complete tool-call edge cases."
+        }
+      }
+    },
+    {
+      "id": "storage.session.v2.truncated_tail",
+      "area": "storage",
+      "owner": "mochi_storage",
+      "status": "parity",
+      "description": "Read/write Maki v2 JSONL and recover a truncated final record.",
+      "upstream_refs": [
+        "maki-storage/src/sessions.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/session.mojo",
+        "tests/session_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run sh -c 'mojo build -I src tests/session_test.mojo -o /tmp/mochi-session-test && /tmp/mochi-session-test'",
+          "normalization": "Decoded records and metadata."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity storage.session.v2.truncated_tail",
+          "mojo_command": "pixi run parity storage.session.v2.truncated_tail",
+          "normalization": "Both pinned upstream oracle and Mojo behavior test must pass; deterministic semantic assertion."
+        }
+      }
+    },
+    {
+      "id": "permissions.deny_precedence",
+      "area": "permissions",
+      "owner": "mochi_agent",
+      "status": "parity",
+      "description": "Deny rules override allow and yolo decisions.",
+      "upstream_refs": [
+        "maki-agent/src/permissions.rs:452-590"
+      ],
+      "mojo_refs": [
+        "src/mochi/permissions.mojo",
+        "tests/permissions_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run sh -c 'mojo build -I src tests/permissions_test.mojo -o /tmp/mochi-permissions-test && /tmp/mochi-permissions-test'",
+          "normalization": "Permission effect and matched scopes."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity permissions.deny_precedence",
+          "mojo_command": "pixi run parity permissions.deny_precedence",
+          "normalization": "Both pinned upstream oracle and Mojo behavior test must pass; deterministic semantic assertion."
+        }
+      }
+    },
+    {
+      "id": "mcp.streamable_http.basic",
+      "area": "mcp",
+      "owner": "mochi_mcp",
+      "status": "partial",
+      "description": "MCP initialize/list/call over stdio and Streamable HTTP with JSON/SSE.",
+      "upstream_refs": [
+        "maki-agent/src/mcp"
+      ],
+      "mojo_refs": [
+        "src/mochi/mcp.mojo",
+        "tests/mcp_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run sh -c 'mojo build -I src tests/mcp_test.mojo -o /tmp/mochi-mcp-test && /tmp/mochi-mcp-test'",
+          "normalization": "JSON-RPC envelopes/results."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "OAuth, manager lifecycle, protocol-version, and live agent dispatch."
+        }
+      }
+    },
+    {
+      "id": "extension.executable.lifecycle",
+      "area": "extensions",
+      "owner": "mochi_extension",
+      "status": "partial",
+      "description": "Mojo executable extension handshake/register/invoke/shutdown lifecycle.",
+      "upstream_refs": [
+        "maki-lua/src/loader.rs",
+        "maki-lua/src/api"
+      ],
+      "mojo_refs": [
+        "src/mochi/plugin.mojo",
+        "tests/plugin_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run sh -c 'mojo build -I src tests/plugin_test.mojo -o /tmp/mochi-plugin-test && /tmp/mochi-plugin-test'",
+          "normalization": "Protocol state and errors."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Host callbacks, events, commands/keymaps, and reload."
+        }
+      }
+    },
+    {
+      "id": "contracts.domain.adt",
+      "area": "core",
+      "owner": "mochi_core",
+      "status": "partial",
+      "description": "Canonical provider-neutral content, message, usage, model, and error contracts compile and preserve tagged variants.",
+      "upstream_refs": [],
+      "mojo_refs": [
+        "src/mochi/domain.mojo",
+        "tests/domain_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact deterministic contract assertions."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+        }
+      }
+    },
+    {
+      "id": "contracts.provider.fake",
+      "area": "providers",
+      "owner": "mochi_provider",
+      "status": "partial",
+      "description": "Provider request/event/cancellation contract compiles against a deterministic FIFO fake.",
+      "upstream_refs": [],
+      "mojo_refs": [
+        "src/mochi/provider_contract.mojo",
+        "tests/provider_contract_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact deterministic contract assertions."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+        }
+      }
+    },
+    {
+      "id": "contracts.invocation.fake",
+      "area": "tools",
+      "owner": "mochi_tools",
+      "status": "partial",
+      "description": "Unified invocation lifecycle, audience, cancellation, rich result, and bounded trace contract compiles against a deterministic fake.",
+      "upstream_refs": [],
+      "mojo_refs": [
+        "src/mochi/invocation.mojo",
+        "tests/invocation_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact deterministic contract assertions."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+        }
+      }
+    },
+    {
+      "id": "contracts.storage.codecs",
+      "area": "storage",
+      "owner": "mochi_storage",
+      "status": "partial",
+      "description": "Storage paths, IDs, session references, and auth codecs have deterministic golden checks.",
+      "upstream_refs": [],
+      "mojo_refs": [
+        "src/mochi/storage.mojo",
+        "tests/storage_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact deterministic contract assertions."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+        }
+      }
+    },
+    {
+      "id": "contracts.extension.v1",
+      "area": "extensions",
+      "owner": "mochi_extension",
+      "status": "partial",
+      "description": "Executable extension v1 capabilities and bidirectional envelopes have golden codecs and bounded session behavior.",
+      "upstream_refs": [],
+      "mojo_refs": [
+        "src/mochi/extension_contract.mojo",
+        "tests/extension_contract_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact deterministic contract assertions."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+        }
+      }
+    },
+    {
+      "id": "contracts.ui.transcript.v1",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "partial",
+      "description": "Terminal-independent reducer emits a versioned deterministic transcript.",
+      "upstream_refs": [],
+      "mojo_refs": [
+        "src/mochi/ui.mojo",
+        "tests/ui_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact deterministic contract assertions."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+        }
+      }
+    },
+    {
+      "id": "cancellation.http.active",
+      "area": "http",
+      "owner": "mochi_http",
+      "status": "partial",
+      "description": "Cancellation aborts an active production Floki/curl transfer against a native local HTTP fixture.",
+      "upstream_refs": [],
+      "mojo_refs": [
+        "src/floki/session.mojo",
+        "tests/http_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact deterministic contract assertions."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+        }
+      }
+    },
+    {
+      "id": "cancellation.process.active",
+      "area": "extensions",
+      "owner": "mochi_extension",
+      "status": "partial",
+      "description": "Cancellation terminates and reaps an active owned child process.",
+      "upstream_refs": [],
+      "mojo_refs": [
+        "src/mochi/plugin.mojo",
+        "tests/plugin_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact deterministic contract assertions."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+        }
+      }
+    }
+  ]
+}

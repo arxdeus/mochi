@@ -1,4 +1,4 @@
-from std.testing import TestSuite, assert_equal, assert_false, assert_true
+from std.testing import TestSuite, assert_equal, assert_false, assert_raises, assert_true
 
 from mochi.cli import parse_args, standard_tool_definitions
 
@@ -26,6 +26,23 @@ def test_all_options() raises:
     assert_equal(config.mcp_stdio[0].name, "local")
     assert_equal(config.mcp_http[0].value, "https://example.test/mcp")
     assert_equal(config.prompt.value(), "hello")
+
+
+def test_openai_oauth_login_command() raises:
+    var config = parse_args(["--openai-oauth-login"])
+    assert_true(config.openai_oauth_login)
+    assert_false(config.openai_oauth)
+    var inference = parse_args(["--openai-oauth"])
+    assert_true(inference.provider_spec().responses_api)
+
+
+def test_openai_oauth_rejects_conflicting_provider_options() raises:
+    with assert_raises():
+        _ = parse_args(["--openai-oauth", "--provider-key", "secret"])
+    with assert_raises():
+        _ = parse_args(["--openai-oauth", "--provider-url", "https://example.test"])
+    with assert_raises():
+        _ = parse_args(["--openai-oauth", "--openai-oauth-login"])
 
 
 def test_invalid_output_format() raises:

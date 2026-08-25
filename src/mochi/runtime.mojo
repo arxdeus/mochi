@@ -113,6 +113,8 @@ struct Runtime:
         self.remote.enqueue_result(name^, result^)
 
     def request_body(self) raises -> JsonValue:
+        if self.provider.spec.responses_api:
+            return build_responses_request_body(self.model, self.messages, self.definitions)
         return build_request_body(self.model, self.messages, self.definitions)
 
     def run(mut self, prompt: String, cancel: CancellationToken) -> RuntimeResult:
@@ -130,8 +132,7 @@ struct Runtime:
             except error:
                 if cancel.is_cancelled():
                     return self._result(final_text, usage, completed_turns, "cancelled")
-                self.messages.append(Message("assistant", "Error: " + String(error)))
-                return self._result(final_text, usage, completed_turns, "provider_error")
+                return self._provider_error(String(error), usage, completed_turns)
             usage.add(response.usage)
             completed_turns = turn
             self.messages.append(response.message.copy())
@@ -231,6 +232,13 @@ struct Runtime:
         self.compactions += 1
         return True
 
+    def _provider_error(
+        mut self, error: String, usage: Usage, turns: Int
+    ) -> RuntimeResult:
+        var message = "Error: " + error
+        self.messages.append(Message("assistant", message))
+        return self._result(message^, usage, turns, "provider_error")
+
     def _result(
         self, text: String, usage: Usage, turns: Int, reason: String
     ) -> RuntimeResult:
@@ -269,6 +277,58 @@ def build_request_body(
             raw_tools.append(tool^)
         body.set("tools", raw_tools^)
         body.set("tool_choice", JsonValue.string("auto"))
+    return body^
+
+
+def build_responses_request_body(
+    model: String, messages: List[Message], definitions: List[ToolDefinition]
+) raises -> JsonValue:
+    var body = JsonValue.object()
+    body.set("model", JsonValue.string(model))
+    body.set("stream", JsonValue.boolean(True))
+    body.set("store", JsonValue.boolean(False))
+    var input = JsonValue.array()
+    for message in messages:
+        if message.role == "tool":
+            var output = JsonValue.object()
+            output.set("type", JsonValue.string("function_call_output"))
+            output.set("call_id", JsonValue.string(message.tool_call_id))
+            output.set("output", JsonValue.string(message.content))
+            input.append(output^)
+            continue
+        if message.content != "":
+            var item = JsonValue.object()
+            item.set("type", JsonValue.string("message"))
+            item.set("role", JsonValue.string(message.role))
+            var content = JsonValue.array()
+            var part = JsonValue.object()
+            var kind = "input_text"
+            if message.role == "assistant":
+                kind = "output_text"
+            part.set("type", JsonValue.string(kind))
+            part.set("text", JsonValue.string(message.content))
+            content.append(part^)
+            item.set("content", content^)
+            input.append(item^)
+        for call in message.tool_calls:
+            var raw_call = JsonValue.object()
+            raw_call.set("type", JsonValue.string("function_call"))
+            raw_call.set("call_id", JsonValue.string(call.id))
+            raw_call.set("name", JsonValue.string(call.name))
+            raw_call.set("arguments", JsonValue.string(call.arguments))
+            input.append(raw_call^)
+    body.set("input", input^)
+    if len(definitions) > 0:
+        var tools = JsonValue.array()
+        for definition in definitions:
+            var tool = JsonValue.object()
+            tool.set("type", JsonValue.string("function"))
+            tool.set("name", JsonValue.string(definition.name))
+            tool.set("description", JsonValue.string(definition.description))
+            tool.set("parameters", definition.parameters.copy())
+            tool.set("strict", JsonValue.boolean(False))
+            tools.append(tool^)
+        body.set("tools", tools^)
     return body^
 
 

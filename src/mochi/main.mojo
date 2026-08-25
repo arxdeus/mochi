@@ -1,5 +1,6 @@
-from std.ffi import CStringSlice, c_int, c_pid_t, external_call
+from std.ffi import CStringSlice, c_int, c_long, c_pid_t, external_call
 from std.os import Process
+from std.os.path import exists
 from std.sys import argv
 from std.sys._libc import close, exit, pipe
 
@@ -12,11 +13,20 @@ from mochi.cli import (
     standard_tool_definitions,
     validate_protocol_metadata,
 )
+from mochi.http import FlokiTransport
 from mochi.json import JsonValue, serialize_json
 from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
 from mochi.permissions import PermissionEffect, PermissionManager
 from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
-from mochi.provider import OpenAICompatibleProvider
+from mochi.provider import (
+    OpenAICompatibleProvider,
+    OpenAIOAuthCredentials,
+    load_openai_oauth_credentials,
+    openai_oauth_credentials_path,
+    openai_device_login_with,
+    refresh_openai_oauth_with,
+    save_openai_oauth_credentials,
+)
 from mochi.runtime import Runtime, RuntimeResult
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken
@@ -35,14 +45,30 @@ def main() raises:
     if config.show_version:
         print("mochi", VERSION)
         return
+    if config.openai_oauth_login:
+        var transport = FlokiTransport()
+        _ = openai_device_login_with(transport, _now_ms())
+        print("Authenticated successfully.")
+        return
 
     validate_protocol_metadata(config)
     var registry = ToolRegistry(".")
     var permissions = PermissionManager(
         PermissionEffect.prompt(), yolo=config.yolo
     )
+    var spec = config.provider_spec()
+    var provider = OpenAICompatibleProvider(spec.copy())
+    if config.openai_oauth:
+        var credentials = load_openai_oauth_credentials()
+        if credentials.expired(_now_ms()):
+            var transport = FlokiTransport()
+            credentials = refresh_openai_oauth_with(transport, credentials, _now_ms())
+            save_openai_oauth_credentials(credentials)
+        spec.account_id = credentials.account_id
+        provider = OpenAICompatibleProvider(spec^)
+        provider.set_oauth(credentials.oauth_state())
     var runtime = Runtime(
-        OpenAICompatibleProvider(config.provider_spec()),
+        provider^,
         registry^,
         permissions^,
         config.model,
@@ -99,6 +125,12 @@ def main() raises:
         _cleanup(http_transports, plugin_clients)
         raise error
     _cleanup(http_transports, plugin_clients)
+
+
+def _now_ms() -> Int:
+    var seconds: c_long = 0
+    _ = external_call["time", c_long](Pointer(to=seconds))
+    return Int(seconds) * 1000
 
 
 def _spawn_stdio(var command: List[String]) raises -> StdioTransport:
@@ -181,27 +213,100 @@ def _interactive(mut runtime: Runtime, output_format: String) raises:
         var line = _read_line()
         if not line:
             return
-        var prompt = line.value()
+        var prompt = String(line.value().strip())
         if prompt == "exit" or prompt == "quit":
             return
-        if prompt != "":
+        if prompt == "/login":
+            _interactive_login(runtime)
+        elif prompt == "/model" or prompt.startswith("/model "):
+            _interactive_model(runtime, prompt)
+        elif prompt == "/help":
+            print("Commands: /login, /model [MODEL], /help, exit")
+        elif prompt != "":
             _run_prompt(runtime, prompt^, output_format)
 
 
+def _interactive_login(mut runtime: Runtime):
+    try:
+        var path = openai_oauth_credentials_path()
+        var credentials: OpenAIOAuthCredentials
+        if exists(path):
+            credentials = load_openai_oauth_credentials(path)
+            if credentials.expired(_now_ms()):
+                var transport = FlokiTransport()
+                credentials = refresh_openai_oauth_with(
+                    transport, credentials, _now_ms()
+                )
+                save_openai_oauth_credentials(credentials, path)
+                print("OpenAI OAuth session refreshed.")
+            else:
+                print("Using cached OpenAI OAuth session.")
+        else:
+            var transport = FlokiTransport()
+            credentials = openai_device_login_with(transport, _now_ms(), path)
+            print("Authenticated successfully.")
+        runtime.provider.spec.responses_api = True
+        runtime.provider.spec.account_id = credentials.account_id
+        runtime.provider.set_oauth(credentials.oauth_state())
+        if "codex" not in runtime.model:
+            runtime.model = "gpt-5.3-codex"
+        print("Model:", runtime.model)
+    except error:
+        print("Login failed:", error)
+
+
+def _interactive_model(mut runtime: Runtime, command: String) raises:
+    var requested = String(command.removeprefix("/model").strip())
+    if requested != "":
+        runtime.model = requested^
+        print("Model:", runtime.model)
+        return
+    var models: List[String] = [
+        "gpt-5.3-codex",
+        "gpt-5.2-codex",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex-mini",
+    ]
+    print("Current model:", runtime.model)
+    for i in range(len(models)):
+        print(String(i + 1) + ")", models[i])
+    print("Choose a number or enter a model ID: ", end="")
+    var selection = _read_line()
+    if not selection:
+        return
+    var value = String(selection.value().strip())
+    var index = _decimal(value)
+    if index > 0 and index <= len(models):
+        runtime.model = models[index - 1]
+    elif value != "":
+        runtime.model = value^
+    print("Model:", runtime.model)
+
+
+def _decimal(value: String) -> Int:
+    if value == "":
+        return -1
+    var result = 0
+    for cp in value.codepoints():
+        var digit = Int(cp.to_u32()) - 48
+        if digit < 0 or digit > 9:
+            return -1
+        result = result * 10 + digit
+    return result
+
+
 def _read_line() raises -> Optional[String]:
-    var reader = FileDescriptor(0)
     var result = String("")
     while True:
-        var buffer = Array[Byte, 1](fill=0)
-        var count = reader.read_bytes(buffer)
-        if count <= 0:
+        var byte = external_call["getchar", c_int]()
+        if byte < 0:
             if result == "":
                 return None
             return Optional(result^)
-        if UInt8(buffer[0]) == 10:
+        if byte == 10:
             return Optional(result^)
-        if UInt8(buffer[0]) != 13:
-            result += String(buffer[0])
+        if byte != 13:
+            result += chr(Int(byte))
 
 
 def _print_result(result: RuntimeResult, output_format: String):

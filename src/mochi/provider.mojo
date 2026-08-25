@@ -1,8 +1,21 @@
 """Provider-neutral state and an OpenAI-compatible provider implementation."""
 
+from std.ffi import c_int, c_long, external_call
+from std.os import getenv, makedirs, remove
+from std.time import sleep
+
 from mochi.http import FlokiTransport, HttpHeader, HttpRequest, HttpResponse, HttpTransport
 from mochi.json import JsonValue, parse_json, serialize_json
 from mochi.types import Message, ProviderEvent, ToolCall, Usage
+
+
+comptime OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+comptime OPENAI_DEVICE_CODE_URL = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+comptime OPENAI_DEVICE_TOKEN_URL = "https://auth.openai.com/api/accounts/deviceauth/token"
+comptime OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
+comptime OPENAI_DEVICE_AUTH_URL = "https://auth.openai.com/codex/device"
+comptime OPENAI_REDIRECT_URI = "https://auth.openai.com/deviceauth/callback"
+comptime OPENAI_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 
 
 @fieldwise_init
@@ -15,6 +28,8 @@ struct ProviderSpec(Copyable, Movable):
     var auth_prefix: String
     var max_retries: Int
     var timeout_ms: Int
+    var responses_api: Bool
+    var account_id: String
 
     def __init__(out self, name: String, base_url: String):
         self.name = name
@@ -25,6 +40,8 @@ struct ProviderSpec(Copyable, Movable):
         self.auth_prefix = "Bearer "
         self.max_retries = 3
         self.timeout_ms = 120000
+        self.responses_api = False
+        self.account_id = ""
 
     def add_api_key(mut self, key: String):
         self.api_keys.append(key)
@@ -33,6 +50,8 @@ struct ProviderSpec(Copyable, Movable):
         self.headers.append(HttpHeader(name, value))
 
     def chat_url(self) -> String:
+        if self.responses_api:
+            return OPENAI_RESPONSES_URL
         if self.base_url.endswith("/"):
             return self.base_url + "chat/completions"
         return self.base_url + "/chat/completions"
@@ -190,6 +209,224 @@ struct OAuthState(Copyable, Movable):
             self.expires_at_ms = now_ms + expires_in * 1000
 
 
+@fieldwise_init
+struct OpenAIOAuthCredentials(Copyable, Movable):
+    var access_token: String
+    var refresh_token: String
+    var expires_at_ms: Int
+    var account_id: String
+
+    def expired(self, now_ms: Int, margin_ms: Int = 30000) -> Bool:
+        return self.expires_at_ms > 0 and now_ms + margin_ms >= self.expires_at_ms
+
+    def oauth_state(self) -> OAuthState:
+        var state = OAuthState()
+        state.access_token = self.access_token
+        state.refresh_token = self.refresh_token
+        state.expires_at_ms = self.expires_at_ms
+        state.token_url = OPENAI_OAUTH_TOKEN_URL
+        state.client_id = OPENAI_CLIENT_ID
+        return state^
+
+
+def openai_oauth_credentials_path() raises -> String:
+    var root = getenv("XDG_CONFIG_HOME", "")
+    if root == "":
+        root = getenv("HOME", "")
+        if root == "":
+            raise Error("HOME and XDG_CONFIG_HOME are unset")
+        root += "/.config"
+    return root + "/mochi/openai_oauth.json"
+
+
+def load_openai_oauth_credentials(path: String = "") raises -> OpenAIOAuthCredentials:
+    var resolved = path
+    if resolved == "":
+        resolved = openai_oauth_credentials_path()
+    var root = parse_json(open(resolved, "r").read())
+    var credentials = OpenAIOAuthCredentials(
+        _string_or(root, "access_token", ""),
+        _string_or(root, "refresh_token", ""),
+        _int_or(root, "expires_at_ms", 0),
+        _string_or(root, "account_id", ""),
+    )
+    if credentials.access_token == "":
+        raise Error("cached OpenAI OAuth credentials have no access token")
+    if credentials.account_id == "":
+        credentials.account_id = extract_chatgpt_account_id(credentials.access_token)
+    return credentials^
+
+
+def save_openai_oauth_credentials(credentials: OpenAIOAuthCredentials, path: String = "") raises:
+    var resolved = path
+    if resolved == "":
+        resolved = openai_oauth_credentials_path()
+    var separator = _last_byte(resolved, UInt8(47))
+    if separator > 0:
+        makedirs(_byte_prefix(resolved, separator), exist_ok=True)
+    var root = JsonValue.object()
+    root.set("access_token", JsonValue.string(credentials.access_token))
+    root.set("refresh_token", JsonValue.string(credentials.refresh_token))
+    root.set("expires_at_ms", JsonValue.integer(credentials.expires_at_ms))
+    root.set("account_id", JsonValue.string(credentials.account_id))
+    var temporary = resolved + ".tmp"
+    try:
+        with open(temporary, "w") as file:
+            file.write(serialize_json(root))
+        var status = external_call["chmod", c_int](
+            temporary.as_c_string_slice(), UInt32(0o600)
+        )
+        if status != 0:
+            raise Error("unable to protect OpenAI OAuth credentials")
+        status = external_call["rename", c_int](
+            temporary.as_c_string_slice(), resolved.as_c_string_slice()
+        )
+        if status != 0:
+            raise Error("unable to save OpenAI OAuth credentials")
+    except error:
+        try:
+            remove(temporary)
+        except:
+            pass
+        raise error
+
+
+def extract_chatgpt_account_id(token: String) -> String:
+    var parts = token.split(".")
+    if len(parts) != 3:
+        return ""
+    try:
+        var claims = parse_json(base64url_decode(String(parts[1])))
+        var direct = _string_or(claims, "chatgpt_account_id", "")
+        if direct != "":
+            return direct^
+        if claims.contains("https://api.openai.com/auth"):
+            var auth = claims.get("https://api.openai.com/auth")
+            var namespaced = _string_or(auth, "chatgpt_account_id", "")
+            if namespaced != "":
+                return namespaced^
+        if claims.contains("organizations"):
+            var organizations = claims.get("organizations")
+            if organizations.kind == JsonValue.ARRAY and len(organizations.array_value) > 0:
+                return _string_or(organizations.array_value[0], "id", "")
+    except:
+        pass
+    return ""
+
+
+def base64url_decode(value: String) raises -> String:
+    var output = String("")
+    var accumulator = 0
+    var bits = 0
+    for i in range(value.byte_length()):
+        var byte = Int(UInt8(ord(value[byte=i])))
+        if byte == 61:
+            break
+        var digit = _base64_digit(byte)
+        if digit < 0:
+            raise Error("invalid base64url payload")
+        accumulator = (accumulator << 6) | digit
+        bits += 6
+        if bits >= 8:
+            bits -= 8
+            output += chr((accumulator >> bits) & 255)
+    return output^
+
+
+def refresh_openai_oauth_with[T: HttpTransport](
+    mut transport: T, credentials: OpenAIOAuthCredentials, now_ms: Int
+) raises -> OpenAIOAuthCredentials:
+    var state = credentials.oauth_state()
+    var response = transport.perform(state.refresh_request())
+    if response.status < 200 or response.status >= 300:
+        raise Error("OpenAI OAuth refresh HTTP " + String(response.status))
+    var value = parse_json(response.body)
+    var access = _string_or(value, "access_token", "")
+    if access == "":
+        raise Error("OpenAI OAuth refresh has no access_token")
+    var refresh = _string_or(value, "refresh_token", credentials.refresh_token)
+    var account = extract_chatgpt_account_id(_string_or(value, "id_token", access))
+    if account == "":
+        account = extract_chatgpt_account_id(access)
+    if account == "":
+        account = credentials.account_id
+    return OpenAIOAuthCredentials(
+        access,
+        refresh,
+        now_ms + _int_or(value, "expires_in", 3600) * 1000,
+        account,
+    )
+
+
+def openai_device_login_with[T: HttpTransport](
+    mut transport: T, now_ms: Int, path: String = "", poll_delay: Bool = True
+) raises -> OpenAIOAuthCredentials:
+    var code_request = HttpRequest("POST", OPENAI_DEVICE_CODE_URL)
+    code_request.add_header("Content-Type", "application/json")
+    code_request.body = '{"client_id":"' + OPENAI_CLIENT_ID + '"}'
+    var code_response = transport.perform(code_request)
+    if code_response.status != 200:
+        raise Error("OpenAI device code HTTP " + String(code_response.status))
+    var device = parse_json(code_response.body)
+    var device_id = _string_or(device, "device_auth_id", "")
+    var user_code = _string_or(device, "user_code", "")
+    if device_id == "" or user_code == "":
+        raise Error("OpenAI device code response is incomplete")
+    var interval = max(_int_string_or(device, "interval", 5), 1)
+    var max_polls = max(1, 300 // (interval + 3))
+    print("Open this URL in your browser:\n\n ", OPENAI_DEVICE_AUTH_URL)
+    print("Enter code:", user_code)
+    print("Waiting for authorization...")
+    var token_response = HttpResponse()
+    var polls = 0
+    while polls < max_polls:
+        polls += 1
+        if poll_delay:
+            sleep(Float64(interval + 3))
+        var poll = HttpRequest("POST", OPENAI_DEVICE_TOKEN_URL)
+        poll.add_header("Content-Type", "application/json")
+        poll.body = (
+            '{"device_auth_id":"' + device_id + '","user_code":"' + user_code + '"}'
+        )
+        token_response = transport.perform(poll)
+        if token_response.status == 200:
+            break
+        if token_response.status != 403 and token_response.status != 404:
+            raise Error("OpenAI device token HTTP " + String(token_response.status))
+    if token_response.status != 200:
+        raise Error("OpenAI device authorization timed out")
+    var device_token = parse_json(token_response.body)
+    var authorization_code = _string_or(device_token, "authorization_code", "")
+    var code_verifier = _string_or(device_token, "code_verifier", "")
+    if authorization_code == "" or code_verifier == "":
+        raise Error("OpenAI device authorization response is incomplete")
+    var exchange = HttpRequest("POST", OPENAI_OAUTH_TOKEN_URL)
+    exchange.add_header("Content-Type", "application/x-www-form-urlencoded")
+    exchange.body = (
+        "grant_type=authorization_code&code="
+        + form_encode(authorization_code)
+        + "&redirect_uri=" + form_encode(OPENAI_REDIRECT_URI)
+        + "&client_id=" + form_encode(OPENAI_CLIENT_ID)
+        + "&code_verifier=" + form_encode(code_verifier)
+    )
+    var response = transport.perform(exchange)
+    if response.status != 200:
+        raise Error("OpenAI token exchange HTTP " + String(response.status))
+    var value = parse_json(response.body)
+    var access = _string_or(value, "access_token", "")
+    var refresh = _string_or(value, "refresh_token", "")
+    if access == "" or refresh == "":
+        raise Error("OpenAI token exchange returned incomplete credentials")
+    var account = extract_chatgpt_account_id(_string_or(value, "id_token", access))
+    if account == "":
+        account = extract_chatgpt_account_id(access)
+    var credentials = OpenAIOAuthCredentials(
+        access, refresh, now_ms + _int_or(value, "expires_in", 3600) * 1000, account
+    )
+    save_openai_oauth_credentials(credentials, path)
+    return credentials^
+
+
 struct SSEParser(Copyable, Movable):
     """Incremental SSE parser supporting arbitrary transport chunk boundaries.
     """
@@ -301,6 +538,81 @@ struct OpenAIStreamParser(Copyable, Movable):
                 events.append(ProviderEvent.done(self.stop_reason))
                 continue
             var root = parse_json(payload)
+            var event_type = _string_or(root, "type", "")
+            if event_type == "response.output_text.delta":
+                var content = _string_or(root, "delta", "")
+                if content != "":
+                    events.append(ProviderEvent.text_delta(content))
+                continue
+            if event_type == "response.output_item.added":
+                var item = root.get("item")
+                if _string_or(item, "type", "") == "function_call":
+                    var part = ToolCallDelta(
+                        _int_or(root, "output_index", len(self.tools.calls)),
+                        _string_or(item, "call_id", ""),
+                        _string_or(item, "name", ""),
+                        "",
+                    )
+                    self.tools.add(part)
+                continue
+            if event_type == "response.function_call_arguments.delta":
+                var index = _int_or(root, "output_index", len(self.tools.calls) - 1)
+                if index >= 0:
+                    var arguments = String("")
+                    if root.contains("delta"):
+                        var delta = root.get("delta")
+                        if delta.kind == JsonValue.STRING:
+                            arguments = delta.string_value
+                        elif delta.kind == JsonValue.OBJECT:
+                            arguments = serialize_json(delta)
+                    self.tools.add(ToolCallDelta(index, "", "", arguments^))
+                continue
+            if event_type == "response.output_item.done":
+                var item = root.get("item")
+                if _string_or(item, "type", "") == "function_call":
+                    var index = _int_or(root, "output_index", len(self.tools.calls) - 1)
+                    if index >= 0:
+                        while len(self.tools.calls) <= index:
+                            self.tools.calls.append(ToolCall("", "", ""))
+                        var arguments = _string_or(item, "arguments", "")
+                        if arguments == "" and item.contains("arguments"):
+                            var raw_arguments = item.get("arguments")
+                            if raw_arguments.kind == JsonValue.OBJECT:
+                                arguments = serialize_json(raw_arguments)
+                        var call_id = _string_or(item, "call_id", "")
+                        var name = _string_or(item, "name", "")
+                        if call_id != "":
+                            self.tools.calls[index].id = call_id
+                        if name != "":
+                            self.tools.calls[index].name = name
+                        if arguments != "":
+                            self.tools.calls[index].arguments = arguments^
+                continue
+            if event_type == "response.completed" or event_type == "response.incomplete":
+                var response = root.get("response")
+                if response.contains("usage"):
+                    var response_usage = response.get("usage")
+                    self.usage = Usage(
+                        _int_or(response_usage, "input_tokens", 0),
+                        _int_or(response_usage, "output_tokens", 0),
+                    )
+                    events.append(ProviderEvent.usage_event(self.usage))
+                self.stop_reason = "stop"
+                if event_type == "response.incomplete":
+                    self.stop_reason = "length"
+                elif len(self.tools.calls) > 0:
+                    self.stop_reason = "tool_calls"
+                events.append(ProviderEvent.done(self.stop_reason))
+                continue
+            if event_type == "error" or event_type == "response.failed":
+                var message = String("response generation failed")
+                if root.contains("response"):
+                    var failed = root.get("response")
+                    if failed.contains("error"):
+                        message = _string_or(failed.get("error"), "message", message)
+                elif root.contains("message"):
+                    message = _string_or(root, "message", message)
+                raise Error("OpenAI Responses stream error: " + message)
             if root.contains("usage") and not root.get("usage").is_null():
                 var raw_usage = root.get("usage")
                 self.usage = Usage(
@@ -410,6 +722,7 @@ struct OpenAICompatibleProvider:
     var has_oauth: Bool
     var last_usage: Usage
     var last_status: Int
+    var fixture_error: String
 
     def __init__(out self, var spec: ProviderSpec):
         self.keys = ApiKeyState(spec.api_keys.copy())
@@ -418,10 +731,14 @@ struct OpenAICompatibleProvider:
         self.has_oauth = False
         self.last_usage = Usage()
         self.last_status = 0
+        self.fixture_error = ""
 
     def set_oauth(mut self, oauth: OAuthState):
         self.oauth = oauth.copy()
         self.has_oauth = True
+
+    def fail_with(mut self, error: String):
+        self.fixture_error = error
 
     def rotate_key(mut self) -> Bool:
         return self.keys.rotate()
@@ -439,6 +756,10 @@ struct OpenAICompatibleProvider:
         request.add_header("Accept", "text/event-stream")
         for header in self.spec.headers:
             request.add_header(header.name, header.value)
+        if self.spec.responses_api:
+            request.add_header("chatgpt-account-id", self.spec.account_id)
+            request.add_header("originator", "mochi")
+            request.add_header("OpenAI-Beta", "responses=v1")
         var token = self.auth_token()
         if token != "":
             request.add_header(
@@ -459,9 +780,23 @@ struct OpenAICompatibleProvider:
         if response.status < 200 or response.status >= 300:
             raise Error("OAuth refresh HTTP " + String(response.status))
         self.oauth.apply_refresh_response(response.body, now_ms)
+        if self.spec.responses_api:
+            var account = extract_chatgpt_account_id(self.oauth.access_token)
+            if account != "":
+                self.spec.account_id = account^
+            save_openai_oauth_credentials(
+                OpenAIOAuthCredentials(
+                    self.oauth.access_token,
+                    self.oauth.refresh_token,
+                    self.oauth.expires_at_ms,
+                    self.spec.account_id,
+                )
+            )
         return True
 
     def complete_json(mut self, body: JsonValue) raises -> ProviderResult:
+        if self.fixture_error != "":
+            raise Error(self.fixture_error)
         var transport = FlokiTransport()
         return self.complete_json_with(transport, body)
 
@@ -531,8 +866,11 @@ struct OpenAICompatibleProvider:
 
     def recover_auth(mut self, now_ms: Int = 0) raises -> Bool:
         """Refresh OAuth when configured, otherwise rotate an API key."""
+        var refresh_time = now_ms
+        if refresh_time == 0:
+            refresh_time = _epoch_ms()
         var transport = FlokiTransport()
-        return self.recover_auth_with(transport, now_ms)
+        return self.recover_auth_with(transport, refresh_time)
 
     def recover_auth_with[T: HttpTransport](
         mut self, mut transport: T, now_ms: Int = 0
@@ -542,6 +880,12 @@ struct OpenAICompatibleProvider:
         if not self.has_oauth:
             return self.rotate_key()
         return False
+
+
+def _epoch_ms() -> Int:
+    var seconds: c_long = 0
+    _ = external_call["time", c_long](Pointer(to=seconds))
+    return Int(seconds) * 1000
 
 
 def form_encode(value: String) -> String:
@@ -590,6 +934,48 @@ def _int_or(value: JsonValue, key: String, fallback: Int) -> Int:
     except:
         pass
     return fallback
+
+
+def _int_string_or(value: JsonValue, key: String, fallback: Int) -> Int:
+    if not value.contains(key):
+        return fallback
+    try:
+        var field = value.get(key)
+        if field.kind == JsonValue.INT:
+            return field.int_value
+        if field.kind == JsonValue.STRING:
+            var parsed = 0
+            for cp in field.string_value.codepoints():
+                var digit = Int(cp.to_u32()) - 48
+                if digit < 0 or digit > 9:
+                    return fallback
+                parsed = parsed * 10 + digit
+            return parsed
+    except:
+        pass
+    return fallback
+
+
+def _base64_digit(byte: Int) -> Int:
+    if byte >= 65 and byte <= 90:
+        return byte - 65
+    if byte >= 97 and byte <= 122:
+        return byte - 71
+    if byte >= 48 and byte <= 57:
+        return byte + 4
+    if byte == 45 or byte == 43:
+        return 62
+    if byte == 95 or byte == 47:
+        return 63
+    return -1
+
+
+def _last_byte(value: String, needle: UInt8) -> Int:
+    var result = -1
+    for i in range(value.byte_length()):
+        if UInt8(ord(value[byte=i])) == needle:
+            result = i
+    return result
 
 
 def _find_byte(value: String, needle: UInt8) -> Int:
