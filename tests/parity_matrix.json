@@ -448,6 +448,32 @@
           "normalization": "Exact upstream prompt template and slots remain pending."
         }
       }
+    },
+    {
+      "id": "acp.v1.session.lifecycle",
+      "area": "acp",
+      "owner": "mochi_acp",
+      "status": "partial",
+      "description": "ACP v1 NDJSON JSON-RPC initializes and models session new/load/prompt/cancel, updates, and permission requests.",
+      "upstream_refs": [
+        "maki-acp/src/server.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/acp.mojo",
+        "tests/acp_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact JSON-RPC envelopes, protocol version, lifecycle errors, updates, and permission requests."
+        },
+        "differential": {
+          "status": "missing",
+          "upstream_command": "",
+          "mojo_command": "",
+          "normalization": "stdio server runtime integration and injected MCP remain pending."
+        }
+      }
     }
   ]
 }
