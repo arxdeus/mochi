@@ -47,7 +47,7 @@
       "id": "provider.openai.chat.streaming",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "partial",
+      "status": "parity",
       "description": "Incremental OpenAI-compatible Chat Completions SSE text, usage, and tool-call assembly.",
       "upstream_refs": [
         "maki-providers/src/providers/openai_compat.rs"
@@ -62,10 +62,10 @@
           "normalization": "ProviderResult text, tool calls, usage, stop reason."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Reasoning, cache usage, error mapping, and complete tool-call edge cases."
+          "status": "parity",
+          "upstream_command": "pixi run parity provider.openai.chat.streaming",
+          "mojo_command": "pixi run parity provider.openai.chat.streaming",
+          "normalization": "Pinned upstream and Mojo deterministic OpenAI SSE text/usage/tool parser tests must pass."
         }
       }
     },

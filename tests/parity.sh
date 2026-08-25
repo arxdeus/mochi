@@ -38,10 +38,15 @@ case "${1:-all}" in
             sessions::tests::crash_recovery_truncated_line -- --exact >/dev/null
         run_mojo_test tests/session_test.mojo
         ;;
+    provider.openai.chat.streaming)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
+            providers::openai_compat::tests::parse_sse_text_and_usage -- --exact >/dev/null
+        run_mojo_test tests/provider_test.mojo
+        ;;
     all)
         mismatches=0
         failed=""
-        for behavior in permissions.deny_precedence storage.session.v2.truncated_tail; do
+        for behavior in permissions.deny_precedence storage.session.v2.truncated_tail provider.openai.chat.streaming; do
             if ! sh "$0" "$behavior"; then
                 mismatches=$((mismatches + 1))
                 if [ -n "$failed" ]; then
@@ -51,9 +56,9 @@ case "${1:-all}" in
             fi
         done
         if [ "$mismatches" -eq 0 ]; then
-            printf '%s\n' '{"status":"parity","behaviors":2,"mismatches":0,"failed":[]}'
+            printf '%s\n' '{"status":"parity","behaviors":3,"mismatches":0,"failed":[]}'
         else
-            printf '{"status":"mismatch","behaviors":2,"mismatches":%s,"failed":[%s]}\n' "$mismatches" "$failed"
+            printf '{"status":"mismatch","behaviors":3,"mismatches":%s,"failed":[%s]}\n' "$mismatches" "$failed"
             exit 1
         fi
         ;;
