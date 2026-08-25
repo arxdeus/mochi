@@ -1,11 +1,15 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
+# Build outputs
 build/
 dist/
 wheels/
 *.egg-info
 
-# Virtual environments
+# Toolchain environment
 .venv
 .agents/
+.slim/deepwork/
+
+# BEGIN oh-my-opencode-slim clonedeps
+.slim/clonedeps/repos/
+# END oh-my-opencode-slim clonedeps
+__pycache__

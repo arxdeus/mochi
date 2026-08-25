@@ -1,0 +1,15 @@
+[workspace]
+name = "mochi"
+version = "0.1.0"
+description = "Pure Mojo port of the Maki coding agent"
+channels = ["conda-forge", "https://conda.modular.com/max"]
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
+preview = ["pixi-build"]
+
+[dependencies]
+mojo = ">=1.0.0,<1.1.0"
+mojo-curl = { git = "https://github.com/thatstoasty/mojo-curl.git", tag = "v0.4.2" }
+
+[tasks]
+build = "sh -c 'ext=so; [ \"$(uname -s)\" = Darwin ] && ext=dylib; mojo build -I src -D CURL_LIB_PATH=\"$CONDA_PREFIX/lib/libcurl.$ext\" -D CURL_WRAPPER_LIB_PATH=\"$CONDA_PREFIX/lib/libcurl_wrapper.$ext\" src/mochi/main.mojo -o dist/mochi'"
+test = "sh -c 'for test in tests/*_test.mojo; do mojo build -I src \"$test\" -o /tmp/mochi-test && /tmp/mochi-test || exit 1; done'"

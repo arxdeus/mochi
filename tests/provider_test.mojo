@@ -1,0 +1,228 @@
+from std.testing import (
+    TestSuite,
+    assert_equal,
+    assert_false,
+    assert_raises,
+    assert_true,
+)
+
+from mochi.http import HttpRequest, HttpResponse, MockTransport
+from mochi.json import parse_json
+from mochi.provider import (
+    ApiKeyState,
+    OAuthState,
+    OpenAICompatibleProvider,
+    OpenAIStreamParser,
+    ProviderRegistry,
+    ProviderSpec,
+    RetryState,
+    SSEParser,
+    ToolCallAssembler,
+    ToolCallDelta,
+    form_encode,
+)
+
+
+def test_provider_registry_and_spec() raises:
+    var registry = ProviderRegistry()
+    var spec = ProviderSpec("custom", "https://example.invalid/v1")
+    spec.add_api_key("key-a")
+    registry.register(spec.copy())
+    assert_true(registry.contains("custom"))
+    assert_equal(
+        registry.get("custom").chat_url(),
+        "https://example.invalid/v1/chat/completions",
+    )
+    assert_equal(len(registry.names()), 1)
+    with assert_raises():
+        registry.register(ProviderSpec("custom", "https://other.invalid"))
+    with assert_raises():
+        _ = registry.get("missing")
+
+
+def test_sse_incremental_multiline_and_finish() raises:
+    var parser = SSEParser()
+    var first = parser.feed("event: message\r\ndata: one\r\nda")
+    assert_equal(len(first), 0)
+    var second = parser.feed("ta: two\r\n\r\n: ignored\ndata: tail")
+    assert_equal(len(second), 1)
+    assert_equal(second[0], "one\ntwo")
+    var tail = parser.finish()
+    assert_equal(len(tail), 1)
+    assert_equal(tail[0], "tail")
+
+
+def test_sse_arbitrary_single_byte_boundaries() raises:
+    var stream = "data: one\r\ndata: two\r\n\r\ndata: tail\n\n"
+    var parser = SSEParser()
+    var payloads = List[String]()
+    for i in range(stream.byte_length()):
+        var parsed = parser.feed(String(stream[byte=i]))
+        for payload in parsed:
+            payloads.append(payload.copy())
+    var tail = parser.finish()
+    for payload in tail:
+        payloads.append(payload.copy())
+    assert_equal(len(payloads), 2)
+    assert_equal(payloads[0], "one\ntwo")
+    assert_equal(payloads[1], "tail")
+
+
+def test_openai_sse_and_partial_tool_assembly() raises:
+    var parser = OpenAIStreamParser()
+    var chunk1 = (
+        "data:"
+        ' {"choices":[{"delta":{"content":"hel","tool_calls":[{"index":0,"id":"call_","function":{"name":"wea","arguments":"{\\"city\\":"}}]}}]}\n\n'
+    )
+    var chunk2 = (
+        "data:"
+        ' {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"1","function":{"name":"ther","arguments":"\\"Paris\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}\n\ndata:'
+        " [DONE]\n\n"
+    )
+    var events = parser.feed(chunk1)
+    var more = parser.feed(chunk2)
+    for event in more:
+        events.append(event.copy())
+    assert_true(len(events) >= 5)
+    var calls = parser.tools.completed()
+    assert_equal(len(calls), 1)
+    assert_equal(calls[0].id, "call_1")
+    assert_equal(calls[0].name, "weather")
+    assert_equal(calls[0].arguments, '{"city":"Paris"}')
+    assert_equal(parser.usage.input_tokens, 7)
+    assert_equal(parser.usage.output_tokens, 3)
+    assert_equal(parser.stop_reason, "tool_calls")
+
+
+def test_provider_parses_transport_chunks_incrementally() raises:
+    var stream = (
+        'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":2}}\n\n'
+        "data: [DONE]\n\n"
+    )
+    var chunks = List[String]()
+    for i in range(stream.byte_length()):
+        chunks.append(String(stream[byte=i]))
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("offline", "https://example.invalid/v1")
+    )
+    var result = provider.parse_response_chunks(chunks)
+    assert_equal(result.message.content, "hello world")
+    assert_equal(result.usage.input_tokens, 2)
+    assert_equal(result.usage.output_tokens, 2)
+    assert_equal(result.stop_reason, "stop")
+
+
+def test_provider_injected_transport_streams_during_perform() raises:
+    var transport = MockTransport()
+    var response = HttpResponse(200, "complete buffered body")
+    var chunks: List[String] = [
+        'data: {"choices":[{"delta":{"content":"live"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":" stream"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+    ]
+    transport.enqueue_stream(response, chunks)
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("offline", "https://example.invalid/v1")
+    )
+    var result = provider.complete_json_with(transport, parse_json("{}"))
+    assert_equal(result.message.content, "live stream")
+    assert_equal(len(transport.requests), 1)
+    assert_equal(transport.requests[0].method, "POST")
+
+
+def test_http_response_headers_and_request_methods() raises:
+    var response = HttpResponse()
+    response.add_header_line("HTTP/1.1 200 OK\r\n")
+    response.add_header_line("Content-Type: text/event-stream; charset=utf-8\r\n")
+    response.add_header_line("mCp-SeSsIoN-Id: session-42\r\n")
+    response.add_header_line("X-Test: first\r\n")
+    response.add_header_line("x-test: second\r\n")
+    response.add_header_line("\r\n")
+    assert_equal(
+        response.content_type(), "text/event-stream; charset=utf-8"
+    )
+    assert_equal(response.mcp_session_id(), "session-42")
+    assert_equal(response.header("X-TEST"), "second")
+    assert_equal(len(response.headers), 4)
+
+    var get_request = HttpRequest("GET", "https://example.invalid")
+    var post_request = HttpRequest("POST", "https://example.invalid")
+    var delete_request = HttpRequest("DELETE", "https://example.invalid")
+    var patch_request = HttpRequest("PATCH", "https://example.invalid")
+    assert_equal(get_request.method, "GET")
+    assert_equal(post_request.method, "POST")
+    assert_equal(delete_request.method, "DELETE")
+    assert_equal(patch_request.method, "PATCH")
+
+
+def test_tool_calls_can_arrive_out_of_order() raises:
+    var assembler = ToolCallAssembler()
+    assembler.add(ToolCallDelta(1, "b", "second", "{}"))
+    assembler.add(ToolCallDelta(0, "a", "fir", "{"))
+    assembler.add(ToolCallDelta(0, "", "st", "}"))
+    var calls = assembler.completed()
+    assert_equal(len(calls), 2)
+    assert_equal(calls[0].name, "first")
+    assert_equal(calls[0].arguments, "{}")
+    assert_equal(calls[1].id, "b")
+
+
+def test_retry_and_key_rotation() raises:
+    var keys: List[String] = ["a", "b", "c"]
+    var key_state = ApiKeyState(keys^)
+    assert_equal(key_state.current(), "a")
+    assert_true(key_state.rotate())
+    assert_equal(key_state.current(), "b")
+    assert_true(key_state.rotate())
+    assert_equal(key_state.current(), "c")
+
+    var retry = RetryState(3)
+    assert_true(retry.can_retry())
+    assert_equal(retry.next_delay_ms(), 541)
+    assert_equal(retry.next_delay_ms(), 1114)
+    assert_equal(retry.next_delay_ms(90000), 60000)
+    assert_false(retry.can_retry())
+    assert_true(RetryState.retryable_status(429))
+    assert_false(RetryState.retryable_status(400))
+
+
+def test_oauth_state_and_refresh_request() raises:
+    var oauth = OAuthState()
+    oauth.access_token = "old"
+    oauth.refresh_token = "r t&"
+    oauth.token_url = "https://auth.example.invalid/token"
+    oauth.client_id = "client"
+    oauth.scope = "chat tools"
+    oauth.expires_at_ms = 100000
+    assert_false(oauth.expired(60000))
+    assert_true(oauth.expired(71000))
+    var request = oauth.refresh_request()
+    assert_equal(request.method, "POST")
+    assert_true("refresh_token=r+t%26" in request.body)
+    assert_true("scope=chat+tools" in request.body)
+    oauth.apply_refresh_response(
+        '{"access_token":"new","refresh_token":"new-r","expires_in":3600}', 5000
+    )
+    assert_equal(oauth.access_token, "new")
+    assert_equal(oauth.refresh_token, "new-r")
+    assert_equal(oauth.expires_at_ms, 3605000)
+    assert_equal(form_encode("a b+c"), "a+b%2Bc")
+
+
+def test_provider_auth_precedence_and_usage() raises:
+    var spec = ProviderSpec("custom", "https://example.invalid/v1/")
+    spec.add_api_key("key-a")
+    spec.add_api_key("key-b")
+    var provider = OpenAICompatibleProvider(spec.copy())
+    assert_equal(provider.auth_token(), "key-a")
+    assert_true(provider.rotate_key())
+    assert_equal(provider.auth_token(), "key-b")
+    var oauth = OAuthState()
+    oauth.access_token = "oauth-token"
+    provider.set_oauth(oauth)
+    assert_equal(provider.auth_token(), "oauth-token")
+    assert_equal(provider.fetch_usage().total_tokens(), 0)
+
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()
