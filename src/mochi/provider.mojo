@@ -38,6 +38,10 @@ comptime OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 comptime OPENAI_DEVICE_AUTH_URL = "https://auth.openai.com/codex/device"
 comptime OPENAI_REDIRECT_URI = "https://auth.openai.com/deviceauth/callback"
 comptime OPENAI_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
+comptime COPILOT_API_VERSION = "2025-10-01"
+comptime COPILOT_EDITOR_VERSION = "Mochi/0.1.0"
+comptime COPILOT_GRAPHQL_QUERY = "query { viewer { copilotEndpoints { api } } }"
+comptime DEFAULT_COPILOT_API_ENDPOINT = "https://api.githubcopilot.com"
 
 
 @fieldwise_init
@@ -79,6 +83,52 @@ struct ProviderSpec(Copyable, Movable):
         return self.base_url + "/chat/completions"
 
 
+def copilot_graphql_url(host: String = "github.com") -> String:
+    var normalized = String(host.strip())
+    if normalized == "" or normalized == "github.com":
+        return "https://api.github.com/graphql"
+    return "https://" + normalized + "/api/graphql"
+
+
+def copilot_provider_spec(base_url: String, token: String) -> ProviderSpec:
+    var spec = ProviderSpec("copilot", base_url)
+    if String(token.strip()) != "":
+        spec.add_api_key(token)
+    spec.add_header("Editor-Version", COPILOT_EDITOR_VERSION)
+    spec.add_header("X-GitHub-Api-Version", COPILOT_API_VERSION)
+    spec.add_header("User-Agent", COPILOT_EDITOR_VERSION)
+    spec.add_header("X-Initiator", "agent")
+    spec.add_header("X-Interaction-Type", "conversation-agent")
+    spec.add_header("OpenAI-Intent", "conversation-agent")
+    return spec^
+
+
+def copilot_discovery_request(token: String, host: String = "github.com") raises -> HttpRequest:
+    var request = HttpRequest("POST", copilot_graphql_url(host))
+    request.add_header("Authorization", "Bearer " + token)
+    request.add_header("Content-Type", "application/json")
+    request.add_header("User-Agent", COPILOT_EDITOR_VERSION)
+    var body = JsonValue.object()
+    body.set("query", JsonValue.string(COPILOT_GRAPHQL_QUERY))
+    request.body = serialize_json(body)
+    return request^
+
+
+def copilot_discovered_endpoint(response: HttpResponse) -> String:
+    if response.status < 200 or response.status >= 300:
+        return DEFAULT_COPILOT_API_ENDPOINT
+    try:
+        var value = parse_json(response.body)
+        var endpoint = value.get("data").get("viewer").get(
+            "copilotEndpoints"
+        ).get("api").string_value
+        if String(endpoint.strip()) != "":
+            return endpoint^
+    except:
+        pass
+    return DEFAULT_COPILOT_API_ENDPOINT
+
+
 struct ProviderRegistry(Copyable, Movable):
     var specs: List[ProviderSpec]
 
@@ -112,6 +162,7 @@ struct ProviderRegistry(Copyable, Movable):
 def builtin_provider_registry() raises -> ProviderRegistry:
     var registry = ProviderRegistry()
     registry.register(ProviderSpec("openai", "https://api.openai.com/v1"))
+    registry.register(copilot_provider_spec(DEFAULT_COPILOT_API_ENDPOINT, ""))
     registry.register(ProviderSpec("openrouter", "https://openrouter.ai/api/v1"))
     registry.register(ProviderSpec("xai", "https://api.x.ai/v1"))
     registry.register(ProviderSpec("deepseek", "https://api.deepseek.com/v1"))
@@ -1790,7 +1841,7 @@ struct ProductionProvider(Movable):
     def __init__(
         out self, var provider: OpenAICompatibleProvider, model: ModelInfo
     ):
-        self.kind = "openai"
+        self.kind = provider.spec.name
         self.name = provider.spec.name
         self.max_retries = provider.max_retries()
         self.model_info = model.copy()

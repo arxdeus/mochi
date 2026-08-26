@@ -30,6 +30,9 @@ from mochi.provider import (
     GeminiProviderSpec,
     OpenAICompatibleProvider,
     ProductionProvider,
+    copilot_discovered_endpoint,
+    copilot_discovery_request,
+    copilot_provider_spec,
     OpenAIOAuthCredentials,
     find_model_info,
     load_openai_oauth_credentials,
@@ -215,6 +218,22 @@ def _production_provider(config: CliConfig) raises -> ProductionProvider:
             GeminiProviderSpec(config.provider_url, config.api_key()),
             FlokiTransport(),
             info,
+        )
+    if config.provider == "copilot":
+        var token = config.api_key()
+        if token.strip() == "":
+            raise Error("not authenticated, set GH_COPILOT_TOKEN")
+        var endpoint = config.provider_url
+        if endpoint == "https://api.githubcopilot.com":
+            try:
+                var transport = FlokiTransport()
+                endpoint = copilot_discovered_endpoint(
+                    transport.perform(copilot_discovery_request(token))
+                )
+            except:
+                endpoint = "https://api.githubcopilot.com"
+        return ProductionProvider(
+            OpenAICompatibleProvider(copilot_provider_spec(endpoint, token)), info
         )
     var spec = config.provider_spec()
     var provider = OpenAICompatibleProvider(spec.copy())

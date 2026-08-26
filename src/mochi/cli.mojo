@@ -16,6 +16,7 @@ comptime DEFAULT_PROVIDER = "openai"
 comptime DEFAULT_PROVIDER_URL = "https://api.openai.com/v1"
 comptime DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
 comptime DEFAULT_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
+comptime DEFAULT_COPILOT_URL = "https://api.githubcopilot.com"
 
 
 @fieldwise_init
@@ -71,6 +72,8 @@ struct CliConfig(Copyable, Movable):
             self.provider_url = DEFAULT_ANTHROPIC_URL
         elif self.provider == "gemini":
             self.provider_url = DEFAULT_GEMINI_URL
+        elif self.provider == "copilot":
+            self.provider_url = DEFAULT_COPILOT_URL
 
     def api_key(self) -> String:
         if len(self.provider_keys) > 0:
@@ -81,6 +84,11 @@ struct CliConfig(Copyable, Movable):
             var key = getenv("GEMINI_API_KEY", "")
             if key == "":
                 key = getenv("GOOGLE_API_KEY", "")
+            return key^
+        if self.provider == "copilot":
+            var key = getenv("GH_COPILOT_TOKEN", "")
+            if key.strip() == "":
+                key = getenv("COPILOT_GITHUB_TOKEN", "")
             return key^
         return getenv("OPENAI_API_KEY", "")
 
@@ -128,8 +136,8 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
         elif argument == "--provider":
             config.provider = _option_value(arguments, index, argument)
             index += 1
-            if config.provider != "openai" and config.provider != "anthropic" and config.provider != "gemini":
-                raise Error("invalid --provider: " + config.provider + " (expected openai, anthropic, or gemini)")
+            if config.provider != "openai" and config.provider != "anthropic" and config.provider != "gemini" and config.provider != "copilot":
+                raise Error("invalid --provider: " + config.provider + " (expected openai, anthropic, gemini, or copilot)")
         elif argument == "--provider-url":
             config.provider_url = _option_value(arguments, index, argument)
             index += 1
@@ -276,7 +284,7 @@ Options:
   -c, --continue                Resume the latest session for this directory
   -s, --session ID              Resume a specific session
       --resume ID               Alias for --session
-      --provider PROVIDER       openai, anthropic, or gemini
+      --provider PROVIDER       openai, anthropic, gemini, or copilot
       --provider-url URL        Provider API base URL
       --provider-key KEY        API key; may be repeated
       --openai-oauth            Use ChatGPT/Codex OAuth Responses API

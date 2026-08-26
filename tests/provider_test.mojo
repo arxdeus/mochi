@@ -40,6 +40,10 @@ from mochi.provider import (
     ToolCallAssembler,
     ToolCallDelta,
     builtin_model_catalog,
+    copilot_discovered_endpoint,
+    copilot_discovery_request,
+    copilot_graphql_url,
+    copilot_provider_spec,
     find_model_info,
     builtin_provider_registry,
     extract_chatgpt_account_id,
@@ -69,6 +73,7 @@ def test_provider_registry_and_spec() raises:
 def test_builtin_provider_and_model_catalog() raises:
     var registry = builtin_provider_registry()
     assert_true(registry.contains("openai"))
+    assert_true(registry.contains("copilot"))
     assert_true(registry.contains("openrouter"))
     assert_true(registry.contains("deepseek"))
     assert_true(registry.contains("ollama"))
@@ -89,6 +94,49 @@ def test_builtin_provider_and_model_catalog() raises:
     assert_true(models[0].supports_vision.value())
     assert_equal(find_model_info("gemini-2.5-pro").context_window.value(), 1048576)
     assert_equal(find_model_info("custom-model").id, "custom-model")
+
+
+def test_copilot_auth_discovery_and_headers() raises:
+    assert_equal(copilot_graphql_url(), "https://api.github.com/graphql")
+    assert_equal(
+        copilot_graphql_url("github.example.test"),
+        "https://github.example.test/api/graphql",
+    )
+    var discovery = copilot_discovery_request("secret")
+    assert_equal(discovery.method, "POST")
+    assert_true("copilotEndpoints" in discovery.body)
+    assert_equal(discovery.headers[0].value, "Bearer secret")
+    assert_equal(
+        copilot_discovered_endpoint(
+            HttpResponse(
+                200,
+                '{"data":{"viewer":{"copilotEndpoints":{"api":"https://copilot.example.test"}}}}',
+            )
+        ),
+        "https://copilot.example.test",
+    )
+    assert_equal(
+        copilot_discovered_endpoint(HttpResponse(500, "failed")),
+        "https://api.githubcopilot.com",
+    )
+    assert_equal(
+        copilot_discovered_endpoint(HttpResponse(200, "{}")),
+        "https://api.githubcopilot.com",
+    )
+    var provider = OpenAICompatibleProvider(
+        copilot_provider_spec("https://api.githubcopilot.com", "secret")
+    )
+    var request = provider.build_request(JsonValue.object())
+    assert_equal(request.url, "https://api.githubcopilot.com/chat/completions")
+    assert_equal(request.headers[len(request.headers) - 1].value, "Bearer secret")
+    var names = String("")
+    for header in request.headers:
+        names += header.name + "\n"
+    assert_true("Editor-Version" in names)
+    assert_true("X-GitHub-Api-Version" in names)
+    assert_true("X-Initiator" in names)
+    assert_true("X-Interaction-Type" in names)
+    assert_true("OpenAI-Intent" in names)
 
 
 def test_sse_incremental_multiline_and_finish() raises:

@@ -94,6 +94,8 @@ def test_provider_selection() raises:
         gemini.provider_url,
         "https://generativelanguage.googleapis.com/v1beta",
     )
+    var copilot = parse_args(["--provider", "copilot"])
+    assert_equal(copilot.provider_url, "https://api.githubcopilot.com")
     with assert_raises():
         _ = parse_args(["--provider", "unknown"])
 
