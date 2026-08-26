@@ -185,6 +185,28 @@ def test_mouse_selection_zones_drag_and_pending_copy() raises:
     assert_equal(state.selection.value().zone, Selection.OVERLAY)
 
 
+def test_modal_overlay_consumes_input_and_closes() raises:
+    var state = UiState()
+    state.add_zone(UiRect(0, 0, 80, 15), Selection.MESSAGES)
+    state.add_zone(UiRect(10, 3, 60, 10), Selection.OVERLAY)
+    _ = UiReducer.reduce(state, UiEvent.edit("draft"))
+    _ = UiReducer.reduce(state, UiEvent.overlay_open("Help"))
+    assert_equal(state.overlay_name, "Help")
+    assert_true(state.overlay_modal)
+    _ = UiReducer.reduce(state, UiEvent.insert("blocked"))
+    assert_equal(state.draft, "draft")
+    _ = UiReducer.reduce(state, UiEvent.scroll(-1))
+    assert_true(state.auto_scroll)
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(1, 5))
+    assert_false(state.selection)
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(5, 20))
+    assert_true(state.selection)
+    assert_equal(state.selection.value().zone, Selection.OVERLAY)
+    _ = UiReducer.reduce(state, UiEvent.overlay_close())
+    assert_false(state.overlay_modal)
+    assert_equal(state.overlay_name, "")
+
+
 def test_mouse_edge_scroll_clamps_and_reverses() raises:
     var state = UiState()
     state.viewport_height = 5

@@ -148,6 +148,8 @@ struct UiEvent(Copyable, Movable):
     comptime MOUSE_DOWN = 34
     comptime MOUSE_DRAG = 35
     comptime MOUSE_UP = 36
+    comptime OVERLAY_OPEN = 37
+    comptime OVERLAY_CLOSE = 38
 
     var tag: Int
     var text: String
@@ -355,6 +357,16 @@ struct UiEvent(Copyable, Movable):
         event.width = col
         return event^
 
+    @staticmethod
+    def overlay_open(name: String) -> Self:
+        var event = Self(Self.OVERLAY_OPEN)
+        event.name = name
+        return event^
+
+    @staticmethod
+    def overlay_close() -> Self:
+        return Self(Self.OVERLAY_CLOSE)
+
 
 struct UiAction(Copyable, Movable):
     comptime NONE = 0
@@ -446,6 +458,8 @@ struct UiState(Copyable, Movable):
     var selection: Optional[Selection]
     var selection_pending_copy: Bool
     var selection_edge_scroll: Int
+    var overlay_name: String
+    var overlay_modal: Bool
 
     def __init__(out self):
         self.draft = ""
@@ -477,6 +491,8 @@ struct UiState(Copyable, Movable):
         self.selection = None
         self.selection_pending_copy = False
         self.selection_edge_scroll = 0
+        self.overlay_name = ""
+        self.overlay_modal = False
 
     def add_zone(mut self, area: UiRect, zone: Int):
         self.zones.append(SelectableZone(area.copy(), zone))
@@ -694,6 +710,13 @@ def _subsequence(needle: String, candidate: String) -> Bool:
 struct UiReducer:
     @staticmethod
     def reduce(mut state: UiState, event: UiEvent) -> UiAction:
+        if state.overlay_modal and event.tag not in [
+            UiEvent.OVERLAY_CLOSE,
+            UiEvent.MOUSE_DOWN,
+            UiEvent.MOUSE_DRAG,
+            UiEvent.MOUSE_UP,
+        ]:
+            return UiAction.none()
         if event.tag == UiEvent.EDIT:
             state.draft = event.text
             state.cursor = event.text.count_codepoints()
@@ -804,10 +827,22 @@ struct UiReducer:
                 return UiAction.picker_toggle(
                     state.picker_items[selected], state.picker_enabled[selected]
                 )
+        elif event.tag == UiEvent.OVERLAY_OPEN:
+            state.overlay_name = event.name
+            state.overlay_modal = True
+            state.selection = None
+            state.selection_pending_copy = False
+            state.selection_edge_scroll = 0
+        elif event.tag == UiEvent.OVERLAY_CLOSE:
+            state.overlay_name = ""
+            state.overlay_modal = False
+            if not state.selection_pending_copy:
+                state.selection = None
+            state.selection_edge_scroll = 0
         elif event.tag == UiEvent.MOUSE_DOWN:
             var zone = state.zone_at(event.height, event.width)
             if zone:
-                if state.picker_name != "" and zone.value().zone != Selection.OVERLAY:
+                if (state.overlay_modal or state.picker_name != "") and zone.value().zone != Selection.OVERLAY:
                     return UiAction.none()
                 var scroll = state.viewport_offset if zone.value().zone == Selection.MESSAGES else 0
                 state.selection = Optional(

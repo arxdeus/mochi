@@ -141,6 +141,15 @@ case "${1:-all}" in
             selection::tests::zone_at_overlay_wins_over_messages -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
+    ui.overlay.modal_gating)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::overlay_zone_click_gating -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::help_modal_consumes_keys_and_esc_closes -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::ctrl_c_closes_overlay_instead_of_quitting -- --exact >/dev/null
+        run_mojo_test tests/ui_test.mojo
+        ;;
     ui.search.escape_restore)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             app::tests::search_escape_restores_scroll::restores_scroll_position -- --exact >/dev/null
@@ -190,7 +199,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

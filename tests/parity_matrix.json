@@ -534,6 +534,35 @@
       }
     },
     {
+      "id": "ui.overlay.modal_gating",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "parity",
+      "description": "Modal overlays consume background input, gate mouse selection to overlay zones, and close without mutating the editor.",
+      "upstream_refs": [
+        "maki-ui/src/components/mod.rs:45-58",
+        "maki-ui/src/app/tests.rs:1402-1425",
+        "maki-ui/src/app/tests.rs:2255-2274",
+        "maki-ui/src/app/tests.rs:3137-3151"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo",
+        "tests/ui_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact modal input consumption, mouse zone gating, and close-state assertions."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity ui.overlay.modal_gating",
+          "mojo_command": "pixi run parity ui.overlay.modal_gating",
+          "normalization": "Pinned upstream modal gating tests and Mojo reducer tests pass."
+        }
+      }
+    },
+    {
       "id": "ui.search.escape_restore",
       "area": "ui",
       "owner": "mochi_ui",
