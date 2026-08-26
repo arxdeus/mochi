@@ -14,6 +14,9 @@ struct UiEvent(Copyable, Movable):
     comptime VIEWPORT = 4
     comptime MESSAGE = 5
     comptime COMPLETE = 6
+    comptime MOVE_CURSOR = 7
+    comptime DELETE_BACKWARD = 8
+    comptime INSERT = 9
 
     var tag: Int
     var text: String
@@ -76,6 +79,22 @@ struct UiEvent(Copyable, Movable):
     @staticmethod
     def complete() -> Self:
         return Self(Self.COMPLETE)
+
+    @staticmethod
+    def move_cursor(offset: Int) -> Self:
+        var event = Self(Self.MOVE_CURSOR)
+        event.offset = offset
+        return event^
+
+    @staticmethod
+    def delete_backward() -> Self:
+        return Self(Self.DELETE_BACKWARD)
+
+    @staticmethod
+    def insert(text: String) -> Self:
+        var event = Self(Self.INSERT)
+        event.text = text
+        return event^
 
 
 struct UiAction(Copyable, Movable):
@@ -239,6 +258,15 @@ struct UiReducer:
             return UiAction.none()
         if event.tag == UiEvent.COMPLETE:
             state.busy = False
+        elif event.tag == UiEvent.MOVE_CURSOR:
+            state.cursor = min(
+                max(0, state.cursor + event.offset),
+                state.draft.count_codepoints(),
+            )
+        elif event.tag == UiEvent.DELETE_BACKWARD:
+            Self._delete_backward(state)
+        elif event.tag == UiEvent.INSERT:
+            Self._insert(state, event.text)
         return UiAction.none()
 
     @staticmethod
@@ -282,6 +310,22 @@ struct UiReducer:
         return UiAction.submit(text^)
 
     @staticmethod
+    def _insert(mut state: UiState, text: String):
+        var before = _codepoint_prefix(state.draft, state.cursor)
+        var after = _codepoint_suffix(state.draft, state.cursor)
+        state.draft = before + text + after
+        state.cursor += text.count_codepoints()
+
+    @staticmethod
+    def _delete_backward(mut state: UiState):
+        if state.cursor <= 0:
+            return
+        var before = _codepoint_prefix(state.draft, state.cursor - 1)
+        var after = _codepoint_suffix(state.draft, state.cursor)
+        state.draft = before + after
+        state.cursor -= 1
+
+    @staticmethod
     def _max_offset(state: UiState) -> Int:
         return max(0, len(state.messages) - state.viewport_height)
 
@@ -291,6 +335,27 @@ struct UiReducer:
         if auto_scroll:
             return maximum
         return min(max(0, requested), maximum)
+
+
+def _codepoint_prefix(value: String, count: Int) -> String:
+    var result = String("")
+    var index = 0
+    for part in value.codepoint_slices():
+        if index >= count:
+            break
+        result += String(part)
+        index += 1
+    return result^
+
+
+def _codepoint_suffix(value: String, start: Int) -> String:
+    var result = String("")
+    var index = 0
+    for part in value.codepoint_slices():
+        if index >= start:
+            result += String(part)
+        index += 1
+    return result^
 
 
 def ui_event_to_json(event: UiEvent) raises -> JsonValue:

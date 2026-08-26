@@ -68,6 +68,25 @@ def test_command_catalog_and_fuzzy_matches() raises:
     assert_equal(len(command_matches("not-a-command")), 0)
 
 
+def test_unicode_editor_cursor_insert_and_delete() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("aéz"))
+    assert_equal(state.cursor, 3)
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-1))
+    assert_equal(state.cursor, 2)
+    _ = UiReducer.reduce(state, UiEvent.insert("!"))
+    assert_equal(state.draft, "aé!z")
+    assert_equal(state.cursor, 3)
+    _ = UiReducer.reduce(state, UiEvent.delete_backward())
+    assert_equal(state.draft, "aéz")
+    assert_equal(state.cursor, 2)
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-99))
+    _ = UiReducer.reduce(state, UiEvent.delete_backward())
+    assert_equal(state.draft, "aéz")
+    _ = UiReducer.reduce(state, UiEvent.insert("λ"))
+    assert_equal(state.draft, "λaéz")
+
+
 def test_viewport_is_bounded_and_tracks_messages() raises:
     var state = UiState()
     _ = UiReducer.reduce(state, UiEvent.viewport(40, 2, 99, False))
