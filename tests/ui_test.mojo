@@ -49,10 +49,10 @@ def test_cancel_transition() raises:
 
 def test_command_transition() raises:
     var state = UiState()
-    _ = UiReducer.reduce(state, UiEvent.edit("/model  fast "))
+    _ = UiReducer.reduce(state, UiEvent.edit("/cd  fast "))
     var parsed = UiReducer.reduce(state, UiEvent.submit())
     assert_true(parsed.is_command())
-    assert_equal(parsed.name, "model")
+    assert_equal(parsed.name, "cd")
     assert_equal(parsed.text, "fast")
     assert_false(state.busy)
 
@@ -68,6 +68,19 @@ def test_command_transition() raises:
     var unknown = UiReducer.reduce(state, UiEvent.submit())
     assert_true(unknown.is_submit())
     assert_equal(unknown.text, "/nonexistent arg")
+
+    var fuzzy_state = UiState()
+    _ = UiReducer.reduce(fuzzy_state, UiEvent.edit("/pct"))
+    var fuzzy_action = UiReducer.reduce(fuzzy_state, UiEvent.submit())
+    assert_true(fuzzy_action.is_command())
+    assert_equal(fuzzy_action.name, "compact")
+
+    var case_state = UiState()
+    _ = UiReducer.reduce(case_state, UiEvent.edit("/CD ~/foo"))
+    var case_action = UiReducer.reduce(case_state, UiEvent.submit())
+    assert_true(case_action.is_command())
+    assert_equal(case_action.name, "cd")
+    assert_equal(case_action.text, "~/foo")
 
 
 def test_command_catalog_and_fuzzy_matches() raises:

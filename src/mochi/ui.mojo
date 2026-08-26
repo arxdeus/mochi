@@ -588,22 +588,22 @@ struct UiReducer:
         state.draft = ""
         state.cursor = 0
         if text.startswith("/"):
-            var slash_text = text.copy()
-            var command = String(slash_text.removeprefix("/"))
-            var normalized_command = _ascii_lower(command.copy())
-            var separator = normalized_command.find(" ")
-            var name = normalized_command.copy()
-            var arguments = String("")
-            if separator:
-                name = _byte_range(normalized_command, 0, separator.value())
-                arguments = String(
-                    _byte_range(
-                        command, separator.value() + 1, command.byte_length()
-                    ).strip()
-                )
-            var normalized_name = _ascii_lower(name)
-            if is_builtin_command(normalized_name.copy()):
-                return UiAction.command(normalized_name^, arguments^)
+            var matches = command_matches(text.copy())
+            if len(matches) > 0:
+                var selected = min(state.command_selected, len(matches) - 1)
+                var name = matches[selected]
+                var slash_text = text.copy()
+                var command = String(slash_text.removeprefix("/"))
+                var separator = command.find(" ")
+                var arguments = String("")
+                if separator:
+                    arguments = String(
+                        _byte_range(
+                            command, separator.value() + 1, command.byte_length()
+                        ).strip()
+                    )
+                state.command_selected = 0
+                return UiAction.command(name^, arguments^)
             state.busy = True
             return UiAction.submit(text^)
         state.busy = True

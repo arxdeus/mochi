@@ -76,6 +76,10 @@ case "${1:-all}" in
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             components::command::tests::confirm_parses_args::btw_multi_word -- --exact >/dev/null
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::confirm_parses_args::fuzzy-match-2 -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::confirm_parses_args::case_insensitive -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             app::tests::slash_noncommand_sends_as_prompt -- --exact >/dev/null
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             components::command::tests::sync_respects_nargs -- --nocapture >/dev/null
