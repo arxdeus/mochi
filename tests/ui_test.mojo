@@ -6,6 +6,8 @@ from mochi.ui import (
     UiReducer,
     UiState,
     ui_transcript_line,
+    command_matches,
+    command_names,
     validate_ui_transcript_line,
 )
 
@@ -17,6 +19,7 @@ def test_submit_transition() raises:
     assert_true(action.is_submit())
     assert_equal(action.text, "explain this")
     assert_equal(state.draft, "")
+    assert_equal(state.cursor, 0)
     assert_true(state.busy)
 
     _ = UiReducer.reduce(state, UiEvent.complete())
@@ -51,6 +54,18 @@ def test_command_transition() raises:
     assert_equal(direct.name, "help")
     assert_equal(direct.text, "topics")
     assert_equal(state.draft, "")
+    assert_equal(state.cursor, 0)
+
+
+def test_command_catalog_and_fuzzy_matches() raises:
+    var names = command_names()
+    assert_true("compact" in names)
+    assert_true("usage" in names)
+    var prefix = command_matches("/co")
+    assert_equal(prefix[0], "compact")
+    var fuzzy = command_matches("pct")
+    assert_equal(fuzzy[0], "compact")
+    assert_equal(len(command_matches("not-a-command")), 0)
 
 
 def test_viewport_is_bounded_and_tracks_messages() raises:

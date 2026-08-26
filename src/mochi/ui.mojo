@@ -136,6 +136,7 @@ struct UiState(Copyable, Movable):
     var viewport_height: Int
     var viewport_offset: Int
     var auto_scroll: Bool
+    var cursor: Int
 
     def __init__(out self):
         self.draft = ""
@@ -146,6 +147,7 @@ struct UiState(Copyable, Movable):
         self.viewport_height = 24
         self.viewport_offset = 0
         self.auto_scroll = True
+        self.cursor = 0
 
 
 @fieldwise_init
@@ -159,11 +161,56 @@ struct UiView(Copyable, Movable):
     var auto_scroll: Bool
 
 
+comptime BUILTIN_COMMANDS = [
+    "compact", "new", "clear", "help", "usage", "queue", "model", "login",
+    "memory", "history",
+]
+
+
+def command_names() -> List[String]:
+    var result = List[String]()
+    for name in materialize[BUILTIN_COMMANDS]():
+        result.append(String(name))
+    return result^
+
+
+def command_matches(query: String) -> List[String]:
+    var needle = String(query.removeprefix("/").strip()).lower()
+    var exact = List[String]()
+    var partial = List[String]()
+    for name in materialize[BUILTIN_COMMANDS]():
+        var candidate = String(name)
+        if needle == "" or candidate.startswith(needle):
+            exact.append(candidate^)
+        elif _subsequence(needle, candidate):
+            partial.append(candidate^)
+    for candidate in partial:
+        exact.append(candidate)
+    return exact^
+
+
+def _subsequence(needle: String, candidate: String) -> Bool:
+    var index = 0
+    for cp in candidate.codepoint_slices():
+        if index < needle.count_codepoints():
+            var target = String("")
+            var current = 0
+            for part in needle.codepoint_slices():
+                if current == index:
+                    target = String(part)
+                    break
+                current += 1
+            if String(cp) == target:
+                index += 1
+    return index == needle.count_codepoints()
+
+
 struct UiReducer:
     @staticmethod
     def reduce(mut state: UiState, event: UiEvent) -> UiAction:
         if event.tag == UiEvent.EDIT:
             state.draft = event.text
+            state.cursor = event.text.count_codepoints()
             return UiAction.none()
         if event.tag == UiEvent.SUBMIT:
             return Self._submit(state)
@@ -174,6 +221,7 @@ struct UiReducer:
             return UiAction.none()
         if event.tag == UiEvent.COMMAND:
             state.draft = ""
+            state.cursor = 0
             return UiAction.command(event.name, event.text)
         if event.tag == UiEvent.VIEWPORT:
             state.viewport_width = max(1, event.width)
@@ -217,6 +265,7 @@ struct UiReducer:
         if text == "":
             return UiAction.none()
         state.draft = ""
+        state.cursor = 0
         if text.startswith("/"):
             var command = String(text.removeprefix("/"))
             var separator = command.find(" ")

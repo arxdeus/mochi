@@ -51,7 +51,7 @@ from mochi.storage import (
     load_provider_credentials,
 )
 from mochi.tools import ToolRegistry
-from mochi.types import CancellationToken
+from mochi.types import CancellationToken, Message
 from mochi.ui import UiEvent, UiReducer, UiState
 from mochi.workspace import InputHistory, NoteStore, project_id
 
@@ -444,17 +444,73 @@ def _interactive(
                 _interactive_login(runtime)
             elif action.name == "model":
                 _interactive_model(runtime, command^)
+                session.model = runtime.model
             elif action.name == "memory":
                 _interactive_memory(memories, action.text)
+            elif action.name == "compact":
+                if runtime.compact_if_needed(force=True):
+                    session.replace_runtime_messages(runtime.messages)
+                    store.save(session)
+                    print("Conversation compacted.")
+                else:
+                    print("Nothing to compact.")
+            elif action.name == "new" or action.name == "clear":
+                session = _new_session(runtime.model, session.cwd)
+                runtime.set_messages(List[Message]())
+                ui = UiState()
+                print("Started session:", session.id)
+            elif action.name == "usage":
+                _interactive_usage(session, runtime)
+            elif action.name == "queue":
+                _interactive_queue(runtime)
+            elif action.name == "history":
+                for entry in history.entries:
+                    print(entry)
             elif action.name == "help":
-                print(
-                    "Commands: /login, /model [MODEL], /memory [list|read|write|delete], /help, exit"
-                )
+                _interactive_help()
             else:
                 print("Unknown command:", action.name)
             continue
         _run_prompt(runtime, session, store, action.text, output_format)
         _ = UiReducer.reduce(ui, UiEvent.complete())
+
+
+def _interactive_help():
+    print("Commands:")
+    print("  /new, /clear             Start a new session")
+    print("  /compact                 Compact conversation history")
+    print("  /usage                   Show token and runtime usage")
+    print("  /queue                   Show queued inputs and commands")
+    print("  /model [MODEL]            Show or switch model")
+    print("  /login                    Authenticate OpenAI OAuth")
+    print("  /memory [COMMAND]         Manage persistent notes")
+    print("  /history                  Show input history")
+    print("  /help                     Show this help")
+    print("  exit, quit                Exit")
+
+
+def _interactive_usage(session: Session, runtime: Runtime):
+    var input_tokens = 0
+    var output_tokens = 0
+    if session.token_usage.kind == JsonValue.OBJECT:
+        try:
+            input_tokens = session.token_usage.get("input_tokens").int_value
+            output_tokens = session.token_usage.get("output_tokens").int_value
+        except:
+            pass
+    print("Model:", runtime.model)
+    print("Input tokens:", input_tokens)
+    print("Output tokens:", output_tokens)
+    print("Compactions:", runtime.compactions)
+    print("Retries:", runtime.retries)
+    print("Messages:", len(runtime.messages))
+
+
+def _interactive_queue(runtime: Runtime):
+    print("Queued inputs:", runtime.queued_input_count())
+    print("Queued compactions:", runtime.queued_compaction_count())
+    for i in range(len(runtime.queued_inputs)):
+        print(String(i + 1) + ")", runtime.queued_inputs[i])
 
 
 def _interactive_memory(mut memories: NoteStore, arguments: String):
