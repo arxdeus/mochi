@@ -492,7 +492,8 @@ def _interactive(
                 else:
                     print("Workflow mode: off")
             elif action.name == "cd":
-                _interactive_cd(runtime, session, action.text)
+                if _interactive_cd(runtime, session, action.text):
+                    store.save(session)
             elif action.name == "btw":
                 _interactive_btw(runtime, session, action.text)
             elif action.name == "tasks":
@@ -615,7 +616,7 @@ def _interactive_tasks(session: Session):
 
 def _interactive_cd(
     mut runtime: Runtime, mut session: Session, arguments: String
-):
+) -> Bool:
     var path = String(arguments.strip())
     var home = getenv("HOME", "")
     if path == "":
@@ -626,7 +627,7 @@ def _interactive_cd(
         path = home + "/" + String(path.removeprefix("~/"))
     if path == "":
         print("cd: home directory is not set")
-        return
+        return False
     var resolved = List[UInt8](length=4096, fill=0)
     var status = external_call[
         "mochi_change_directory", c_int, CStringSlice[ImmutAnyOrigin], Pointer[mut=True, UInt8, MutAnyOrigin], c_size_t
@@ -639,7 +640,7 @@ def _interactive_cd(
     )
     if status != 0:
         print("cd: unable to change directory (errno " + String(status) + ")")
-        return
+        return False
     var length = 0
     while length < len(resolved) and resolved[length] != 0:
         length += 1
@@ -647,6 +648,7 @@ def _interactive_cd(
     runtime.tools.cwd = cwd
     session.cwd = cwd
     print("cd", path)
+    return True
 
 
 def _interactive_btw(
