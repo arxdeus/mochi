@@ -20,12 +20,14 @@ from mochi.mcp import (
     generate_mcp_pkce,
     mcp_auth_server_metadata_urls,
     mcp_endpoint_url_is_secure,
+    mcp_oauth_authorization_url,
     mcp_oauth_code_exchange_request,
     mcp_pkce_challenge,
     mcp_resource_matches_server,
     mcp_resource_metadata_urls,
     mcp_server_origin,
     mcp_well_known_url,
+    parse_mcp_oauth_callback,
     parse_www_authenticate,
     register_mcp_oauth_client_with,
 )
@@ -273,6 +275,36 @@ def test_mcp_oauth_pkce() raises:
     assert_equal(first.challenge.byte_length(), 43)
     assert_true(first.verifier != second.verifier)
     assert_true(first.challenge != second.challenge)
+
+
+def test_mcp_oauth_authorization_url_and_callback() raises:
+    var url = mcp_oauth_authorization_url(
+        "https://auth.example/authorize?provider=test",
+        "client id",
+        "http://127.0.0.1:8765/callback",
+        "state-value",
+        "challenge",
+        "offline#access",
+        "https://mcp.example/resource a b",
+    )
+    assert_true("?provider=test&response_type=code" in url)
+    assert_true("client_id=client%20id" in url)
+    assert_true("code_challenge_method=S256" in url)
+    assert_true("scope=offline%23access" in url)
+    assert_true("resource=https%3A%2F%2Fmcp.example%2Fresource%20a%20b" in url)
+    assert_equal(
+        parse_mcp_oauth_callback(
+            "http://127.0.0.1/callback?code=abc%20def&state=state-value",
+            "state-value",
+        ),
+        "abc def",
+    )
+    with assert_raises():
+        _ = parse_mcp_oauth_callback("code=abc&state=wrong", "state-value")
+    with assert_raises():
+        _ = parse_mcp_oauth_callback(
+            "error=access_denied&state=state-value", "state-value"
+        )
 
 
 def test_mcp_oauth_registration_and_code_exchange() raises:

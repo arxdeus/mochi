@@ -106,6 +106,62 @@ def register_mcp_oauth_client_with[T: HttpTransport](
     return McpClientRegistration(value.get("client_id").string_value, secret, expires)
 
 
+def mcp_oauth_authorization_url(
+    authorization_endpoint: String,
+    client_id: String,
+    redirect_uri: String,
+    state: String,
+    code_challenge: String,
+    scope: String,
+    resource: String,
+) raises -> String:
+    if not mcp_endpoint_url_is_secure(authorization_endpoint):
+        raise Error("MCP OAuth authorization endpoint must use HTTPS")
+    var separator = "&" if "?" in authorization_endpoint else "?"
+    var url = (
+        authorization_endpoint + separator + "response_type=code&client_id="
+        + _form_encode(client_id) + "&redirect_uri=" + _form_encode(redirect_uri)
+        + "&state=" + _form_encode(state) + "&code_challenge="
+        + _form_encode(code_challenge) + "&code_challenge_method=S256&resource="
+        + _form_encode(resource)
+    )
+    if scope != "":
+        url += "&scope=" + _form_encode(scope)
+    return url^
+
+
+def parse_mcp_oauth_callback(input: String, expected_state: String) raises -> String:
+    var query = input
+    var marker = input.find("?")
+    if marker:
+        query = _mcp_byte_range(input, marker.value() + 1, input.byte_length())
+    var code = String("")
+    var state = String("")
+    var error = String("")
+    for pair in query.split("&"):
+        var owned = String(pair)
+        var separator = owned.find("=")
+        if not separator:
+            continue
+        var key = _mcp_byte_range(owned, 0, separator.value())
+        var value = _mcp_percent_decode(
+            _mcp_byte_range(owned, separator.value() + 1, owned.byte_length())
+        )
+        if key == "code":
+            code = value^
+        elif key == "state":
+            state = value^
+        elif key == "error":
+            error = value^
+    if error != "":
+        raise Error("MCP OAuth authorization failed: " + error)
+    if state != expected_state:
+        raise Error("MCP OAuth callback state mismatch")
+    if code == "":
+        raise Error("MCP OAuth callback has no authorization code")
+    return code^
+
+
 def mcp_oauth_code_exchange_request(
     token_endpoint: String,
     code: String,
@@ -520,6 +576,36 @@ struct McpOAuthState(Copyable, Movable):
         if value.contains("expires_in"):
             expires_in = value.get("expires_in").int_value
         self.tokens.expires = now_ms + expires_in * 1000
+
+
+def _mcp_percent_decode(value: String) -> String:
+    var output = String("")
+    var index = 0
+    while index < value.byte_length():
+        var byte = Int(value.as_bytes()[index])
+        if byte == 37 and index + 2 < value.byte_length():
+            var high = _mcp_hex_digit(Int(value.as_bytes()[index + 1]))
+            var low = _mcp_hex_digit(Int(value.as_bytes()[index + 2]))
+            if high >= 0 and low >= 0:
+                output += chr((high << 4) | low)
+                index += 3
+                continue
+        if byte == 43:
+            output += " "
+        else:
+            output += chr(byte)
+        index += 1
+    return output^
+
+
+def _mcp_hex_digit(byte: Int) -> Int:
+    if byte >= 48 and byte <= 57:
+        return byte - 48
+    if byte >= 65 and byte <= 70:
+        return byte - 55
+    if byte >= 97 and byte <= 102:
+        return byte - 87
+    return -1
 
 
 def _form_encode(value: String) -> String:
