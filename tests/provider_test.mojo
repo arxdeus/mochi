@@ -43,6 +43,7 @@ from mochi.provider import (
     copilot_discovered_endpoint,
     copilot_discovery_request,
     copilot_graphql_url,
+    copilot_guess_endpoint,
     copilot_model_endpoint,
     copilot_models_request,
     copilot_parse_models,
@@ -165,6 +166,16 @@ def test_copilot_model_discovery_and_routing() raises:
     var messages = parse_json('{"supported_endpoints":["/responses","/v1/messages"]}')
     assert_equal(copilot_model_endpoint(messages), "messages")
     assert_equal(copilot_model_endpoint(parse_json('{}')), "chat")
+    assert_equal(copilot_guess_endpoint("claude-sonnet-4.6"), "messages")
+    assert_equal(copilot_guess_endpoint("gpt-5.6-terra"), "responses")
+    assert_equal(copilot_guess_endpoint("gpt-4.1"), "chat")
+    var responses = copilot_provider_spec(
+        "https://api.githubcopilot.com", "secret"
+    )
+    responses.responses_api = True
+    assert_equal(
+        responses.chat_url(), "https://api.githubcopilot.com/responses"
+    )
 
 
 def test_sse_incremental_multiline_and_finish() raises:

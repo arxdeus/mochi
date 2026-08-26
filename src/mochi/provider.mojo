@@ -77,6 +77,8 @@ struct ProviderSpec(Copyable, Movable):
 
     def chat_url(self) -> String:
         if self.responses_api:
+            if self.name == "copilot":
+                return String(self.base_url.removesuffix("/")) + "/responses"
             return OPENAI_RESPONSES_URL
         if self.base_url.endswith("/"):
             return self.base_url + "chat/completions"
@@ -126,6 +128,14 @@ def copilot_models_request(base_url: String, token: String) -> HttpRequest:
     return request^
 
 
+def copilot_guess_endpoint(model: String) -> String:
+    if model.startswith("claude-"):
+        return "messages"
+    if "gpt-5" in model or "codex" in model:
+        return "responses"
+    return "chat"
+
+
 def copilot_model_endpoint(model: JsonValue) -> String:
     if model.contains("supported_endpoints"):
         try:
@@ -139,7 +149,7 @@ def copilot_model_endpoint(model: JsonValue) -> String:
                         return "responses"
         except:
             pass
-    return "chat"
+    return copilot_guess_endpoint(_string_or(model, "id", ""))
 
 
 def copilot_model_enabled(model: JsonValue) -> Bool:
