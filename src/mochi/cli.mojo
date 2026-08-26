@@ -49,6 +49,7 @@ struct CliConfig(Copyable, Movable):
     var continue_session: Bool
     var session_id: Optional[String]
     var acp: Bool
+    var rollback: Bool
 
     def __init__(out self):
         self.model = DEFAULT_MODEL
@@ -69,6 +70,7 @@ struct CliConfig(Copyable, Movable):
         self.continue_session = False
         self.session_id = None
         self.acp = False
+        self.rollback = False
 
     def normalize_provider_url(mut self):
         if self.provider_url != DEFAULT_PROVIDER_URL:
@@ -152,6 +154,10 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
     var index = 0
     while index < len(arguments):
         var argument = arguments[index]
+        if index == 0 and argument == "rollback":
+            config.rollback = True
+            index += 1
+            continue
         if argument == "--help" or argument == "-h":
             config.show_help = True
         elif argument == "--version":

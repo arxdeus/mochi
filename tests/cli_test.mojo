@@ -33,6 +33,11 @@ def test_all_options() raises:
     assert_equal(config.prompt.value(), "hello")
 
 
+def test_rollback_subcommand() raises:
+    var config = parse_args(["rollback"])
+    assert_true(config.rollback)
+
+
 def test_acp_mode() raises:
     assert_true(parse_args(["--acp"]).acp)
 

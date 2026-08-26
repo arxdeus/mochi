@@ -22,6 +22,7 @@ from mochi.config import load_layered_config
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, serialize_json
 from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
+from mochi.ops import restore_backup
 from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager
 from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
 from mochi.prompt import build_system_prompt, load_instruction_text
@@ -73,6 +74,12 @@ def main() raises:
     var config = parse_args(arguments^)
     var startup_cwd = getenv("PWD", ".")
     var startup_paths = StoragePaths.resolve()
+    if config.rollback:
+        restore_backup(
+            startup_paths.state + "/mochi_backup", String(command_line[0])
+        )
+        print("Restored previous version.")
+        return
     var layered = load_layered_config(
         startup_paths.config + "/config.json",
         startup_cwd + "/.maki/config.json",
