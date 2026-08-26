@@ -1,4 +1,8 @@
 from mochi.json import JsonValue, parse_json
+from mochi.runtime import Runtime
+from mochi.session import Session, SessionStore
+from mochi.storage import MakiId, SessionRef
+from mochi.types import CancellationToken, Message
 
 
 comptime ACP_PROTOCOL_VERSION = 1
@@ -152,6 +156,159 @@ struct AcpSession(Copyable, Movable):
             if current == id:
                 return True
         return False
+
+
+struct AcpRuntimeServer:
+    var protocol: AcpSession
+    var runtime: Runtime
+    var store: SessionStore
+    var sessions: List[Session]
+    var active_session_id: String
+    var now_ms: Int
+
+    def __init__(
+        out self,
+        var runtime: Runtime,
+        var store: SessionStore,
+        now_ms: Int = 0,
+    ):
+        self.protocol = AcpSession()
+        self.runtime = runtime^
+        self.store = store^
+        self.sessions = List[Session]()
+        self.active_session_id = ""
+        self.now_ms = now_ms
+
+    def handle(mut self, request: AcpMessage) raises -> List[AcpMessage]:
+        var output = List[AcpMessage]()
+        if request.method == "session/new":
+            if not self.protocol.initialized:
+                output.append(self.protocol.handle(request))
+                return output^
+            var id = self._new_session_id(request.payload)
+            var cwd = _optional_string(request.payload, "cwd", ".")
+            var session = Session(id, self.runtime.model, cwd, self.now_ms)
+            self.sessions.append(session^)
+            self.active_session_id = id
+            self.runtime.set_messages(List[Message]())
+            var params = JsonValue.object()
+            params.set("sessionId", JsonValue.string(id))
+            output.append(
+                self.protocol.handle(
+                    AcpMessage.request(request.id, request.method, params^)
+                )
+            )
+            return output^
+        if request.method == "session/load":
+            if not self.protocol.initialized:
+                output.append(self.protocol.handle(request))
+                return output^
+            var id = _string(request.payload, "sessionId")
+            var session = self.store.load(id)
+            self._replace_session(session.copy())
+            self.active_session_id = id
+            self.runtime.set_messages(session.runtime_messages())
+            if not self.protocol._has_session(id):
+                self.protocol.sessions.append(id)
+            output.append(self.protocol.handle(request))
+            output.append(
+                session_update(id, _history_update(session.runtime_messages()))
+            )
+            return output^
+        if request.method == "session/prompt":
+            if not self.protocol.initialized:
+                output.append(self.protocol.handle(request))
+                return output^
+            var id = _string(request.payload, "sessionId")
+            var index = self._session_index(id)
+            if index < 0:
+                output.append(
+                    AcpMessage.failure(request.id, -32004, "unknown ACP session")
+                )
+                return output^
+            var prompt = _prompt_text(request.payload)
+            var result = self.runtime.run(prompt, CancellationToken())
+            self.sessions[index].update_from_result(
+                result.messages, result.usage, self.runtime.model, self.now_ms
+            )
+            self.store.save(self.sessions[index])
+            output.append(
+                session_update(id, _agent_message_update(result.text))
+            )
+            var response = JsonValue.object()
+            response.set("stopReason", JsonValue.string(result.stop_reason))
+            output.append(AcpMessage.response(request.id, response^))
+            return output^
+        if request.method == "session/cancel":
+            output.append(self.protocol.handle(request))
+            return output^
+        output.append(self.protocol.handle(request))
+        return output^
+
+    def shutdown(mut self):
+        self.runtime.shutdown_remotes()
+
+    def _new_session_id(self, payload: JsonValue) raises -> String:
+        if payload.contains("sessionId"):
+            return _string(payload, "sessionId")
+        return SessionRef.from_id(MakiId.generate()).as_str()
+
+    def _session_index(self, id: String) -> Int:
+        for i in range(len(self.sessions)):
+            if self.sessions[i].id == id:
+                return i
+        return -1
+
+    def _replace_session(mut self, var session: Session):
+        var index = self._session_index(session.id)
+        if index >= 0:
+            self.sessions[index] = session^
+        else:
+            self.sessions.append(session^)
+
+
+def _optional_string(value: JsonValue, key: String, fallback: String) raises -> String:
+    if not value.contains(key):
+        return fallback
+    return _string(value, key)
+
+
+def _prompt_text(payload: JsonValue) raises -> String:
+    if not payload.contains("prompt"):
+        return _string(payload, "text")
+    var prompt = payload.get("prompt")
+    if prompt.kind == JsonValue.STRING:
+        return prompt.string_value
+    if prompt.kind != JsonValue.ARRAY:
+        raise Error("ACP prompt must be a string or content array")
+    var result = String("")
+    for part in prompt.array_value:
+        if part.kind == JsonValue.OBJECT and part.contains("text"):
+            result += _string(part, "text")
+    return result^
+
+
+def _agent_message_update(text: String) raises -> JsonValue:
+    var update = JsonValue.object()
+    update.set("sessionUpdate", JsonValue.string("agent_message_chunk"))
+    var content = JsonValue.object()
+    content.set("type", JsonValue.string("text"))
+    content.set("text", JsonValue.string(text))
+    update.set("content", content^)
+    return update^
+
+
+def _history_update(messages: List[Message]) raises -> JsonValue:
+    var update = JsonValue.object()
+    update.set("sessionUpdate", JsonValue.string("history"))
+    var values = JsonValue.array()
+    for message in messages:
+        var value = JsonValue.object()
+        value.set("role", JsonValue.string(message.role))
+        value.set("text", JsonValue.string(message.content))
+        values.append(value^)
+    update.set("messages", values^)
+    return update^
 
 
 def session_update(session_id: String, var update: JsonValue) raises -> AcpMessage:

@@ -4,11 +4,12 @@ from std.os.path import exists
 from std.sys import argv
 from std.sys._libc import close, exit, pipe
 
-from mochi.acp import AcpMessage, AcpSession
+from mochi.acp import AcpMessage, AcpRuntimeServer
 from mochi.cli import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_URL,
     VERSION,
+    CliConfig,
     _words,
     help_text,
     parse_args,
@@ -63,7 +64,7 @@ def main() raises:
     if layered.yolo and not config.yolo:
         config.yolo = layered.yolo.value()
     if config.acp:
-        _run_acp()
+        _run_acp(config, startup_cwd, startup_paths)
         return
     if config.show_help:
         print(help_text(), end="")
@@ -203,15 +204,39 @@ def main() raises:
     runtime.shutdown_remotes()
 
 
-def _run_acp() raises:
-    var session = AcpSession()
+def _run_acp(config: CliConfig, cwd: String, paths: StoragePaths) raises:
+    var permissions = PermissionManager(
+        PermissionEffect.prompt(), yolo=config.yolo
+    )
+    var runtime = Runtime(
+        OpenAICompatibleProvider(config.provider_spec()),
+        ToolRegistry(cwd),
+        permissions^,
+        config.model,
+    )
+    runtime.set_system_prompt(
+        build_system_prompt(
+            cwd,
+            config.model,
+            _platform(),
+            _date(),
+            load_instruction_text(cwd),
+        )
+    )
+    for definition in standard_tool_definitions():
+        runtime.add_tool(definition.copy())
+    var server = AcpRuntimeServer(
+        runtime^, SessionStore(paths.state + "/sessions"), _now_ms()
+    )
     while True:
         var line = _read_line()
         if not line:
+            server.shutdown()
             return
         try:
             var request = AcpMessage.parse(line.value())
-            print(session.handle(request).line(), end="")
+            for response in server.handle(request):
+                print(response.line(), end="")
         except error:
             print(
                 AcpMessage.failure(0, -32600, String(error)).line(),
