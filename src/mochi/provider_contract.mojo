@@ -88,6 +88,58 @@ struct ThinkingConfig(Copyable, Movable):
     def is_off(self) -> Bool:
         return self.tag == Self.OFF
 
+    def display(self) -> String:
+        if self.tag == Self.OFF:
+            return "off"
+        if self.tag == Self.ADAPTIVE:
+            return "adaptive"
+        if self.tag == Self.BUDGET:
+            return String(self.budget_tokens)
+        if self.effort.tag == ThinkingEffort.MINIMAL:
+            return "minimal"
+        if self.effort.tag == ThinkingEffort.LOW:
+            return "low"
+        if self.effort.tag == ThinkingEffort.MEDIUM:
+            return "medium"
+        if self.effort.tag == ThinkingEffort.HIGH:
+            return "high"
+        if self.effort.tag == ThinkingEffort.XHIGH:
+            return "xhigh"
+        return "maximum"
+
+    @staticmethod
+    def parse(input: String, current: Self) -> Optional[Self]:
+        var value = String(input.strip())
+        if value == "":
+            if current.is_off():
+                return Optional(Self.adaptive())
+            return Optional(Self.off())
+        if value == "off":
+            return Optional(Self.off())
+        if value == "adaptive":
+            return Optional(Self.adaptive())
+        if value == "minimal":
+            return Optional(Self.with_effort(ThinkingEffort.minimal()))
+        if value == "low":
+            return Optional(Self.with_effort(ThinkingEffort.low()))
+        if value == "medium":
+            return Optional(Self.with_effort(ThinkingEffort.medium()))
+        if value == "high":
+            return Optional(Self.with_effort(ThinkingEffort.high()))
+        if value == "xhigh":
+            return Optional(Self.with_effort(ThinkingEffort.xhigh()))
+        if value == "max" or value == "maximum":
+            return Optional(Self.with_effort(ThinkingEffort.maximum()))
+        var budget = 0
+        for cp in value.codepoints():
+            var digit = Int(cp.to_u32()) - 48
+            if digit < 0 or digit > 9:
+                return None
+            budget = budget * 10 + digit
+        if budget <= 0:
+            return None
+        return Optional(Self.with_budget(budget))
+
 
 @fieldwise_init
 struct RequestOptions(Copyable, Movable):
@@ -100,7 +152,7 @@ struct RequestOptions(Copyable, Movable):
 
     def clamped(self, model: Model) -> Self:
         var result = self.copy()
-        result.fast = False
+        result.fast = result.fast and model.supports_fast()
         if not model.supports_thinking():
             result.thinking = ThinkingConfig.off()
         elif model.requires_thinking() and result.thinking.is_off():

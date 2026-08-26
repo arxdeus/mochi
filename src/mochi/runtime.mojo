@@ -30,7 +30,12 @@ from mochi.provider import (
     ProviderSpec,
     RetryState,
 )
-from mochi.provider_contract import ProviderEventSink, ProviderRequest
+from mochi.provider_contract import (
+    ProviderEventSink,
+    ProviderRequest,
+    RequestOptions,
+    ThinkingConfig,
+)
 from mochi.plugin import PluginClient
 from mochi.tools import (
     PreparedTool,
@@ -94,6 +99,8 @@ struct Runtime:
     var compactions: Int
     var retries: Int
     var system_prompt: String
+    var options: RequestOptions
+    var workflow: Bool
     var permission_answers: List[PermissionAnswer]
     var pending_permissions: List[PendingPermission]
     var queued_inputs: List[String]
@@ -131,6 +138,8 @@ struct Runtime:
         self.compactions = 0
         self.retries = 0
         self.system_prompt = ""
+        self.options = RequestOptions()
+        self.workflow = False
         self.permission_answers = List[PermissionAnswer]()
         self.pending_permissions = List[PendingPermission]()
         self.queued_inputs = List[String]()
@@ -167,6 +176,8 @@ struct Runtime:
         self.compactions = 0
         self.retries = 0
         self.system_prompt = ""
+        self.options = RequestOptions()
+        self.workflow = False
         self.permission_answers = List[PermissionAnswer]()
         self.pending_permissions = List[PendingPermission]()
         self.queued_inputs = List[String]()
@@ -182,6 +193,32 @@ struct Runtime:
 
     def set_system_prompt(mut self, prompt: String):
         self.system_prompt = prompt
+
+    def set_thinking(mut self, input: String) -> Bool:
+        var model = _runtime_model(
+            self.model, self.provider.name, self.provider.model_info
+        )
+        if not model.supports_thinking():
+            return False
+        var parsed = ThinkingConfig.parse(input, self.options.thinking)
+        if not parsed:
+            return False
+        self.options.thinking = parsed.value().copy()
+        return True
+
+    def set_fast(mut self, enabled: Bool) -> Bool:
+        var model = _runtime_model(
+            self.model, self.provider.name, self.provider.model_info
+        )
+        if enabled and not model.supports_fast():
+            return False
+        self.options.fast = enabled
+        return True
+
+    def toggle_workflow(mut self) -> Bool:
+        self.workflow = not self.workflow
+        self.tools.set_workflow(self.workflow)
+        return self.workflow
 
     def set_messages(mut self, messages: List[Message]):
         self.messages = messages.copy()
@@ -413,6 +450,13 @@ struct Runtime:
                     _domain_messages(self.messages),
                     self.system_prompt,
                     _contract_tools(self.definitions),
+                    self.options.clamped(
+                        _runtime_model(
+                            self.model,
+                            self.provider.name,
+                            self.provider.model_info,
+                        )
+                    ),
                 )
                 var sink = RuntimeEventSink()
                 return _legacy_result(

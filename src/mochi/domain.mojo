@@ -585,6 +585,11 @@ struct Model(Copyable, Movable):
     def requires_thinking(self) -> Bool:
         return self.thinking.requires()
 
+    def supports_fast(self) -> Bool:
+        return self.provider == "anthropic" and self.id.startswith(
+            "claude-opus-4-6"
+        )
+
     def supports_vision(self) -> Bool:
         if self.supports_vision_override:
             return self.supports_vision_override.value()

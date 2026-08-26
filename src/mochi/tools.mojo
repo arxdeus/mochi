@@ -126,6 +126,7 @@ struct ToolRegistry(Copyable, Movable):
     var subagent_responses: List[String]
     var max_subagents: Int
     var subagent_calls: Int
+    var workflow: Bool
 
     def __init__(out self, var cwd: String = ".", max_subagents: Int = 8):
         self.cwd = cwd^
@@ -135,6 +136,7 @@ struct ToolRegistry(Copyable, Movable):
         self.subagent_responses = List[String]()
         self.max_subagents = max_subagents
         self.subagent_calls = 0
+        self.workflow = False
         self.names.append("read")
         self.owners.append("builtin")
         self.names.append("write")
@@ -177,6 +179,9 @@ struct ToolRegistry(Copyable, Movable):
         """Install a deterministic Mojo-side subagent callback response."""
         self.subagent_prompts.append(prompt^)
         self.subagent_responses.append(response^)
+
+    def set_workflow(mut self, enabled: Bool):
+        self.workflow = enabled
 
     def resolve_path(self, path: String) -> String:
         if path.startswith("/") or self.cwd == ".":
@@ -310,6 +315,8 @@ struct ToolRegistry(Copyable, Movable):
             elif line == "APPEND":
                 output += variable
             elif line.startswith("SUBAGENT "):
+                if not self.workflow:
+                    raise Error("subagents require workflow mode")
                 output += self._subagent(String(line.removeprefix("SUBAGENT "))) + "\n"
             else:
                 raise Error("unknown mini-interpreter command: " + line)

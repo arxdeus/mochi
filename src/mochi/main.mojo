@@ -42,7 +42,7 @@ from mochi.provider import (
     refresh_openai_oauth_with,
     save_openai_oauth_credentials,
 )
-from mochi.runtime import Runtime, RuntimeResult
+from mochi.runtime import Runtime, RuntimeResult, _runtime_model
 from mochi.session import Session, SessionStore
 from mochi.storage import (
     MakiId,
@@ -462,6 +462,35 @@ def _interactive(
                     print("YOLO mode enabled.")
                 else:
                     print("YOLO mode disabled.")
+            elif action.name == "thinking":
+                if runtime.set_thinking(action.text):
+                    print("Thinking:", runtime.options.thinking.display())
+                elif not _runtime_model(
+                    runtime.model,
+                    runtime.provider.name,
+                    runtime.provider.model_info,
+                ).supports_thinking():
+                    print("Thinking requires a model that supports it")
+                else:
+                    print(
+                        "Usage: /thinking [off|adaptive|minimal|low|medium|high|xhigh|max|<budget>]"
+                    )
+            elif action.name == "fast":
+                var fast = not runtime.options.fast
+                if runtime.set_fast(fast):
+                    if fast:
+                        print("Fast mode: on")
+                    else:
+                        print("Fast mode: off")
+                else:
+                    print(
+                        "Fast mode requires an Anthropic Opus 4.6+ model (API only)"
+                    )
+            elif action.name == "workflow":
+                if runtime.toggle_workflow():
+                    print("Workflow mode: on")
+                else:
+                    print("Workflow mode: off")
             elif action.name == "login":
                 _interactive_login(runtime)
             elif action.name == "model":

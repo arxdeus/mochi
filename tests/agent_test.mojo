@@ -107,6 +107,14 @@ def test_code_execution_mini_interpreter_subagent_bound() raises:
     var registry = ToolRegistry(TEST_DIR, max_subagents=2)
     registry.add_subagent_response("first", "A")
     registry.add_subagent_response("second", "B")
+    var disabled = registry.execute(
+        registry.prepare(
+            "code_execution", '{"code":"SUBAGENT first"}'
+        )
+    )
+    assert_false(disabled.ok)
+    assert_true("workflow mode" in disabled.content)
+    registry.set_workflow(True)
     var prepared = registry.prepare("code_execution", "{\"code\":\"ECHO start\\nSUBAGENT first\\nSUBAGENT second\"}")
     var result = registry.execute(prepared)
     assert_true(result.ok)

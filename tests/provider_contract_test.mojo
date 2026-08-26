@@ -152,11 +152,26 @@ def test_option_clamping_and_model_listing() raises:
     var unsupported = requested.clamped(_model(ThinkingSupport.no()))
     assert_true(unsupported.thinking.is_off())
     assert_false(unsupported.fast)
+    var fast_model = _model()
+    fast_model.provider = "anthropic"
+    fast_model.id = "claude-opus-4-6"
+    assert_true(requested.clamped(fast_model).fast)
     var required = RequestOptions().clamped(
         _model(ThinkingSupport.required())
     )
     assert_equal(required.thinking.tag, ThinkingConfig.EFFORT)
     assert_equal(required.thinking.effort.tag, ThinkingEffort.MINIMAL)
+
+    var current = ThinkingConfig.off()
+    assert_equal(ThinkingConfig.parse("", current).value().display(), "adaptive")
+    assert_equal(
+        ThinkingConfig.parse("high", current).value().display(), "high"
+    )
+    assert_equal(
+        ThinkingConfig.parse("8192", current).value().display(), "8192"
+    )
+    assert_false(ThinkingConfig.parse("0", current))
+    assert_false(ThinkingConfig.parse("garbage", current))
 
     var fake = FakeProvider()
     var listed: List[ModelInfo] = [

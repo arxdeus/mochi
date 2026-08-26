@@ -18,6 +18,7 @@ from mochi.plugin import (
     registration_result,
     shutdown_result,
 )
+from mochi.provider_contract import ThinkingConfig
 from mochi.provider import (
     AnthropicProviderSpec,
     GeminiProviderSpec,
@@ -98,6 +99,42 @@ def test_runtime_accepts_production_provider_dialects() raises:
     )
     assert_equal(gemini.provider.kind, "gemini")
     assert_equal(gemini.provider.name, "google")
+
+
+def test_runtime_interactive_request_modes() raises:
+    var runtime = Runtime(
+        ProductionProvider(
+            AnthropicProviderSpec("https://api.anthropic.test", "secret"),
+            FlokiTransport(),
+            find_model_info("claude-opus-4-6"),
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "claude-opus-4-6",
+    )
+    assert_true(runtime.set_thinking(""))
+    assert_equal(runtime.options.thinking.tag, ThinkingConfig.ADAPTIVE)
+    assert_true(runtime.set_thinking("8192"))
+    assert_equal(runtime.options.thinking.budget_tokens, 8192)
+    assert_false(runtime.set_thinking("garbage"))
+    assert_equal(runtime.options.thinking.budget_tokens, 8192)
+    assert_true(runtime.set_fast(True))
+    assert_true(runtime.options.fast)
+    assert_true(runtime.set_fast(False))
+    assert_false(runtime.options.fast)
+    assert_true(runtime.toggle_workflow())
+    assert_true(runtime.tools.workflow)
+    assert_false(runtime.toggle_workflow())
+    assert_false(runtime.tools.workflow)
+
+    var unsupported = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    assert_false(unsupported.set_thinking("high"))
+    assert_false(unsupported.set_fast(True))
 
 
 def test_queued_input_is_wrapped_and_consumed() raises:
