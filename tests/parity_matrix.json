@@ -19,7 +19,7 @@
       "id": "agent.provider_error.result",
       "area": "agent",
       "owner": "mochi_agent",
-      "status": "partial",
+      "status": "parity",
       "description": "A provider failure produces non-empty result text equal to the persisted assistant error message.",
       "upstream_refs": [
         "maki-agent/src/types.rs:553-629",
@@ -36,10 +36,10 @@
           "normalization": "Exact stop reason, error text, and persisted assistant message."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Typed agent error event/result semantics, then CLI stdout/stderr/exit behavior in separate behavior IDs."
+          "status": "parity",
+          "upstream_command": "pixi run parity agent.provider_error.result",
+          "mojo_command": "pixi run parity agent.provider_error.result",
+          "normalization": "Pinned upstream error event and sanitized provider-error tests pass with Mojo's exact non-empty persisted result assertion."
         }
       }
     },

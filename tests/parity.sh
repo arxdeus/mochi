@@ -28,6 +28,13 @@ run_mojo_test() {
 }
 
 case "${1:-all}" in
+    agent.provider_error.result)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::exit_on_done_flag_triggers_exit::error_exits_error -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            agent::streaming::tests::a_reported_api_error_leaves_the_provider_body_behind -- --exact >/dev/null
+        run_mojo_test tests/runtime_test.mojo
+        ;;
     permissions.deny_precedence)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
             permissions::tests::yolo_mode_allows_but_deny_still_blocks -- --exact >/dev/null
@@ -215,7 +222,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="agent.provider_error.result permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))
