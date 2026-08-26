@@ -2,7 +2,7 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, parse_json, serialize_json
-from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
+from mochi.mcp import McpClient, McpOAuthState, StdioTransport, StreamableHttpTransport
 from mochi.permissions import (
     PermissionAnswer,
     PermissionEffect,
@@ -19,6 +19,7 @@ from mochi.plugin import (
     shutdown_result,
 )
 from mochi.provider_contract import ThinkingConfig
+from mochi.storage import OAuthTokens
 from mochi.provider import (
     AnthropicProviderSpec,
     GeminiProviderSpec,
@@ -430,6 +431,27 @@ def test_remote_status_lines() raises:
     assert_equal(runtime.mcp_picker_items(), "0:fixture\n1:authenticated")
     assert_equal(runtime.remote_status_lines()[0], "fixture · stdio · disabled")
     assert_false(runtime.set_mcp_enabled("missing", False))
+    assert_equal(
+        runtime.mcp_http_url("authenticated").value(),
+        "https://mcp.example/mcp",
+    )
+    assert_false(runtime.mcp_http_url("missing"))
+    assert_true(
+        runtime.apply_mcp_oauth(
+            "authenticated",
+            McpOAuthState(
+                OAuthTokens("new-access", "refresh", 1000, None),
+                "https://auth.example/token",
+                "client",
+                "secret",
+                "https://mcp.example/mcp",
+            ),
+        )
+    )
+    assert_equal(runtime.mcp_http_transports[0].bearer_token, "new-access")
+    assert_true(runtime.clear_mcp_oauth("authenticated"))
+    assert_equal(runtime.mcp_http_transports[0].bearer_token, "")
+    assert_false(runtime.mcp_http_authenticated[0])
 
 
 def test_live_remote_mcp_and_plugin_dispatch() raises:

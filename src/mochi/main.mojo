@@ -21,7 +21,14 @@ from mochi.cli import (
 from mochi.config import load_layered_config
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, serialize_json
-from mochi.mcp import McpClient, McpOAuthState, StdioTransport, StreamableHttpTransport
+from mochi.mcp import (
+    McpClient,
+    McpOAuthState,
+    StdioTransport,
+    StreamableHttpTransport,
+    begin_mcp_oauth_with,
+    complete_mcp_oauth_with,
+)
 from mochi.ops import restore_backup
 from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager
 from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
@@ -48,10 +55,13 @@ from mochi.runtime import Runtime, RuntimeResult, _runtime_model
 from mochi.session import Session, SessionStore
 from mochi.storage import (
     MakiId,
+    McpAuthData,
     SessionRef,
     StoragePaths,
+    delete_mcp_auth,
     load_mcp_auth,
     load_provider_credentials,
+    save_mcp_auth,
 )
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken, Message
@@ -238,6 +248,7 @@ def main() raises:
                 history,
                 memories,
                 preferences,
+                paths,
                 config.output_format,
             )
     except error:
@@ -474,6 +485,7 @@ def _interactive(
     mut history: InputHistory,
     mut memories: NoteStore,
     mut preferences: PreferenceStore,
+    paths: StoragePaths,
     output_format: String,
 ) raises:
     var ui = UiState()
@@ -550,7 +562,7 @@ def _interactive(
             elif action.name == "tasks":
                 _interactive_tasks(session)
             elif action.name == "mcp":
-                _interactive_mcp(runtime, ui)
+                _interactive_mcp(runtime, ui, paths)
             elif action.name == "theme":
                 _interactive_theme(preferences, ui)
             elif action.name == "login":
@@ -691,7 +703,9 @@ def _interactive_theme(
     print("\r\x1b[2KTheme: " + current)
 
 
-def _interactive_mcp(mut runtime: Runtime, mut ui: UiState) raises:
+def _interactive_mcp(
+    mut runtime: Runtime, mut ui: UiState, paths: StoragePaths
+) raises:
     var items = runtime.mcp_picker_items()
     if items == "":
         print("MCP servers:")
@@ -699,6 +713,8 @@ def _interactive_mcp(mut runtime: Runtime, mut ui: UiState) raises:
         return
     _ = UiReducer.reduce(ui, UiEvent.picker_open("MCP Servers", items))
     var raw_mode = external_call["mochi_terminal_enable_raw", c_int]()
+    var authenticate = String("")
+    var logout = String("")
     while ui.picker_name != "":
         _render_picker(ui)
         var byte = external_call["getchar", c_int]()
@@ -708,6 +724,12 @@ def _interactive_mcp(mut runtime: Runtime, mut ui: UiState) raises:
             var action = UiReducer.reduce(ui, UiEvent.picker_toggle())
             if action.is_picker_toggle():
                 _ = runtime.set_mcp_enabled(action.name, action.text == "on")
+        elif byte == 97:
+            authenticate = ui.picker_items[ui.picker_selected]
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
+        elif byte == 108:
+            logout = ui.picker_items[ui.picker_selected]
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
         elif byte == 27:
             var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
             if bracket == 91:
@@ -721,6 +743,93 @@ def _interactive_mcp(mut runtime: Runtime, mut ui: UiState) raises:
     if raw_mode > 0:
         external_call["mochi_terminal_disable_raw", NoneType]()
     print("\r\x1b[2K", end="")
+    if authenticate != "":
+        _authenticate_mcp(runtime, paths, authenticate)
+    elif logout != "":
+        var url = runtime.mcp_http_url(logout)
+        if not url:
+            print("MCP OAuth is only available for HTTP servers.")
+            return
+        delete_mcp_auth(paths, logout)
+        _ = runtime.clear_mcp_oauth(logout)
+        print("MCP", logout, "logged out.")
+
+
+def _authenticate_mcp(
+    mut runtime: Runtime, paths: StoragePaths, server_name: String
+) raises:
+    var server_url = runtime.mcp_http_url(server_name)
+    if not server_url:
+        print("MCP OAuth is only available for HTTP servers.")
+        return
+    var bound_port: c_int = 0
+    var listener = external_call[
+        "mochi_oauth_callback_bind", c_int, c_int, Pointer[mut=True, c_int, MutAnyOrigin]
+    ](8765, rebind[Pointer[mut=True, c_int, MutAnyOrigin]](Pointer(to=bound_port)))
+    if listener < 0:
+        print("Unable to start MCP OAuth callback listener.")
+        return
+    var redirect_uri = "http://127.0.0.1:" + String(bound_port) + "/callback"
+    var existing = load_mcp_auth(
+        paths, server_name, server_url.value(), _now_ms() // 1000
+    )
+    var client_id = String("")
+    var client_secret = String("")
+    if existing and existing.value().redirect_uri and existing.value().redirect_uri.value() == redirect_uri:
+        client_id = existing.value().client_id
+        if existing.value().client_secret:
+            client_secret = existing.value().client_secret.value()
+    var transport = FlokiTransport()
+    var flow = begin_mcp_oauth_with(
+        transport,
+        server_url.value(),
+        redirect_uri,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    print("Open this URL in your browser:\n\n  " + flow.authorization_url + "\n")
+    _ = external_call[
+        "mochi_open_browser", c_int, CStringSlice[ImmutAnyOrigin]
+    ](rebind[CStringSlice[ImmutAnyOrigin]](flow.authorization_url.as_c_string_slice()))
+    print("Waiting for callback on " + redirect_uri + "...")
+    print("Or paste the complete redirect URL here:")
+    var callback = List[UInt8](length=8192, fill=0)
+    var status = external_call[
+        "mochi_oauth_callback_wait", c_int, c_int, Pointer[mut=True, UInt8, MutAnyOrigin], c_size_t, c_int
+    ](
+        listener,
+        rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](callback.unsafe_ptr()),
+        c_size_t(len(callback)),
+        300,
+    )
+    if status < 0:
+        print("MCP OAuth authorization timed out.")
+        return
+    var callback_text = String(String(unsafe_from_utf8=Span(callback)).strip("\0"))
+    var tokens = complete_mcp_oauth_with(
+        transport, flow, callback_text, _now_ms()
+    )
+    var data = McpAuthData(
+        server_url.value(),
+        Optional(tokens.copy()),
+        flow.client_id,
+        Optional(flow.client_secret) if flow.client_secret != "" else None,
+        Optional(flow.client_secret_expires_at) if flow.client_secret_expires_at > 0 else None,
+        Optional(flow.redirect_uri),
+        Optional(flow.token_endpoint),
+    )
+    save_mcp_auth(paths, server_name, data)
+    _ = runtime.apply_mcp_oauth(
+        server_name,
+        McpOAuthState(
+            tokens^,
+            flow.token_endpoint,
+            flow.client_id,
+            flow.client_secret,
+            flow.server_url,
+        ),
+    )
+    print("MCP", server_name, "authenticated.")
 
 
 def _render_picker(ui: UiState):

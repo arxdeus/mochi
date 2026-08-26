@@ -16,7 +16,7 @@ from mochi.domain import (
     ThinkingSupport,
 )
 from mochi.json import JsonValue, parse_json, serialize_json
-from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
+from mochi.mcp import McpClient, McpOAuthState, StdioTransport, StreamableHttpTransport
 from mochi.permissions import (
     PermissionAnswer,
     PermissionEffect,
@@ -490,6 +490,28 @@ struct Runtime:
         for i in range(len(self.mcp_http_names)):
             if self.mcp_http_names[i] == name:
                 self.mcp_http_enabled[i] = enabled
+                return True
+        return False
+
+    def mcp_http_url(self, name: String) -> Optional[String]:
+        for i in range(len(self.mcp_http_names)):
+            if self.mcp_http_names[i] == name:
+                return Optional(self.mcp_http_transports[i].url.copy())
+        return None
+
+    def apply_mcp_oauth(mut self, name: String, oauth: McpOAuthState) -> Bool:
+        for i in range(len(self.mcp_http_names)):
+            if self.mcp_http_names[i] == name:
+                self.mcp_http_transports[i].apply_oauth(oauth)
+                self.mcp_http_authenticated[i] = True
+                return True
+        return False
+
+    def clear_mcp_oauth(mut self, name: String) -> Bool:
+        for i in range(len(self.mcp_http_names)):
+            if self.mcp_http_names[i] == name:
+                self.mcp_http_transports[i].clear_bearer_token()
+                self.mcp_http_authenticated[i] = False
                 return True
         return False
 

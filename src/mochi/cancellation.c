@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -101,6 +102,141 @@ int mochi_secure_random(void *buffer, size_t length) {
 #else
     (void)buffer;
     (void)length;
+    return -1;
+#endif
+}
+
+int mochi_open_browser(const char *url) {
+#if defined(__unix__) || defined(__APPLE__)
+    pid_t pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+#if defined(__APPLE__)
+        execlp("open", "open", url, (char *)NULL);
+#else
+        execlp("xdg-open", "xdg-open", url, (char *)NULL);
+#endif
+        _exit(127);
+    }
+    return 0;
+#else
+    (void)url;
+    return -1;
+#endif
+}
+
+int mochi_oauth_callback_bind(int preferred_port, int *bound_port) {
+#if defined(__unix__) || defined(__APPLE__)
+    int server = socket(AF_INET, SOCK_STREAM, 0);
+    if (server < 0) {
+        return -1;
+    }
+    int reuse = 1;
+    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons((uint16_t)preferred_port);
+    if (bind(server, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        address.sin_port = 0;
+        if (bind(server, (struct sockaddr *)&address, sizeof(address)) != 0) {
+            close(server);
+            return -1;
+        }
+    }
+    if (listen(server, 1) != 0) {
+        close(server);
+        return -1;
+    }
+    socklen_t size = sizeof(address);
+    if (getsockname(server, (struct sockaddr *)&address, &size) != 0) {
+        close(server);
+        return -1;
+    }
+    *bound_port = ntohs(address.sin_port);
+    return server;
+#else
+    (void)preferred_port;
+    (void)bound_port;
+    return -1;
+#endif
+}
+
+int mochi_oauth_callback_wait(int server, char *output, size_t capacity, int timeout_seconds) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (capacity == 0) {
+        close(server);
+        return -1;
+    }
+    fd_set reads;
+    FD_ZERO(&reads);
+    FD_SET(server, &reads);
+    FD_SET(STDIN_FILENO, &reads);
+    int maximum = server > STDIN_FILENO ? server : STDIN_FILENO;
+    struct timeval timeout = {.tv_sec = timeout_seconds, .tv_usec = 0};
+    int ready;
+    do {
+        ready = select(maximum + 1, &reads, NULL, NULL, &timeout);
+    } while (ready < 0 && errno == EINTR);
+    if (ready <= 0) {
+        close(server);
+        return -1;
+    }
+    if (FD_ISSET(STDIN_FILENO, &reads)) {
+        if (fgets(output, (int)capacity, stdin) == NULL) {
+            close(server);
+            return -1;
+        }
+        output[strcspn(output, "\r\n")] = '\0';
+        close(server);
+        return 1;
+    }
+    int client = accept(server, NULL, NULL);
+    close(server);
+    if (client < 0) {
+        return -1;
+    }
+    char request[8192];
+    ssize_t count = recv(client, request, sizeof(request) - 1, 0);
+    if (count <= 0) {
+        close(client);
+        return -1;
+    }
+    request[count] = '\0';
+    char *start = strchr(request, ' ');
+    char *end = start == NULL ? NULL : strchr(start + 1, ' ');
+    if (start == NULL || end == NULL) {
+        close(client);
+        return -1;
+    }
+    size_t length = (size_t)(end - start - 1);
+    if (length >= capacity) {
+        length = capacity - 1;
+    }
+    memcpy(output, start + 1, length);
+    output[length] = '\0';
+    const char *body = "Authorization received. You can close this window.";
+    char response[512];
+    int response_length = snprintf(
+        response,
+        sizeof(response),
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",
+        strlen(body),
+        body
+    );
+    if (response_length > 0) {
+        (void)send(client, response, (size_t)response_length, 0);
+    }
+    close(client);
+    return 0;
+#else
+    (void)server;
+    (void)output;
+    (void)capacity;
+    (void)timeout_seconds;
     return -1;
 #endif
 }
