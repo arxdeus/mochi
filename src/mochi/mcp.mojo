@@ -808,6 +808,32 @@ struct StreamableHttpTransport(Copyable, Movable):
             expected_id,
         )
 
+    def send_with_oauth[T: HttpTransport](
+        mut self,
+        mut transport: T,
+        message: JsonValue,
+        mut oauth: McpOAuthState,
+        now_ms: Int,
+    ) raises -> JsonValue:
+        self.apply_oauth(oauth)
+        var expected_id = message.get("id").int_value
+        var body = self.request_body(message)
+        var response = transport.perform(self._request("POST", body))
+        if response.status == 401 and oauth.can_refresh():
+            _ = oauth.refresh_with(transport, now_ms)
+            self.apply_oauth(oauth)
+            response = transport.perform(self._request("POST", body))
+        var content_type = response.content_type()
+        if content_type == "":
+            content_type = "application/json"
+        return self.accept_response(
+            response.status,
+            content_type,
+            response.body,
+            response.mcp_session_id(),
+            expected_id,
+        )
+
     def notify(mut self, message: JsonValue) raises:
         if self.fixture_only and self.fixture_status == 0:
             return

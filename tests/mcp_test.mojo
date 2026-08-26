@@ -378,6 +378,53 @@ def test_http_injected_transport_updates_session() raises:
     http.clear_bearer_token()
 
 
+def test_http_401_refreshes_and_retries_once() raises:
+    var http = StreamableHttpTransport("https://mcp.example/mcp")
+    var oauth = McpOAuthState(
+        OAuthTokens("expired", "refresh", 100, None),
+        "https://auth.example/token",
+        "client",
+        "",
+        "https://mcp.example/mcp",
+    )
+    var transport = MockTransport()
+    transport.enqueue(HttpResponse(401, "unauthorized"))
+    transport.enqueue(
+        HttpResponse(200, '{"access_token":"fresh","expires_in":120}')
+    )
+    transport.enqueue(
+        HttpResponse(200, '{"jsonrpc":"2.0","id":11,"result":{"ok":true}}')
+    )
+    var result = http.send_with_oauth(
+        transport,
+        parse_json('{"jsonrpc":"2.0","id":11,"method":"ping"}'),
+        oauth,
+        2000,
+    )
+    assert_true(result.get("result").get("ok").bool_value)
+    assert_equal(len(transport.requests), 3)
+    assert_equal(transport.requests[1].url, "https://auth.example/token")
+    var retry_authorization = String("")
+    for header in transport.requests[2].headers:
+        if header.name == "Authorization":
+            retry_authorization = header.value
+    assert_equal(retry_authorization, "Bearer fresh")
+    assert_equal(oauth.tokens.access, "fresh")
+
+    var rejected = MockTransport()
+    rejected.enqueue(HttpResponse(401, "unauthorized"))
+    rejected.enqueue(HttpResponse(401, "still unauthorized"))
+    rejected.enqueue(HttpResponse(200, '{"access_token":"unused"}'))
+    with assert_raises():
+        _ = http.send_with_oauth(
+            rejected,
+            parse_json('{"jsonrpc":"2.0","id":12,"method":"ping"}'),
+            oauth,
+            3000,
+        )
+    assert_equal(len(rejected.requests), 2)
+
+
 def test_high_level_stdio_client() raises:
     var transport = StdioTransport()
     transport.enqueue_fixture_response(
