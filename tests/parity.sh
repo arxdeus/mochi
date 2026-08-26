@@ -78,6 +78,13 @@ case "${1:-all}" in
             components::input::tests::paste_with_spaces_empty_line -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
+    ui.search.escape_restore)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::search_escape_restores_scroll::restores_scroll_position -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::search_escape_restores_scroll::restores_auto_scroll -- --exact >/dev/null
+        run_mojo_test tests/ui_test.mojo
+        ;;
     ops.version.newer)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-storage \
             version::tests::is_newer_cases::_garbage_latest_expects -- --exact >/dev/null
@@ -86,7 +93,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.input.history ui.input.word_aware_paste ops.version.newer"
+        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.input.history ui.input.word_aware_paste ui.search.escape_restore ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

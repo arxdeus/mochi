@@ -24,6 +24,13 @@ struct UiEvent(Copyable, Movable):
     comptime PASTE_SPACED = 13
     comptime SCROLL = 14
     comptime SCROLL_BOTTOM = 15
+    comptime SEARCH_OPEN = 16
+    comptime SEARCH_QUERY = 17
+    comptime SEARCH_NEXT = 18
+    comptime SEARCH_PREVIOUS = 19
+    comptime SEARCH_CLOSE = 20
+    comptime SEARCH_SELECT = 21
+    comptime SEARCH_BACKSPACE = 22
 
     var tag: Int
     var text: String
@@ -131,6 +138,36 @@ struct UiEvent(Copyable, Movable):
     def scroll_bottom() -> Self:
         return Self(Self.SCROLL_BOTTOM)
 
+    @staticmethod
+    def search_open() -> Self:
+        return Self(Self.SEARCH_OPEN)
+
+    @staticmethod
+    def search_query(text: String) -> Self:
+        var event = Self(Self.SEARCH_QUERY)
+        event.text = text
+        return event^
+
+    @staticmethod
+    def search_next() -> Self:
+        return Self(Self.SEARCH_NEXT)
+
+    @staticmethod
+    def search_previous() -> Self:
+        return Self(Self.SEARCH_PREVIOUS)
+
+    @staticmethod
+    def search_close() -> Self:
+        return Self(Self.SEARCH_CLOSE)
+
+    @staticmethod
+    def search_select() -> Self:
+        return Self(Self.SEARCH_SELECT)
+
+    @staticmethod
+    def search_backspace() -> Self:
+        return Self(Self.SEARCH_BACKSPACE)
+
 
 struct UiAction(Copyable, Movable):
     comptime NONE = 0
@@ -194,6 +231,12 @@ struct UiState(Copyable, Movable):
     var history: List[String]
     var history_index: Int
     var history_draft: String
+    var search_open: Bool
+    var search_query: String
+    var search_matches: List[Int]
+    var search_selected: Int
+    var search_saved_offset: Int
+    var search_saved_auto_scroll: Bool
 
     def __init__(out self):
         self.draft = ""
@@ -208,6 +251,12 @@ struct UiState(Copyable, Movable):
         self.history = List[String]()
         self.history_index = -1
         self.history_draft = ""
+        self.search_open = False
+        self.search_query = ""
+        self.search_matches = List[Int]()
+        self.search_selected = 0
+        self.search_saved_offset = 0
+        self.search_saved_auto_scroll = True
 
     def set_history(mut self, var history: List[String]):
         self.history = history^
@@ -354,6 +403,27 @@ struct UiReducer:
         elif event.tag == UiEvent.SCROLL_BOTTOM:
             state.auto_scroll = True
             state.viewport_offset = Self._max_offset(state)
+        elif event.tag == UiEvent.SEARCH_OPEN:
+            Self._search_open(state)
+        elif event.tag == UiEvent.SEARCH_QUERY:
+            Self._search_update(state, event.text)
+        elif event.tag == UiEvent.SEARCH_NEXT:
+            Self._search_move(state, 1)
+        elif event.tag == UiEvent.SEARCH_PREVIOUS:
+            Self._search_move(state, -1)
+        elif event.tag == UiEvent.SEARCH_CLOSE:
+            Self._search_close(state, True)
+        elif event.tag == UiEvent.SEARCH_SELECT:
+            Self._search_close(state, False)
+        elif event.tag == UiEvent.SEARCH_BACKSPACE:
+            if state.search_open and state.search_query.count_codepoints() > 0:
+                Self._search_update(
+                    state,
+                    _codepoint_prefix(
+                        state.search_query,
+                        state.search_query.count_codepoints() - 1,
+                    ),
+                )
         return UiAction.none()
 
     @staticmethod
@@ -458,6 +528,64 @@ struct UiReducer:
             state.draft = state.history_draft
             state.history_draft = ""
         state.cursor = state.draft.count_codepoints()
+
+    @staticmethod
+    def _search_open(mut state: UiState):
+        if state.search_open:
+            return
+        state.search_open = True
+        state.search_query = ""
+        state.search_matches.clear()
+        state.search_selected = 0
+        state.search_saved_offset = state.viewport_offset
+        state.search_saved_auto_scroll = state.auto_scroll
+
+    @staticmethod
+    def _search_update(mut state: UiState, query: String):
+        if not state.search_open:
+            return
+        state.search_query = query
+        state.search_matches.clear()
+        state.search_selected = 0
+        var needle = String(query.strip()).lower()
+        if needle == "":
+            return
+        for i in range(len(state.messages)):
+            if _subsequence(needle, state.messages[i].lower()):
+                state.search_matches.append(i)
+        Self._search_reveal(state)
+
+    @staticmethod
+    def _search_move(mut state: UiState, direction: Int):
+        if not state.search_open or len(state.search_matches) == 0:
+            return
+        state.search_selected = (
+            state.search_selected + direction + len(state.search_matches)
+        ) % len(state.search_matches)
+        Self._search_reveal(state)
+
+    @staticmethod
+    def _search_reveal(mut state: UiState):
+        if len(state.search_matches) == 0:
+            return
+        state.auto_scroll = False
+        state.viewport_offset = Self._bounded_offset(
+            state, state.search_matches[state.search_selected], False
+        )
+
+    @staticmethod
+    def _search_close(mut state: UiState, restore: Bool):
+        if not state.search_open:
+            return
+        if restore:
+            state.auto_scroll = state.search_saved_auto_scroll
+            state.viewport_offset = Self._bounded_offset(
+                state, state.search_saved_offset, state.search_saved_auto_scroll
+            )
+        state.search_open = False
+        state.search_query = ""
+        state.search_matches.clear()
+        state.search_selected = 0
 
     @staticmethod
     def _max_offset(state: UiState) -> Int:

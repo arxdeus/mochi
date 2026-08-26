@@ -678,7 +678,30 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                 return None
             return Optional(ui.draft.copy())
         if byte == 3:
-            _ = UiReducer.reduce(ui, UiEvent.edit(""))
+            if ui.search_open:
+                _ = UiReducer.reduce(ui, UiEvent.search_close())
+            else:
+                _ = UiReducer.reduce(ui, UiEvent.edit(""))
+            _render_editor(ui)
+            continue
+        if byte == 6:
+            _ = UiReducer.reduce(ui, UiEvent.search_open())
+            _render_editor(ui)
+            continue
+        if ui.search_open:
+            if byte == 10 or byte == 13:
+                _ = UiReducer.reduce(ui, UiEvent.search_select())
+            elif byte == 127 or byte == 8:
+                _ = UiReducer.reduce(ui, UiEvent.search_backspace())
+            elif byte == 27:
+                _ = UiReducer.reduce(ui, UiEvent.search_close())
+            elif byte >= 32:
+                _ = UiReducer.reduce(
+                    ui,
+                    UiEvent.search_query(
+                        ui.search_query + _read_utf8_character(Int(byte))
+                    ),
+                )
             _render_editor(ui)
             continue
         if byte == 10 or byte == 13:
@@ -751,6 +774,17 @@ def _read_utf8_character(first: Int) raises -> String:
 
 
 def _render_editor(ui: UiState):
+    if ui.search_open:
+        var count = len(ui.search_matches)
+        var selected = 0
+        if count > 0:
+            selected = ui.search_selected + 1
+        print(
+            "\r\x1b[2KSearch: " + ui.search_query + "  " + String(selected)
+            + "/" + String(count),
+            end="",
+        )
+        return
     var tail = ui.draft.count_codepoints() - ui.cursor
     print("\r\x1b[2K> " + ui.draft, end="")
     if tail > 0:

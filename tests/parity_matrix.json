@@ -451,6 +451,34 @@
       }
     },
     {
+      "id": "ui.search.escape_restore",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "partial",
+      "description": "Closing transcript search with Escape restores the saved scroll offset and auto-scroll mode.",
+      "upstream_refs": [
+        "maki-ui/src/app/tests.rs:2976-2988",
+        "maki-ui/src/components/search_modal.rs:65-82"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo",
+        "src/mochi/main.mojo",
+        "tests/ui_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact reducer state assertions for manual and automatic scroll restoration."
+        },
+        "differential": {
+          "status": "implemented",
+          "upstream_command": "sh tests/parity.sh ui.search.escape_restore",
+          "mojo_command": "sh tests/parity.sh ui.search.escape_restore",
+          "normalization": "Both upstream search escape cases and the Mojo reducer suite must pass."
+        }
+      }
+    },
+    {
       "id": "cancellation.http.active",
       "area": "http",
       "owner": "mochi_http",

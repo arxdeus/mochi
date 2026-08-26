@@ -185,6 +185,56 @@ def test_viewport_is_bounded_and_tracks_messages() raises:
     assert_true(state.auto_scroll)
 
 
+def test_search_escape_restores_scroll_state() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.viewport(20, 1, 0, False))
+    _ = UiReducer.reduce(state, UiEvent.message("user", "alpha"))
+    _ = UiReducer.reduce(state, UiEvent.message("assistant", "beta"))
+    _ = UiReducer.reduce(state, UiEvent.message("user", "gamma"))
+    _ = UiReducer.reduce(state, UiEvent.viewport(20, 1, 1, False))
+    _ = UiReducer.reduce(state, UiEvent.search_open())
+    _ = UiReducer.reduce(state, UiEvent.search_query("gamma"))
+    assert_true(state.search_open)
+    assert_equal(state.viewport_offset, 2)
+    assert_false(state.auto_scroll)
+    _ = UiReducer.reduce(state, UiEvent.search_close())
+    assert_false(state.search_open)
+    assert_equal(state.viewport_offset, 1)
+    assert_false(state.auto_scroll)
+
+    _ = UiReducer.reduce(state, UiEvent.viewport(20, 1, 0, True))
+    assert_equal(state.viewport_offset, 2)
+    _ = UiReducer.reduce(state, UiEvent.search_open())
+    _ = UiReducer.reduce(state, UiEvent.search_query("alpha"))
+    assert_equal(state.viewport_offset, 0)
+    _ = UiReducer.reduce(state, UiEvent.search_close())
+    assert_true(state.auto_scroll)
+    assert_equal(state.viewport_offset, 2)
+
+
+def test_search_navigation_wraps_and_select_keeps_match() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.viewport(20, 1, 0, False))
+    _ = UiReducer.reduce(state, UiEvent.message("user", "alpha one"))
+    _ = UiReducer.reduce(state, UiEvent.message("assistant", "other"))
+    _ = UiReducer.reduce(state, UiEvent.message("user", "alpha two"))
+    _ = UiReducer.reduce(state, UiEvent.search_open())
+    _ = UiReducer.reduce(state, UiEvent.search_query("alpha"))
+    assert_equal(len(state.search_matches), 2)
+    assert_equal(state.viewport_offset, 0)
+    _ = UiReducer.reduce(state, UiEvent.search_previous())
+    assert_equal(state.search_selected, 1)
+    assert_equal(state.viewport_offset, 2)
+    _ = UiReducer.reduce(state, UiEvent.search_next())
+    assert_equal(state.search_selected, 0)
+    assert_equal(state.viewport_offset, 0)
+    _ = UiReducer.reduce(state, UiEvent.search_previous())
+    _ = UiReducer.reduce(state, UiEvent.search_select())
+    assert_false(state.search_open)
+    assert_equal(state.viewport_offset, 2)
+    assert_false(state.auto_scroll)
+
+
 def test_view_is_terminal_independent_snapshot() raises:
     var state = UiState()
     _ = UiReducer.reduce(state, UiEvent.viewport(30, 2, 0, False))
