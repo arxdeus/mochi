@@ -17,6 +17,8 @@ struct UiEvent(Copyable, Movable):
     comptime MOVE_CURSOR = 7
     comptime DELETE_BACKWARD = 8
     comptime INSERT = 9
+    comptime HISTORY_UP = 10
+    comptime HISTORY_DOWN = 11
 
     var tag: Int
     var text: String
@@ -96,6 +98,14 @@ struct UiEvent(Copyable, Movable):
         event.text = text
         return event^
 
+    @staticmethod
+    def history_up() -> Self:
+        return Self(Self.HISTORY_UP)
+
+    @staticmethod
+    def history_down() -> Self:
+        return Self(Self.HISTORY_DOWN)
+
 
 struct UiAction(Copyable, Movable):
     comptime NONE = 0
@@ -156,6 +166,9 @@ struct UiState(Copyable, Movable):
     var viewport_offset: Int
     var auto_scroll: Bool
     var cursor: Int
+    var history: List[String]
+    var history_index: Int
+    var history_draft: String
 
     def __init__(out self):
         self.draft = ""
@@ -167,6 +180,14 @@ struct UiState(Copyable, Movable):
         self.viewport_offset = 0
         self.auto_scroll = True
         self.cursor = 0
+        self.history = List[String]()
+        self.history_index = -1
+        self.history_draft = ""
+
+    def set_history(mut self, var history: List[String]):
+        self.history = history^
+        self.history_index = -1
+        self.history_draft = ""
 
 
 @fieldwise_init
@@ -267,6 +288,10 @@ struct UiReducer:
             Self._delete_backward(state)
         elif event.tag == UiEvent.INSERT:
             Self._insert(state, event.text)
+        elif event.tag == UiEvent.HISTORY_UP:
+            Self._history_up(state)
+        elif event.tag == UiEvent.HISTORY_DOWN:
+            Self._history_down(state)
         return UiAction.none()
 
     @staticmethod
@@ -292,6 +317,10 @@ struct UiReducer:
         var text = String(state.draft.strip())
         if text == "":
             return UiAction.none()
+        if len(state.history) == 0 or state.history[len(state.history) - 1] != text:
+            state.history.append(text.copy())
+        state.history_index = -1
+        state.history_draft = ""
         state.draft = ""
         state.cursor = 0
         if text.startswith("/"):
@@ -324,6 +353,31 @@ struct UiReducer:
         var after = _codepoint_suffix(state.draft, state.cursor)
         state.draft = before + after
         state.cursor -= 1
+
+    @staticmethod
+    def _history_up(mut state: UiState):
+        if len(state.history) == 0:
+            return
+        if state.history_index < 0:
+            state.history_draft = state.draft
+            state.history_index = len(state.history) - 1
+        elif state.history_index > 0:
+            state.history_index -= 1
+        state.draft = state.history[state.history_index]
+        state.cursor = state.draft.count_codepoints()
+
+    @staticmethod
+    def _history_down(mut state: UiState):
+        if state.history_index < 0:
+            return
+        if state.history_index + 1 < len(state.history):
+            state.history_index += 1
+            state.draft = state.history[state.history_index]
+        else:
+            state.history_index = -1
+            state.draft = state.history_draft
+            state.history_draft = ""
+        state.cursor = state.draft.count_codepoints()
 
     @staticmethod
     def _max_offset(state: UiState) -> Int:

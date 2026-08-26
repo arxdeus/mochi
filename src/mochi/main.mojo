@@ -422,6 +422,7 @@ def _interactive(
     output_format: String,
 ) raises:
     var ui = UiState()
+    ui.set_history(history.entries.copy())
     while True:
 
         print("> ", end="")

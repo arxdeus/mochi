@@ -87,6 +87,39 @@ def test_unicode_editor_cursor_insert_and_delete() raises:
     assert_equal(state.draft, "λaéz")
 
 
+def test_history_navigation_preserves_draft_and_bounds() raises:
+    var state = UiState()
+    state.set_history(["a", "b"])
+    _ = UiReducer.reduce(state, UiEvent.edit("draft"))
+
+    _ = UiReducer.reduce(state, UiEvent.history_up())
+    assert_equal(state.draft, "b")
+    _ = UiReducer.reduce(state, UiEvent.history_up())
+    assert_equal(state.draft, "a")
+    _ = UiReducer.reduce(state, UiEvent.history_up())
+    assert_equal(state.draft, "a")
+
+    _ = UiReducer.reduce(state, UiEvent.history_down())
+    assert_equal(state.draft, "b")
+    _ = UiReducer.reduce(state, UiEvent.history_down())
+    assert_equal(state.draft, "draft")
+    assert_equal(state.cursor, 5)
+    _ = UiReducer.reduce(state, UiEvent.history_down())
+    assert_equal(state.draft, "draft")
+
+
+def test_submit_updates_history_without_consecutive_duplicates() raises:
+    var state = UiState()
+    state.set_history(["old"])
+    _ = UiReducer.reduce(state, UiEvent.edit("new"))
+    _ = UiReducer.reduce(state, UiEvent.submit())
+    assert_equal(len(state.history), 2)
+    assert_equal(state.history[1], "new")
+    _ = UiReducer.reduce(state, UiEvent.edit("new"))
+    _ = UiReducer.reduce(state, UiEvent.submit())
+    assert_equal(len(state.history), 2)
+
+
 def test_viewport_is_bounded_and_tracks_messages() raises:
     var state = UiState()
     _ = UiReducer.reduce(state, UiEvent.viewport(40, 2, 99, False))
