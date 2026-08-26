@@ -11,6 +11,7 @@ from mochi.ui import (
     command_descriptions,
     command_help_lines,
     command_matches,
+    is_builtin_command,
     command_names,
     transcript_messages,
     search_result_lines,
@@ -62,6 +63,11 @@ def test_command_transition() raises:
     assert_equal(state.draft, "")
     assert_equal(state.cursor, 0)
 
+    _ = UiReducer.reduce(state, UiEvent.edit("/nonexistent arg"))
+    var unknown = UiReducer.reduce(state, UiEvent.submit())
+    assert_true(unknown.is_submit())
+    assert_equal(unknown.text, "/nonexistent arg")
+
 
 def test_command_catalog_and_fuzzy_matches() raises:
     var names = command_names()
@@ -71,6 +77,9 @@ def test_command_catalog_and_fuzzy_matches() raises:
     assert_true("compact" in names)
     assert_true("usage" in names)
     assert_true("workflow" in names)
+    assert_true(is_builtin_command("/help"))
+    assert_true(is_builtin_command("HELP"))
+    assert_false(is_builtin_command("memory"))
     var prefix = command_matches("/co")
     assert_equal(prefix[0], "compact")
     var fuzzy = command_matches("pct")

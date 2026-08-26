@@ -333,6 +333,15 @@ def command_names() -> List[String]:
     return result^
 
 
+def is_builtin_command(name: String) -> Bool:
+    var normalized = _ascii_lower(name)
+    for candidate in materialize[BUILTIN_COMMANDS]():
+        var plain = String(candidate)
+        if normalized == plain or normalized == "/" + plain:
+            return True
+    return False
+
+
 def command_descriptions() -> List[String]:
     var result = List[String]()
     for description in materialize[BUILTIN_COMMAND_DESCRIPTIONS]():
@@ -531,17 +540,24 @@ struct UiReducer:
         state.draft = ""
         state.cursor = 0
         if text.startswith("/"):
-            var command = String(text.removeprefix("/"))
-            var separator = command.find(" ")
+            var slash_text = text.copy()
+            var command = String(slash_text.removeprefix("/"))
+            var normalized_command = _ascii_lower(command.copy())
+            var separator = normalized_command.find(" ")
+            var name = normalized_command.copy()
+            var arguments = String("")
             if separator:
-                var name = _byte_range(command, 0, separator.value())
-                var arguments = String(
+                name = _byte_range(normalized_command, 0, separator.value())
+                arguments = String(
                     _byte_range(
                         command, separator.value() + 1, command.byte_length()
                     ).strip()
                 )
-                return UiAction.command(name^, arguments^)
-            return UiAction.command(command^)
+            var normalized_name = _ascii_lower(name)
+            if is_builtin_command(normalized_name.copy()):
+                return UiAction.command(normalized_name^, arguments^)
+            state.busy = True
+            return UiAction.submit(text^)
         state.busy = True
         return UiAction.submit(text^)
 
@@ -682,6 +698,16 @@ struct UiReducer:
         if auto_scroll:
             return maximum
         return min(max(0, requested), maximum)
+
+
+def _ascii_lower(value: String) -> String:
+    var result = String("")
+    for cp in value.codepoints():
+        var code = Int(cp.to_u32())
+        if code >= 65 and code <= 90:
+            code += 32
+        result += chr(code)
+    return result^
 
 
 def _fuzzy_score(needle: String, candidate: String) -> Int:

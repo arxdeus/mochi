@@ -75,6 +75,8 @@ case "${1:-all}" in
             components::command::tests::filter_by_substring::compact_substring -- --exact >/dev/null
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             components::command::tests::confirm_parses_args::btw_multi_word -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::slash_noncommand_sends_as_prompt -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
     ui.input.history)
