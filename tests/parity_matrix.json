@@ -479,6 +479,35 @@
       }
     },
     {
+      "id": "ui.search.navigation",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "partial",
+      "description": "Transcript search routes arrow navigation, wraps matches, selects the active result, and closes safely without matches.",
+      "upstream_refs": [
+        "maki-ui/src/components/search_modal.rs:92-136",
+        "maki-ui/src/components/search_modal.rs:394-428"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo",
+        "src/mochi/main.mojo",
+        "src/mochi/cancellation.c",
+        "tests/ui_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact reducer assertions and native terminal compilation."
+        },
+        "differential": {
+          "status": "implemented",
+          "upstream_command": "sh tests/parity.sh ui.search.navigation",
+          "mojo_command": "sh tests/parity.sh ui.search.navigation",
+          "normalization": "Upstream navigation, selection, and no-match closure tests plus the Mojo UI suite must pass."
+        }
+      }
+    },
+    {
       "id": "cancellation.http.active",
       "area": "http",
       "owner": "mochi_http",

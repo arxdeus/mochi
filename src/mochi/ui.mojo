@@ -437,7 +437,7 @@ struct UiReducer:
         elif event.tag == UiEvent.SEARCH_CLOSE:
             Self._search_close(state, True)
         elif event.tag == UiEvent.SEARCH_SELECT:
-            Self._search_close(state, False)
+            Self._search_close(state, len(state.search_matches) == 0)
         elif event.tag == UiEvent.SEARCH_BACKSPACE:
             if state.search_open and state.search_query.count_codepoints() > 0:
                 Self._search_update(

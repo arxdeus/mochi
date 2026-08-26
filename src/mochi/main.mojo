@@ -697,7 +697,36 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
             elif byte == 127 or byte == 8:
                 _ = UiReducer.reduce(ui, UiEvent.search_backspace())
             elif byte == 27:
-                _ = UiReducer.reduce(ui, UiEvent.search_close())
+                var search_escape = external_call[
+                    "mochi_terminal_read_byte", c_int, c_int
+                ](20)
+                if search_escape == 91:
+                    var search_key = external_call[
+                        "mochi_terminal_read_byte", c_int, c_int
+                    ](20)
+                    if search_key == 65:
+                        _ = UiReducer.reduce(ui, UiEvent.search_previous())
+                    elif search_key == 66:
+                        _ = UiReducer.reduce(ui, UiEvent.search_next())
+                    elif search_key == 50:
+                        var zero = external_call[
+                            "mochi_terminal_read_byte", c_int, c_int
+                        ](20)
+                        var zero_again = external_call[
+                            "mochi_terminal_read_byte", c_int, c_int
+                        ](20)
+                        var tilde = external_call[
+                            "mochi_terminal_read_byte", c_int, c_int
+                        ](20)
+                        if zero == 48 and zero_again == 48 and tilde == 126:
+                            _ = UiReducer.reduce(
+                                ui,
+                                UiEvent.search_query(
+                                    ui.search_query + _read_bracketed_paste()
+                                ),
+                            )
+                else:
+                    _ = UiReducer.reduce(ui, UiEvent.search_close())
             elif byte >= 32:
                 _ = UiReducer.reduce(
                     ui,
@@ -721,9 +750,13 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
         elif byte == 9 and ui.draft.startswith("/") and not " " in ui.draft:
             _ = UiReducer.reduce(ui, UiEvent.edit(command_completion(ui.draft)))
         elif byte == 27:
-            var bracket = external_call["getchar", c_int]()
+            var bracket = external_call[
+                "mochi_terminal_read_byte", c_int, c_int
+            ](20)
             if bracket == 91:
-                var key = external_call["getchar", c_int]()
+                var key = external_call[
+                    "mochi_terminal_read_byte", c_int, c_int
+                ](20)
                 if key == 65:
                     _ = UiReducer.reduce(ui, UiEvent.history_up())
                 elif key == 66:

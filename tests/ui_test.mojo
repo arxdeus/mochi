@@ -227,6 +227,20 @@ def test_search_escape_restores_scroll_state() raises:
     assert_equal(state.viewport_offset, 2)
 
 
+def test_search_enter_without_matches_restores_scroll() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.viewport(20, 1, 0, False))
+    _ = UiReducer.reduce(state, UiEvent.message("user", "one"))
+    _ = UiReducer.reduce(state, UiEvent.message("assistant", "two"))
+    _ = UiReducer.reduce(state, UiEvent.viewport(20, 1, 0, False))
+    _ = UiReducer.reduce(state, UiEvent.search_open())
+    _ = UiReducer.reduce(state, UiEvent.search_query("missing"))
+    _ = UiReducer.reduce(state, UiEvent.search_select())
+    assert_false(state.search_open)
+    assert_equal(state.viewport_offset, 0)
+    assert_false(state.auto_scroll)
+
+
 def test_search_navigation_wraps_and_select_keeps_match() raises:
     var state = UiState()
     _ = UiReducer.reduce(state, UiEvent.viewport(20, 1, 0, False))

@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <termios.h>
 #include <time.h>
@@ -143,6 +144,21 @@ void mochi_terminal_disable_raw(void) {
         (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &mochi_terminal_original);
         mochi_terminal_raw = false;
     }
+}
+
+int mochi_terminal_read_byte(int timeout_milliseconds) {
+    fd_set descriptors;
+    FD_ZERO(&descriptors);
+    FD_SET(STDIN_FILENO, &descriptors);
+    struct timeval timeout;
+    timeout.tv_sec = timeout_milliseconds / 1000;
+    timeout.tv_usec = (timeout_milliseconds % 1000) * 1000;
+    int ready = select(STDIN_FILENO + 1, &descriptors, NULL, NULL, &timeout);
+    if (ready <= 0) {
+        return -1;
+    }
+    unsigned char byte = 0;
+    return read(STDIN_FILENO, &byte, 1) == 1 ? (int)byte : -1;
 }
 
 int mochi_terminal_enable_raw(void) {
@@ -279,6 +295,11 @@ int mochi_http_fixture_start(void) {
     return ntohs(address.sin_port);
 }
 #else
+int mochi_terminal_read_byte(int timeout_milliseconds) {
+    (void)timeout_milliseconds;
+    return -1;
+}
+
 int mochi_terminal_enable_raw(void) {
     return 0;
 }
