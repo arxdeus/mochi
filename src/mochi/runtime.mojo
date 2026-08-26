@@ -27,6 +27,7 @@ from mochi.provider import (
     OpenAICompatibleProvider,
     ProductionProvider,
     ProviderResult,
+    builtin_model_catalog,
     find_model_info,
     ProviderSpec,
     RetryState,
@@ -836,11 +837,29 @@ struct Runtime:
             name = prepared.arguments.get("description").string_value
         var child_tools = self.tools.copy()
         child_tools.set_workflow(False)
+        var child_model = self.model
+        if prepared.arguments.contains("model_tier"):
+            var requested = prepared.arguments.get("model_tier").string_value
+            var target = ModelTier.medium()
+            if requested == "weak":
+                target = ModelTier.weak()
+            elif requested == "strong":
+                target = ModelTier.strong()
+            elif requested != "medium":
+                raise Error("unknown model tier: " + requested)
+            var current = self.provider.model_info.tier.value().tag if self.provider.model_info.tier else ModelTier.MEDIUM
+            var effective = min(current, target.tag)
+            for candidate in builtin_model_catalog():
+                if candidate.tier and candidate.tier.value().tag == effective:
+                    child_model = candidate.id
+                    break
+        var child_provider = self.provider.clone_for_child()
+        child_provider.set_model_info(find_model_info(child_model))
         var child = Runtime(
-            self.provider.clone_for_child(),
+            child_provider^,
             child_tools^,
             self.permissions.copy(),
-            self.model,
+            child_model,
             max_turns=self.max_turns,
             max_context_chars=self.max_context_chars,
             compact_keep=self.compact_keep,
@@ -882,7 +901,7 @@ struct Runtime:
                 break
         self.subagent_ids.append(tool_call_id)
         self.subagent_names.append(name^)
-        self.subagent_models.append(self.model)
+        self.subagent_models.append(child_model)
         self.subagent_messages.append(result.messages.copy())
         if result.stop_reason == "provider_error" or result.stop_reason == "cancelled":
             raise Error("sub-agent " + result.stop_reason + ": " + result.text)

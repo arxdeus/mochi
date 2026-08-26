@@ -592,6 +592,44 @@ def test_runtime_task_runs_isolated_child_and_persists_transcript() raises:
     assert_equal(saved[1].content, "child summary")
 
 
+def test_runtime_task_model_tier_is_capped_and_selected() raises:
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("scripted", "https://invalid.local")
+    )
+    var weak_result = ProviderResult()
+    weak_result.message = Message("assistant", "weak")
+    provider.enqueue_result(weak_result)
+    var capped_result = ProviderResult()
+    capped_result.message = Message("assistant", "capped")
+    provider.enqueue_result(capped_result)
+    var runtime = Runtime(
+        provider^,
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-5.6-terra",
+    )
+    runtime.provider.set_model_info(find_model_info("gpt-5.6-terra"))
+    _ = runtime.toggle_workflow()
+    runtime.dispatch(
+        ToolCall(
+            "weak-task",
+            "task",
+            '{"description":"weak","prompt":"answer","model_tier":"weak"}',
+        ),
+        CancellationToken(),
+    )
+    runtime.dispatch(
+        ToolCall(
+            "strong-task",
+            "task",
+            '{"description":"strong","prompt":"answer","model_tier":"strong"}',
+        ),
+        CancellationToken(),
+    )
+    assert_equal(runtime.subagent_models[0], "gpt-5.6-luna")
+    assert_equal(runtime.subagent_models[1], "gpt-5.6-terra")
+
+
 def test_runtime_task_structured_output_retries_and_validates() raises:
     var provider = OpenAICompatibleProvider(
         ProviderSpec("scripted", "https://invalid.local")
