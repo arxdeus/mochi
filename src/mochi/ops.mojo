@@ -81,6 +81,39 @@ def is_newer_version(candidate: String, current: String) -> Bool:
     return compare_versions(candidate, current) > 0
 
 
+@fieldwise_init
+struct UpdatePlan(Copyable, Movable):
+    var current: String
+    var latest: String
+    var executable: String
+    var backup: String
+    var update_available: Bool
+
+
+def plan_update(current: String, latest: String, executable: String) -> UpdatePlan:
+    var separator = -1
+    for i in range(executable.byte_length()):
+        if String(executable[byte=i]) == "/":
+            separator = i
+    var directory = String(".")
+    if separator >= 0:
+        directory = _prefix(executable, separator)
+    return UpdatePlan(
+        current,
+        latest,
+        executable,
+        directory + "/mochi_backup",
+        is_newer_version(latest, current),
+    )
+
+
+def _prefix(value: String, count: Int) -> String:
+    var output = String("")
+    for i in range(count):
+        output += String(value[byte=i])
+    return output^
+
+
 def _version_part(part: String) -> Int:
     var result = 0
     for cp in part.codepoints():
