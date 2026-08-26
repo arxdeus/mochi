@@ -2,8 +2,12 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from mochi.types import Message, ToolCall
 from mochi.ui import (
+    DocPos,
+    ScreenSelection,
+    Selection,
     UiAction,
     UiEvent,
+    UiRect,
     UiReducer,
     UiState,
     ui_transcript_line,
@@ -128,6 +132,76 @@ def test_picker_filter_no_matches_and_page_navigation() raises:
     _ = UiReducer.reduce(state, UiEvent.picker_filter("zzz"))
     assert_equal(len(state.picker_filtered), 0)
     assert_true("No matches" in UiReducer.view(state).lines[1])
+
+
+def test_doc_selection_projection_and_clamping() raises:
+    var area = UiRect(5, 3, 40, 10)
+    var selection = Selection(2, 0, area, Selection.MESSAGES, 0)
+    assert_equal(selection.anchor.row, 0)
+    assert_equal(selection.anchor.col, 5)
+    selection.update(20, 80, 0)
+    assert_equal(selection.cursor.row, 9)
+    assert_equal(selection.cursor.col, 44)
+    var screen = selection.to_screen()
+    assert_true(screen)
+    assert_equal(screen.value().start_row, 3)
+    assert_equal(screen.value().start_col, 5)
+    assert_equal(screen.value().end_row, 12)
+    assert_equal(screen.value().end_col, 44)
+
+    var scrolled = Selection(7, 3, UiRect(0, 2, 80, 20), Selection.MESSAGES, 50)
+    scrolled.update(10, 5, 50)
+    var projected = scrolled.to_screen(50).value().copy()
+    assert_equal(projected.start_row, 7)
+    assert_equal(projected.start_col, 3)
+    assert_equal(projected.end_row, 10)
+    assert_equal(projected.end_col, 5)
+    assert_false(Selection(5, 5, area, Selection.MESSAGES).to_screen())
+
+
+def test_mouse_selection_zones_drag_and_pending_copy() raises:
+    var state = UiState()
+    state.add_zone(UiRect(0, 0, 80, 20), Selection.MESSAGES)
+    state.add_zone(UiRect(10, 5, 60, 10), Selection.OVERLAY)
+    assert_equal(state.zone_at(7, 20).value().zone, Selection.OVERLAY)
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(2, 5))
+    assert_true(state.selection)
+    assert_equal(state.selection.value().zone, Selection.MESSAGES)
+    _ = UiReducer.reduce(state, UiEvent.mouse_drag(10, 20))
+    assert_equal(state.selection.value().normalized()[1].row, 10)
+    assert_equal(state.selection.value().normalized()[1].col, 20)
+    _ = UiReducer.reduce(state, UiEvent.mouse_up(10, 20))
+    assert_true(state.selection_pending_copy)
+    assert_equal(state.selection_edge_scroll, 0)
+
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(2, 5))
+    _ = UiReducer.reduce(state, UiEvent.mouse_up(2, 5))
+    assert_false(state.selection)
+    _ = UiReducer.reduce(state, UiEvent.picker_open("Modal", "0:item"))
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(2, 5))
+    assert_false(state.selection)
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(7, 20))
+    assert_true(state.selection)
+    assert_equal(state.selection.value().zone, Selection.OVERLAY)
+
+
+def test_mouse_edge_scroll_clamps_and_reverses() raises:
+    var state = UiState()
+    state.viewport_height = 5
+    for i in range(20):
+        state.messages.append("line " + String(i))
+        state.roles.append("user")
+    state.viewport_offset = 5
+    state.add_zone(UiRect(0, 2, 80, 5), Selection.MESSAGES)
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(4, 10))
+    _ = UiReducer.reduce(state, UiEvent.mouse_drag(1, 10))
+    assert_equal(state.selection_edge_scroll, 1)
+    assert_equal(state.viewport_offset, 4)
+    _ = UiReducer.reduce(state, UiEvent.mouse_drag(7, 10))
+    assert_equal(state.selection_edge_scroll, -1)
+    assert_equal(state.viewport_offset, 5)
+    _ = UiReducer.reduce(state, UiEvent.mouse_drag(4, 10))
+    assert_equal(state.selection_edge_scroll, 0)
 
 
 def test_command_catalog_and_fuzzy_matches() raises:

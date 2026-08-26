@@ -7,6 +7,109 @@ from mochi.types import Message
 comptime UI_TRANSCRIPT_VERSION = 1
 
 
+@fieldwise_init
+struct UiRect(Copyable, Movable, Equatable):
+    var x: Int
+    var y: Int
+    var width: Int
+    var height: Int
+
+    def contains(self, row: Int, col: Int) -> Bool:
+        return (
+            self.width > 0 and self.height > 0
+            and col >= self.x and col < self.x + self.width
+            and row >= self.y and row < self.y + self.height
+        )
+
+
+@fieldwise_init
+struct DocPos(Copyable, Movable, Equatable):
+    var row: Int
+    var col: Int
+
+
+@fieldwise_init
+struct ScreenSelection(Copyable, Movable, Equatable):
+    var start_row: Int
+    var start_col: Int
+    var end_row: Int
+    var end_col: Int
+
+
+struct Selection(Copyable, Movable):
+    comptime MESSAGES = 0
+    comptime INPUT = 1
+    comptime OVERLAY = 2
+
+    var anchor: DocPos
+    var cursor: DocPos
+    var area: UiRect
+    var zone: Int
+
+    def __init__(
+        out self,
+        row: Int,
+        col: Int,
+        area: UiRect,
+        zone: Int,
+        scroll_offset: Int = 0,
+    ):
+        var pos = DocPos(
+            scroll_offset + min(max(row, area.y), area.y + max(0, area.height - 1)) - area.y,
+            min(max(col, area.x), area.x + max(0, area.width - 1)),
+        )
+        self.anchor = pos.copy()
+        self.cursor = pos^
+        self.area = area.copy()
+        self.zone = zone
+
+    def update(mut self, row: Int, col: Int, scroll_offset: Int = 0):
+        self.cursor = DocPos(
+            scroll_offset
+            + min(max(row, self.area.y), self.area.y + max(0, self.area.height - 1))
+            - self.area.y,
+            min(max(col, self.area.x), self.area.x + max(0, self.area.width - 1)),
+        )
+
+    def is_empty(self) -> Bool:
+        return self.anchor == self.cursor
+
+    def normalized(self) -> Tuple[DocPos, DocPos]:
+        if (
+            self.anchor.row < self.cursor.row
+            or self.anchor.row == self.cursor.row and self.anchor.col <= self.cursor.col
+        ):
+            return (self.anchor.copy(), self.cursor.copy())
+        return (self.cursor.copy(), self.anchor.copy())
+
+    def to_screen(self, scroll_offset: Int = 0) -> Optional[ScreenSelection]:
+        var bounds = self.normalized()
+        var start = bounds[0].copy()
+        var end = bounds[1].copy()
+        if start == end:
+            return None
+        var view_bottom = scroll_offset + self.area.height
+        if end.row < scroll_offset or start.row >= view_bottom:
+            return None
+        var start_row = self.area.y
+        var start_col = self.area.x
+        if start.row >= scroll_offset:
+            start_row += start.row - scroll_offset
+            start_col = start.col
+        var end_row = self.area.y + max(0, self.area.height - 1)
+        var end_col = self.area.x + max(0, self.area.width - 1)
+        if end.row < view_bottom:
+            end_row = self.area.y + end.row - scroll_offset
+            end_col = end.col
+        return Optional(ScreenSelection(start_row, start_col, end_row, end_col))
+
+
+@fieldwise_init
+struct SelectableZone(Copyable, Movable):
+    var area: UiRect
+    var zone: Int
+
+
 struct UiEvent(Copyable, Movable):
     comptime EDIT = 0
     comptime SUBMIT = 1
@@ -42,6 +145,9 @@ struct UiEvent(Copyable, Movable):
     comptime PICKER_BACKSPACE = 31
     comptime PICKER_PAGE_NEXT = 32
     comptime PICKER_PAGE_PREVIOUS = 33
+    comptime MOUSE_DOWN = 34
+    comptime MOUSE_DRAG = 35
+    comptime MOUSE_UP = 36
 
     var tag: Int
     var text: String
@@ -228,6 +334,27 @@ struct UiEvent(Copyable, Movable):
     def picker_page_previous() -> Self:
         return Self(Self.PICKER_PAGE_PREVIOUS)
 
+    @staticmethod
+    def mouse_down(row: Int, col: Int) -> Self:
+        var event = Self(Self.MOUSE_DOWN)
+        event.height = row
+        event.width = col
+        return event^
+
+    @staticmethod
+    def mouse_drag(row: Int, col: Int) -> Self:
+        var event = Self(Self.MOUSE_DRAG)
+        event.height = row
+        event.width = col
+        return event^
+
+    @staticmethod
+    def mouse_up(row: Int, col: Int) -> Self:
+        var event = Self(Self.MOUSE_UP)
+        event.height = row
+        event.width = col
+        return event^
+
 
 struct UiAction(Copyable, Movable):
     comptime NONE = 0
@@ -315,6 +442,10 @@ struct UiState(Copyable, Movable):
     var picker_filtered: List[Int]
     var picker_selected: Int
     var picker_filter: String
+    var zones: List[SelectableZone]
+    var selection: Optional[Selection]
+    var selection_pending_copy: Bool
+    var selection_edge_scroll: Int
 
     def __init__(out self):
         self.draft = ""
@@ -342,6 +473,22 @@ struct UiState(Copyable, Movable):
         self.picker_filtered = List[Int]()
         self.picker_selected = 0
         self.picker_filter = ""
+        self.zones = List[SelectableZone]()
+        self.selection = None
+        self.selection_pending_copy = False
+        self.selection_edge_scroll = 0
+
+    def add_zone(mut self, area: UiRect, zone: Int):
+        self.zones.append(SelectableZone(area.copy(), zone))
+
+    def clear_zones(mut self):
+        self.zones.clear()
+
+    def zone_at(self, row: Int, col: Int) -> Optional[SelectableZone]:
+        for i in range(len(self.zones) - 1, -1, -1):
+            if self.zones[i].area.contains(row, col):
+                return Optional(self.zones[i].copy())
+        return None
 
     def set_history(mut self, var history: List[String]):
         self.history = history^
@@ -657,6 +804,46 @@ struct UiReducer:
                 return UiAction.picker_toggle(
                     state.picker_items[selected], state.picker_enabled[selected]
                 )
+        elif event.tag == UiEvent.MOUSE_DOWN:
+            var zone = state.zone_at(event.height, event.width)
+            if zone:
+                if state.picker_name != "" and zone.value().zone != Selection.OVERLAY:
+                    return UiAction.none()
+                var scroll = state.viewport_offset if zone.value().zone == Selection.MESSAGES else 0
+                state.selection = Optional(
+                    Selection(
+                        event.height,
+                        event.width,
+                        zone.value().area,
+                        zone.value().zone,
+                        scroll,
+                    )
+                )
+                state.selection_pending_copy = False
+                state.selection_edge_scroll = 0
+        elif event.tag == UiEvent.MOUSE_DRAG:
+            if state.selection and not state.selection_pending_copy:
+                var selection = state.selection.value().copy()
+                var at_top = event.height <= selection.area.y
+                var at_bottom = event.height + 1 >= selection.area.y + selection.area.height
+                state.selection_edge_scroll = 1 if at_top else (-1 if at_bottom else 0)
+                if selection.zone == Selection.MESSAGES and state.selection_edge_scroll != 0:
+                    state.auto_scroll = False
+                    state.viewport_offset = Self._bounded_offset(
+                        state,
+                        state.viewport_offset - state.selection_edge_scroll,
+                        False,
+                    )
+                var scroll = state.viewport_offset if selection.zone == Selection.MESSAGES else 0
+                selection.update(event.height, event.width, scroll)
+                state.selection = Optional(selection^)
+        elif event.tag == UiEvent.MOUSE_UP:
+            if state.selection and not state.selection_pending_copy:
+                if state.selection.value().is_empty():
+                    state.selection = None
+                else:
+                    state.selection_pending_copy = True
+                state.selection_edge_scroll = 0
         return UiAction.none()
 
     @staticmethod

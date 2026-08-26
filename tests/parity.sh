@@ -126,6 +126,21 @@ case "${1:-all}" in
             components::list_picker::tests::enter_on_empty_results_consumed -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
+    ui.mouse.selection)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            selection::tests::selection_start_doc_row -- --nocapture >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::mouse_drag_updates_selection -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::mouse_drag_clamps_to_area -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::mouse_up_clears_edge_scroll -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::empty_click_clears_selection -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            selection::tests::zone_at_overlay_wins_over_messages -- --exact >/dev/null
+        run_mojo_test tests/ui_test.mojo
+        ;;
     ui.search.escape_restore)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             app::tests::search_escape_restores_scroll::restores_scroll_position -- --exact >/dev/null
@@ -175,7 +190,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

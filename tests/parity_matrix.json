@@ -506,6 +506,34 @@
       }
     },
     {
+      "id": "ui.mouse.selection",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "parity",
+      "description": "Mouse selection uses document-space positions, overlay-first zones, clamped drags, edge-scroll direction, and pending-copy lifecycle.",
+      "upstream_refs": [
+        "maki-ui/src/selection.rs",
+        "maki-ui/src/app/mouse.rs",
+        "maki-ui/src/app/tests.rs:1495-1573"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo",
+        "tests/ui_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact selection projection, zone priority, drag clamping, edge scroll, and pending-copy assertions."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity ui.mouse.selection",
+          "mojo_command": "pixi run parity ui.mouse.selection",
+          "normalization": "Pinned upstream mouse/selection tests and Mojo reducer tests pass."
+        }
+      }
+    },
+    {
       "id": "ui.search.escape_restore",
       "area": "ui",
       "owner": "mochi_ui",
