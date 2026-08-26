@@ -451,6 +451,34 @@
       }
     },
     {
+      "id": "ui.command.catalog",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "partial",
+      "description": "The interactive command catalog, descriptions, fuzzy matching, completion, and help output track upstream built-ins.",
+      "upstream_refs": [
+        "maki-ui/src/components/command.rs:20-117",
+        "maki-ui/src/components/command.rs:621-725"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo",
+        "src/mochi/main.mojo",
+        "tests/ui_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact built-in order, descriptions, fuzzy result, and help-line assertions."
+        },
+        "differential": {
+          "status": "implemented",
+          "upstream_command": "sh tests/parity.sh ui.command.catalog",
+          "mojo_command": "sh tests/parity.sh ui.command.catalog",
+          "normalization": "Upstream catalog/filter/argument fixtures and the Mojo UI suite must pass."
+        }
+      }
+    },
+    {
       "id": "ui.search.escape_restore",
       "area": "ui",
       "owner": "mochi_ui",

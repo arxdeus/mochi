@@ -57,6 +57,7 @@ from mochi.ui import (
     UiReducer,
     UiState,
     command_completion,
+    command_help_lines,
     command_matches,
     search_result_lines,
 )
@@ -543,16 +544,8 @@ def _run_resume(
 
 def _interactive_help():
     print("Commands:")
-    print("  /new, /clear             Start a new session")
-    print("  /compact                 Compact conversation history")
-    print("  /usage                   Show token and runtime usage")
-    print("  /queue                   Show queued inputs and commands")
-    print("  /model [MODEL]            Show or switch model")
-    print("  /login                    Authenticate OpenAI OAuth")
-    print("  /memory [COMMAND]         Manage persistent notes")
-    print("  /history                  Show input history")
-    print("  /help                     Show this help")
-    print("  exit, quit                Exit")
+    for line in command_help_lines():
+        print("  " + line)
 
 
 def _interactive_usage(session: Session, runtime: Runtime):

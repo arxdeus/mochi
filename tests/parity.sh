@@ -68,6 +68,15 @@ case "${1:-all}" in
             providers::openai::tests::gpt_5_6_models_have_expected_tier_and_short_context_pricing::_gpt_5_6_sol_modeltier_strong_5_0_0_5_6_25_30_0_expects -- --exact >/dev/null
         run_mojo_test tests/provider_test.mojo
         ;;
+    ui.command.catalog)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::slash_shows_builtins_plus_extras -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::filter_by_substring::compact_substring -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::confirm_parses_args::btw_multi_word -- --exact >/dev/null
+        run_mojo_test tests/ui_test.mojo
+        ;;
     ui.input.history)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             components::input::tests::history -- --exact >/dev/null
@@ -115,7 +124,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.input.history ui.input.word_aware_paste ui.search.escape_restore ui.search.navigation ui.search.display ops.version.newer"
+        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.command.catalog ui.input.history ui.input.word_aware_paste ui.search.escape_restore ui.search.navigation ui.search.display ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

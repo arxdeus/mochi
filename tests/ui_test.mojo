@@ -8,6 +8,8 @@ from mochi.ui import (
     UiState,
     ui_transcript_line,
     command_completion,
+    command_descriptions,
+    command_help_lines,
     command_matches,
     command_names,
     transcript_messages,
@@ -63,8 +65,12 @@ def test_command_transition() raises:
 
 def test_command_catalog_and_fuzzy_matches() raises:
     var names = command_names()
+    assert_equal(len(names), 18)
+    assert_equal(names[0], "tasks")
+    assert_equal(names[17], "reload")
     assert_true("compact" in names)
     assert_true("usage" in names)
+    assert_true("workflow" in names)
     var prefix = command_matches("/co")
     assert_equal(prefix[0], "compact")
     var fuzzy = command_matches("pct")
@@ -72,6 +78,12 @@ def test_command_catalog_and_fuzzy_matches() raises:
     assert_equal(len(command_matches("not-a-command")), 0)
     assert_equal(command_completion("/co"), "/compact ")
     assert_equal(command_completion("/not-a-command"), "/not-a-command")
+    var descriptions = command_descriptions()
+    assert_equal(len(descriptions), len(names))
+    assert_equal(descriptions[0], "Browse and search tasks")
+    var help = command_help_lines()
+    assert_equal(help[0], "/tasks  Browse and search tasks")
+    assert_equal(help[17], "/reload  Reload plugins and config")
 
 
 def test_unicode_editor_cursor_insert_and_delete() raises:

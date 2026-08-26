@@ -299,8 +299,30 @@ struct UiView(Copyable, Movable):
 
 
 comptime BUILTIN_COMMANDS = [
-    "compact", "new", "clear", "help", "usage", "queue", "model", "login",
-    "memory", "history",
+    "tasks", "compact", "new", "help", "usage", "queue", "model", "theme",
+    "mcp", "login", "cd", "btw", "yolo", "thinking", "fast", "workflow",
+    "exit", "reload",
+]
+
+comptime BUILTIN_COMMAND_DESCRIPTIONS = [
+    "Browse and search tasks",
+    "Summarize and compact conversation history",
+    "Start a new session",
+    "Show keybindings",
+    "Show token usage breakdown",
+    "Remove items from queue",
+    "Switch model",
+    "Switch color theme",
+    "Configure MCP servers",
+    "Authenticate with an LLM provider",
+    "Change working directory",
+    "Ask a quick question (no tools, no history pollution)",
+    "Toggle YOLO mode (skip all permission prompts)",
+    "Toggle extended thinking",
+    "Toggle Anthropic fast mode (Opus only)",
+    "Toggle workflow mode",
+    "Exit the application",
+    "Reload plugins and config",
 ]
 
 
@@ -308,6 +330,22 @@ def command_names() -> List[String]:
     var result = List[String]()
     for name in materialize[BUILTIN_COMMANDS]():
         result.append(String(name))
+    return result^
+
+
+def command_descriptions() -> List[String]:
+    var result = List[String]()
+    for description in materialize[BUILTIN_COMMAND_DESCRIPTIONS]():
+        result.append(String(description))
+    return result^
+
+
+def command_help_lines() -> List[String]:
+    var names = command_names()
+    var descriptions = command_descriptions()
+    var result = List[String]()
+    for i in range(len(names)):
+        result.append("/" + names[i] + "  " + descriptions[i])
     return result^
 
 
