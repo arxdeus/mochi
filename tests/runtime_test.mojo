@@ -592,6 +592,38 @@ def test_runtime_task_runs_isolated_child_and_persists_transcript() raises:
     assert_equal(saved[1].content, "child summary")
 
 
+def test_runtime_task_structured_output_retries_and_validates() raises:
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("scripted", "https://invalid.local")
+    )
+    var invalid = ProviderResult()
+    invalid.message = Message("assistant", "not json")
+    provider.enqueue_result(invalid)
+    var valid = ProviderResult()
+    valid.message = Message("assistant", '{"answer":"done"}')
+    provider.enqueue_result(valid)
+    var runtime = Runtime(
+        provider^,
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    _ = runtime.toggle_workflow()
+    runtime.dispatch(
+        ToolCall(
+            "task-json",
+            "task",
+            '{"description":"structured","prompt":"answer","output_schema":{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}}}}',
+        ),
+        CancellationToken(),
+    )
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1].content,
+        '{"answer":"done"}',
+    )
+    assert_equal(len(runtime.subagent_messages[0]), 4)
+
+
 def test_runtime_plugin_commands_and_prompt_hints() raises:
     var runtime = Runtime(
         OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),

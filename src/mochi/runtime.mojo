@@ -855,13 +855,44 @@ struct Runtime:
         for definition in self.definitions:
             if definition.name != "task":
                 child.definitions.append(definition.copy())
+        var structured = prepared.arguments.contains("output_schema")
+        if structured:
+            prompt += "\n\nReturn only a JSON object matching the requested output schema."
         var result = child.run(prompt, cancel)
+        var retries = 0
+        while result.stop_reason != "provider_error" and result.stop_reason != "cancelled" and retries < 2:
+            if structured:
+                try:
+                    var output = parse_json(result.text)
+                    _validate_json_schema(output, prepared.arguments.get("output_schema"))
+                    break
+                except:
+                    retries += 1
+                    result = child.run(
+                        "Your result did not match the required JSON schema. Return only a valid matching JSON object.",
+                        cancel,
+                    )
+            elif result.text == "":
+                retries += 1
+                result = child.run(
+                    "You finished without a summary. Reply with a concise summary.",
+                    cancel,
+                )
+            else:
+                break
         self.subagent_ids.append(tool_call_id)
         self.subagent_names.append(name^)
         self.subagent_models.append(self.model)
         self.subagent_messages.append(result.messages.copy())
         if result.stop_reason == "provider_error" or result.stop_reason == "cancelled":
             raise Error("sub-agent " + result.stop_reason + ": " + result.text)
+        if structured:
+            try:
+                var output = parse_json(result.text)
+                _validate_json_schema(output, prepared.arguments.get("output_schema"))
+                return serialize_json(output)
+            except error:
+                raise Error("subagent result does not match output_schema: " + String(error))
         if result.text == "":
             raise Error("subagent finished without providing a summary")
         return result.text
@@ -955,6 +986,42 @@ struct Runtime:
             self.compactions,
             self.retries,
         )
+
+
+def _validate_json_schema(value: JsonValue, schema: JsonValue) raises:
+    if schema.kind != JsonValue.OBJECT:
+        raise Error("output_schema must be an object")
+    var kind = String("")
+    if schema.contains("type"):
+        kind = schema.get("type").string_value
+    if kind == "object" and value.kind != JsonValue.OBJECT:
+        raise Error("expected object")
+    if kind == "array" and value.kind != JsonValue.ARRAY:
+        raise Error("expected array")
+    if kind == "string" and value.kind != JsonValue.STRING:
+        raise Error("expected string")
+    if kind == "integer" and value.kind != JsonValue.INT:
+        raise Error("expected integer")
+    if kind == "boolean" and value.kind != JsonValue.BOOL:
+        raise Error("expected boolean")
+    if schema.contains("required"):
+        if value.kind != JsonValue.OBJECT:
+            raise Error("required fields need an object")
+        for required in schema.get("required").array_value:
+            if not value.contains(required.string_value):
+                raise Error("missing required field: " + required.string_value)
+    if schema.contains("properties") and value.kind == JsonValue.OBJECT:
+        var properties = schema.get("properties")
+        for i in range(len(properties.object_keys)):
+            var key = properties.object_keys[i]
+            if value.contains(key):
+                _validate_json_schema(
+                    value.get(key), properties.object_values[i]
+                )
+    if schema.contains("items") and value.kind == JsonValue.ARRAY:
+        var items = schema.get("items")
+        for item in value.array_value:
+            _validate_json_schema(item, items)
 
 
 def _runtime_model(id: String, provider: String, info: ModelInfo) -> Model:
