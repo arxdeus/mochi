@@ -133,6 +133,25 @@ def test_transport_codec_and_client_orchestration() raises:
     assert_equal(shutdown.method, METHOD_SHUTDOWN)
 
 
+def test_client_reconnects_after_shutdown() raises:
+    var transport = PluginTransport()
+    transport.enqueue_fixture_response(handshake_result(1, "first"))
+    transport.enqueue_fixture_response(
+        registration_result(2, PluginRegistration("first", "1.0.0"))
+    )
+    transport.enqueue_fixture_response(shutdown_result(3))
+    transport.enqueue_fixture_response(handshake_result(1, "second"))
+    transport.enqueue_fixture_response(
+        registration_result(2, PluginRegistration("second", "2.0.0"))
+    )
+    var client = PluginClient(transport^)
+    client.connect()
+    client.shutdown()
+    client.reconnect()
+    assert_true(client.is_ready())
+    assert_equal(client.protocol.registration.value().name, "second")
+
+
 def test_transport_cancel_terminates_owned_child() raises:
     var executable = PluginExecutable("/bin/sh")
     executable.add_argument("-c")

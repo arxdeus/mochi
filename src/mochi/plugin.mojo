@@ -467,6 +467,12 @@ struct PluginClient(Movable):
             self.cancel()
             raise err
 
+    def reconnect(mut self, host_name: String = "mochi") raises:
+        if self.protocol.state != PluginProtocol.CLOSED:
+            self.cancel()
+        self.protocol = PluginProtocol()
+        self.connect(host_name)
+
     def invoke(
         mut self, target_kind: String, name: String, var arguments: JsonValue
     ) raises -> JsonValue:
