@@ -399,8 +399,8 @@ def test_retry_and_key_rotation() raises:
 
     var retry = RetryState(3)
     assert_true(retry.can_retry())
-    assert_equal(retry.next_delay_ms(), 541)
-    assert_equal(retry.next_delay_ms(), 1114)
+    assert_equal(retry.next_delay_ms(), 1041)
+    assert_equal(retry.next_delay_ms(), 2114)
     assert_equal(retry.next_delay_ms(90000), 60000)
     assert_false(retry.can_retry())
     assert_true(RetryState.retryable_status(429))

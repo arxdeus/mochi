@@ -439,7 +439,7 @@ def test_runtime_cancellation_max_turn_and_retry_helpers() raises:
 
     var retry = RetryState(2)
     assert_true(retry.can_retry())
-    assert_equal(retry.next_delay_ms(), 541)
+    assert_equal(retry.next_delay_ms(), 1041)
     assert_true(RetryState.retryable_status(429))
     assert_false(RetryState.retryable_status(401))
 

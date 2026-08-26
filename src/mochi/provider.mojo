@@ -359,8 +359,8 @@ struct RetryState(Copyable, Movable):
     def __init__(out self, max_retries: Int = 3):
         self.attempt = 0
         self.max_retries = max_retries
-        self.base_delay_ms = 500
-        self.max_delay_ms = 30000
+        self.base_delay_ms = 2000
+        self.max_delay_ms = 8000
 
     def can_retry(self) -> Bool:
         return self.attempt < self.max_retries
@@ -370,13 +370,11 @@ struct RetryState(Copyable, Movable):
         if retry_after_ms > 0:
             delay = min(retry_after_ms, 60000)
         else:
-            delay = self.base_delay_ms
-            for _ in range(self.attempt):
-                delay = min(delay * 2, self.max_delay_ms)
-            # Deterministic jitter keeps state tests and request scheduling reproducible.
             delay = min(
-                delay + ((self.attempt * 73 + 41) % 250), self.max_delay_ms
+                self.base_delay_ms * (self.attempt + 1), self.max_delay_ms
             )
+            var half = delay // 2
+            delay = half + ((self.attempt * 73 + 41) % (half + 1))
         self.attempt += 1
         return delay
 
@@ -385,16 +383,7 @@ struct RetryState(Copyable, Movable):
 
     @staticmethod
     def retryable_status(status: Int) -> Bool:
-        return (
-            status == 408
-            or status == 409
-            or status == 425
-            or status == 429
-            or status == 500
-            or status == 502
-            or status == 503
-            or status == 504
-        )
+        return status == 429 or (status >= 500 and status <= 599)
 
 
 struct OAuthState(Copyable, Movable):
