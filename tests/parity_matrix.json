@@ -44,6 +44,33 @@
       }
     },
     {
+      "id": "agent.task.structured_output",
+      "area": "agent",
+      "owner": "mochi_agent",
+      "status": "parity",
+      "description": "Isolated task agents validate structured JSON output, retry invalid or missing responses twice, and persist the full child transcript.",
+      "upstream_refs": [
+        "plugins/task/init.lua",
+        "maki-lua/tests/task_policy.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/runtime.mojo",
+        "tests/runtime_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact retry count, validated output, and persisted child transcript."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity agent.task.structured_output",
+          "mojo_command": "pixi run parity agent.task.structured_output",
+          "normalization": "Pinned upstream task policy and Mojo runtime structured-output tests pass."
+        }
+      }
+    },
+    {
       "id": "provider.openai.chat.streaming",
       "area": "providers",
       "owner": "mochi_provider",
