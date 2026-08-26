@@ -643,10 +643,12 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
     if raw_mode <= 0:
         print("> ", end="")
         return _read_line()
+    print("\x1b[?2004h", end="")
     _render_editor(ui)
     while True:
         var byte = external_call["getchar", c_int]()
         if byte < 0 or byte == 4:
+            print("\x1b[?2004l", end="")
             external_call["mochi_terminal_disable_raw", NoneType]()
             print()
             if ui.draft == "":
@@ -661,6 +663,7 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                 _ = UiReducer.reduce(ui, UiEvent.continue_line())
                 _render_editor(ui)
                 continue
+            print("\x1b[?2004l", end="")
             external_call["mochi_terminal_disable_raw", NoneType]()
             print()
             return Optional(ui.draft.copy())
@@ -680,9 +683,30 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                     _ = UiReducer.reduce(ui, UiEvent.move_cursor(1))
                 elif key == 68:
                     _ = UiReducer.reduce(ui, UiEvent.move_cursor(-1))
+                elif key == 50:
+                    var zero = external_call["getchar", c_int]()
+                    var zero_again = external_call["getchar", c_int]()
+                    var tilde = external_call["getchar", c_int]()
+                    if zero == 48 and zero_again == 48 and tilde == 126:
+                        _ = UiReducer.reduce(ui, UiEvent.paste_spaced(_read_bracketed_paste()))
         elif byte >= 32:
             _ = UiReducer.reduce(ui, UiEvent.insert(_read_utf8_character(Int(byte))))
         _render_editor(ui)
+
+
+def _read_bracketed_paste() raises -> String:
+    var result = String("")
+    var escape = String("")
+    while True:
+        var byte = external_call["getchar", c_int]()
+        if byte < 0:
+            return result^
+        escape += chr(Int(byte))
+        if escape.endswith("\x1b[201~"):
+            return String(escape.removesuffix("\x1b[201~"))
+        if not "\x1b[201~".startswith(escape):
+            result += escape
+            escape = ""
 
 
 def _read_utf8_character(first: Int) raises -> String:
