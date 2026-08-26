@@ -83,6 +83,29 @@ def test_command_transition() raises:
     assert_equal(case_action.text, "~/foo")
 
 
+def test_toggleable_picker_navigation_and_actions() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(
+        state, UiEvent.picker_open("MCP Servers", "1:filesystem\n0:github")
+    )
+    assert_equal(state.picker_name, "MCP Servers")
+    assert_equal(state.picker_items[0], "filesystem")
+    assert_true(state.picker_enabled[0])
+    assert_false(state.picker_enabled[1])
+    _ = UiReducer.reduce(state, UiEvent.picker_previous())
+    assert_equal(state.picker_selected, 1)
+    var toggle = UiReducer.reduce(state, UiEvent.picker_toggle())
+    assert_true(toggle.is_picker_toggle())
+    assert_equal(toggle.name, "github")
+    assert_equal(toggle.text, "on")
+    var view = UiReducer.view(state)
+    assert_equal(view.lines[len(view.lines) - 2], "  [x] filesystem")
+    assert_equal(view.lines[len(view.lines) - 1], "> [x] github")
+    _ = UiReducer.reduce(state, UiEvent.picker_close())
+    assert_equal(state.picker_name, "")
+    assert_equal(len(state.picker_items), 0)
+
+
 def test_command_catalog_and_fuzzy_matches() raises:
     var names = command_names()
     assert_equal(len(names), 18)

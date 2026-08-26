@@ -33,6 +33,11 @@ struct UiEvent(Copyable, Movable):
     comptime SEARCH_BACKSPACE = 22
     comptime COMMAND_NEXT = 23
     comptime COMMAND_PREVIOUS = 24
+    comptime PICKER_OPEN = 25
+    comptime PICKER_NEXT = 26
+    comptime PICKER_PREVIOUS = 27
+    comptime PICKER_TOGGLE = 28
+    comptime PICKER_CLOSE = 29
 
     var tag: Int
     var text: String
@@ -178,12 +183,36 @@ struct UiEvent(Copyable, Movable):
     def command_previous() -> Self:
         return Self(Self.COMMAND_PREVIOUS)
 
+    @staticmethod
+    def picker_open(name: String, text: String) -> Self:
+        var event = Self(Self.PICKER_OPEN)
+        event.name = name
+        event.text = text
+        return event^
+
+    @staticmethod
+    def picker_next() -> Self:
+        return Self(Self.PICKER_NEXT)
+
+    @staticmethod
+    def picker_previous() -> Self:
+        return Self(Self.PICKER_PREVIOUS)
+
+    @staticmethod
+    def picker_toggle() -> Self:
+        return Self(Self.PICKER_TOGGLE)
+
+    @staticmethod
+    def picker_close() -> Self:
+        return Self(Self.PICKER_CLOSE)
+
 
 struct UiAction(Copyable, Movable):
     comptime NONE = 0
     comptime SUBMIT = 1
     comptime CANCEL = 2
     comptime COMMAND = 3
+    comptime PICKER_TOGGLE = 4
 
     var tag: Int
     var text: String
@@ -215,6 +244,13 @@ struct UiAction(Copyable, Movable):
         action.text = arguments
         return action^
 
+    @staticmethod
+    def picker_toggle(name: String, enabled: Bool) -> Self:
+        var action = Self(Self.PICKER_TOGGLE)
+        action.name = name
+        action.text = "on" if enabled else "off"
+        return action^
+
     def is_none(self) -> Bool:
         return self.tag == Self.NONE
 
@@ -226,6 +262,9 @@ struct UiAction(Copyable, Movable):
 
     def is_command(self) -> Bool:
         return self.tag == Self.COMMAND
+
+    def is_picker_toggle(self) -> Bool:
+        return self.tag == Self.PICKER_TOGGLE
 
 
 struct UiState(Copyable, Movable):
@@ -248,6 +287,10 @@ struct UiState(Copyable, Movable):
     var search_selected: Int
     var search_saved_offset: Int
     var search_saved_auto_scroll: Bool
+    var picker_name: String
+    var picker_items: List[String]
+    var picker_enabled: List[Bool]
+    var picker_selected: Int
 
     def __init__(out self):
         self.draft = ""
@@ -269,6 +312,10 @@ struct UiState(Copyable, Movable):
         self.search_selected = 0
         self.search_saved_offset = 0
         self.search_saved_auto_scroll = True
+        self.picker_name = ""
+        self.picker_items = List[String]()
+        self.picker_enabled = List[Bool]()
+        self.picker_selected = 0
 
     def set_history(mut self, var history: List[String]):
         self.history = history^
@@ -556,6 +603,21 @@ struct UiReducer:
             Self._command_move(state, 1)
         elif event.tag == UiEvent.COMMAND_PREVIOUS:
             Self._command_move(state, -1)
+        elif event.tag == UiEvent.PICKER_OPEN:
+            Self._picker_open(state, event.name, event.text)
+        elif event.tag == UiEvent.PICKER_NEXT:
+            Self._picker_move(state, 1)
+        elif event.tag == UiEvent.PICKER_PREVIOUS:
+            Self._picker_move(state, -1)
+        elif event.tag == UiEvent.PICKER_CLOSE:
+            Self._picker_close(state)
+        elif event.tag == UiEvent.PICKER_TOGGLE:
+            if state.picker_name != "" and len(state.picker_items) > 0:
+                var selected = state.picker_selected
+                state.picker_enabled[selected] = not state.picker_enabled[selected]
+                return UiAction.picker_toggle(
+                    state.picker_items[selected], state.picker_enabled[selected]
+                )
         return UiAction.none()
 
     @staticmethod
@@ -566,6 +628,12 @@ struct UiReducer:
         )
         for i in range(state.viewport_offset, end):
             lines.append(state.roles[i] + ": " + state.messages[i])
+        if state.picker_name != "":
+            lines.append("[" + state.picker_name + "]")
+            for i in range(len(state.picker_items)):
+                var marker = "> " if i == state.picker_selected else "  "
+                var toggle = "[x] " if state.picker_enabled[i] else "[ ] "
+                lines.append(marker + toggle + state.picker_items[i])
         return UiView(
             lines^,
             state.draft,
@@ -677,6 +745,38 @@ struct UiReducer:
         state.command_selected = (
             state.command_selected + direction + len(matches)
         ) % len(matches)
+
+    @staticmethod
+    def _picker_open(mut state: UiState, name: String, text: String):
+        state.picker_name = name
+        state.picker_items.clear()
+        state.picker_enabled.clear()
+        state.picker_selected = 0
+        for raw in text.split("\n"):
+            var item = String(raw.strip())
+            if item == "":
+                continue
+            var enabled = item.startswith("1:")
+            if item.startswith("1:") or item.startswith("0:"):
+                item = _byte_range(item, 2, item.byte_length())
+            state.picker_items.append(item^)
+            state.picker_enabled.append(enabled)
+
+    @staticmethod
+    def _picker_move(mut state: UiState, direction: Int):
+        if len(state.picker_items) == 0:
+            state.picker_selected = 0
+            return
+        state.picker_selected = (
+            state.picker_selected + direction + len(state.picker_items)
+        ) % len(state.picker_items)
+
+    @staticmethod
+    def _picker_close(mut state: UiState):
+        state.picker_name = ""
+        state.picker_items.clear()
+        state.picker_enabled.clear()
+        state.picker_selected = 0
 
     @staticmethod
     def _search_open(mut state: UiState):
