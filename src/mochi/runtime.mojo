@@ -51,6 +51,13 @@ struct ToolDefinition(Copyable, Movable):
     var parameters: JsonValue
 
 
+@fieldwise_init
+struct PendingPermission(Copyable, Movable):
+    var tool_call_id: String
+    var tool: String
+    var scopes: List[String]
+
+
 struct RuntimeEventSink(ProviderEventSink, Copyable, Movable):
     var events: List[DomainProviderEvent]
 
@@ -87,6 +94,7 @@ struct Runtime:
     var retries: Int
     var system_prompt: String
     var permission_answers: List[PermissionAnswer]
+    var pending_permissions: List[PendingPermission]
     var queued_inputs: List[String]
     var queued_compactions: Int
     var mcp_stdio_names: List[String]
@@ -123,6 +131,7 @@ struct Runtime:
         self.retries = 0
         self.system_prompt = ""
         self.permission_answers = List[PermissionAnswer]()
+        self.pending_permissions = List[PendingPermission]()
         self.queued_inputs = List[String]()
         self.queued_compactions = 0
         self.mcp_stdio_names = List[String]()
@@ -158,6 +167,7 @@ struct Runtime:
         self.retries = 0
         self.system_prompt = ""
         self.permission_answers = List[PermissionAnswer]()
+        self.pending_permissions = List[PendingPermission]()
         self.queued_inputs = List[String]()
         self.queued_compactions = 0
         self.mcp_stdio_names = List[String]()
@@ -177,6 +187,11 @@ struct Runtime:
 
     def answer_next_permission(mut self, answer: PermissionAnswer):
         self.permission_answers.append(answer)
+
+    def take_pending_permission(mut self) -> Optional[PendingPermission]:
+        if len(self.pending_permissions) == 0:
+            return None
+        return Optional(self.pending_permissions.pop(0))
 
     def queue_input(mut self, input: String):
         self.queued_inputs.append(input)
@@ -390,6 +405,11 @@ struct Runtime:
             var decision = self.tools.authorize(prepared, self.permissions)
             if decision.effect == PermissionEffect.prompt():
                 if len(self.permission_answers) == 0:
+                    self.pending_permissions.append(
+                        PendingPermission(
+                            call.id, prepared.name, decision.scopes.copy()
+                        )
+                    )
                     content = "Permission prompt"
                     for scope in decision.scopes:
                         content += ": " + scope

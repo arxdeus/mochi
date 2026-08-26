@@ -5,6 +5,7 @@ from mochi.acp import (
     AcpMessage,
     AcpRuntimeServer,
     AcpSession,
+    pending_permission_request,
     permission_answer,
     permission_options,
     permission_request,
@@ -13,7 +14,7 @@ from mochi.acp import (
 from mochi.json import JsonValue, parse_json
 from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager, PermissionRule
 from mochi.provider import OpenAICompatibleProvider, ProviderSpec
-from mochi.runtime import Runtime
+from mochi.runtime import PendingPermission, Runtime
 from mochi.session import Session, SessionStore
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken, Message
@@ -58,6 +59,19 @@ def test_acp_permission_and_unknown_method() raises:
         7, "session-1", JsonValue.object(), JsonValue.array()
     )
     assert_equal(permission.method, "session/request_permission")
+    var bridged = pending_permission_request(
+        8,
+        "session-1",
+        PendingPermission("tool-1", "bash", ["git status"]),
+    )
+    assert_equal(
+        bridged.payload.get("toolCall").get("toolCallId").string_value,
+        "tool-1",
+    )
+    assert_equal(
+        bridged.payload.get("toolCall").get("scopes").array_value[0].string_value,
+        "git status",
+    )
     var options = permission_options()
     assert_equal(len(options.array_value), 4)
     assert_equal(options.array_value[0].get("optionId").string_value, "allow_once")

@@ -1,6 +1,6 @@
 from mochi.json import JsonValue, parse_json
 from mochi.permissions import PermissionAnswer
-from mochi.runtime import Runtime
+from mochi.runtime import PendingPermission, Runtime
 from mochi.session import Session, SessionStore
 from mochi.storage import MakiId, SessionRef
 from mochi.types import CancellationToken, Message
@@ -370,6 +370,19 @@ def _permission_option(id: String, name: String, kind: String) raises -> JsonVal
     option.set("name", JsonValue.string(name))
     option.set("kind", JsonValue.string(kind))
     return option^
+
+
+def pending_permission_request(
+    id: Int, session_id: String, permission: PendingPermission
+) raises -> AcpMessage:
+    var tool_call = JsonValue.object()
+    tool_call.set("toolCallId", JsonValue.string(permission.tool_call_id))
+    tool_call.set("title", JsonValue.string(permission.tool))
+    var scopes = JsonValue.array()
+    for scope in permission.scopes:
+        scopes.append(JsonValue.string(scope))
+    tool_call.set("scopes", scopes^)
+    return permission_request(id, session_id, tool_call^, permission_options())
 
 
 def permission_request(

@@ -247,6 +247,22 @@ def test_dispatch_permissions_cancellation_and_compaction() raises:
 
 
 def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
+    var prompted = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        PermissionManager(),
+        "gpt-test",
+    )
+    prompted.dispatch(
+        ToolCall("pending", "bash", '{"command":"printf pending"}'),
+        CancellationToken(),
+    )
+    var pending = prompted.take_pending_permission()
+    assert_true(pending)
+    assert_equal(pending.value().tool_call_id, "pending")
+    assert_equal(pending.value().tool, "bash")
+    assert_equal(pending.value().scopes[0], "printf pending")
+
     var runtime = Runtime(
         OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
         ToolRegistry("/tmp"),
