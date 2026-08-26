@@ -25,6 +25,7 @@ from mochi.runtime import (
     build_request_body,
     build_responses_request_body,
     message_json,
+    _runtime_model,
 )
 from mochi.tools import ToolRegistry, ToolResult
 from mochi.types import CancellationToken, Message, ToolCall, Usage
@@ -40,6 +41,24 @@ def schema() raises -> JsonValue:
     return parse_json(
         '{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}'
     )
+
+
+def test_runtime_uses_catalog_model_metadata() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-5.3-codex",
+    )
+    assert_equal(runtime.provider.model_info.context_window.value(), 400000)
+    var model = _runtime_model(
+        runtime.model,
+        runtime.provider.inner.spec.name,
+        runtime.provider.model_info,
+    )
+    assert_equal(model.context_window, 400000)
+    assert_true(model.supports_thinking())
+    assert_true(model.supports_vision())
 
 
 def test_system_prompt_is_sent_but_not_persisted() raises:

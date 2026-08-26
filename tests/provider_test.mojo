@@ -34,6 +34,7 @@ from mochi.provider import (
     ToolCallAssembler,
     ToolCallDelta,
     builtin_model_catalog,
+    find_model_info,
     builtin_provider_registry,
     extract_chatgpt_account_id,
     form_encode,
@@ -72,6 +73,14 @@ def test_builtin_provider_and_model_catalog() raises:
     var models = builtin_model_catalog()
     assert_true(len(models) >= 12)
     assert_equal(models[0].id, "gpt-5.3-codex")
+    assert_equal(models[0].context_window.value(), 400000)
+    assert_equal(models[0].max_output_tokens.value(), 128000)
+    assert_equal(models[0].pricing.value().input, 1.75)
+    assert_equal(models[0].pricing.value().output, 14.0)
+    assert_true(models[0].supports_thinking.value())
+    assert_true(models[0].supports_vision.value())
+    assert_equal(find_model_info("gemini-2.5-pro").context_window.value(), 1048576)
+    assert_equal(find_model_info("custom-model").id, "custom-model")
 
 
 def test_sse_incremental_multiline_and_finish() raises:

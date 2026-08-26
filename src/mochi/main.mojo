@@ -27,6 +27,7 @@ from mochi.prompt import build_system_prompt, load_instruction_text
 from mochi.provider import (
     OpenAICompatibleProvider,
     OpenAIOAuthCredentials,
+    find_model_info,
     load_openai_oauth_credentials,
     openai_oauth_credentials_path,
     openai_device_login_with,
@@ -449,6 +450,7 @@ def _interactive_model(mut runtime: Runtime, command: String) raises:
     var requested = String(command.removeprefix("/model").strip())
     if requested != "":
         runtime.model = requested^
+        runtime.provider.model_info = find_model_info(runtime.model)
         print("Model:", runtime.model)
         return
     var models: List[String] = [

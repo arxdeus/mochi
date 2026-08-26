@@ -26,6 +26,7 @@ from mochi.provider import (
     OpenAICompatibleProvider,
     OpenAIProviderAdapter,
     ProviderResult,
+    find_model_info,
     ProviderSpec,
     RetryState,
 )
@@ -105,7 +106,7 @@ struct Runtime:
         max_context_chars: Int = 100000,
         compact_keep: Int = 12,
     ):
-        var info = ModelInfo.id_only(model)
+        var info = find_model_info(model)
         self.provider = OpenAIProviderAdapter(provider^, info)
         self.tools = tools^
         self.permissions = permissions^
@@ -283,7 +284,11 @@ struct Runtime:
             cancel.check()
             try:
                 var request = ProviderRequest(
-                    _runtime_model(self.model, self.provider.inner.spec.name),
+                    _runtime_model(
+                        self.model,
+                        self.provider.inner.spec.name,
+                        self.provider.model_info,
+                    ),
                     cancel.copy(),
                     _domain_messages(self.messages),
                     self.system_prompt,
@@ -438,17 +443,23 @@ struct Runtime:
         )
 
 
-def _runtime_model(id: String, provider: String) -> Model:
+def _runtime_model(id: String, provider: String, info: ModelInfo) -> Model:
+    var tier = info.tier.value().copy() if info.tier else ModelTier.medium()
+    var thinking = ThinkingSupport.no()
+    if info.supports_thinking and info.supports_thinking.value():
+        thinking = ThinkingSupport.yes()
+    var pricing = info.pricing.value().copy() if info.pricing else ModelPricing()
+    var context_window = info.context_window.value() if info.context_window else 100000
     return Model(
         id,
         provider,
-        ModelTier.medium(),
+        tier^,
         ModelFamily.generic(),
-        ThinkingSupport.no(),
-        None,
-        ModelPricing(),
-        None,
-        100000,
+        thinking^,
+        info.supports_vision,
+        pricing^,
+        info.max_output_tokens,
+        context_window,
     )
 
 

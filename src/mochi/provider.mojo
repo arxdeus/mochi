@@ -11,6 +11,8 @@ from mochi.domain import (
     MochiError,
     Model,
     ModelInfo,
+    ModelPricing,
+    ModelTier,
     StopReason,
     StreamResponse,
     TokenUsage,
@@ -126,19 +128,49 @@ def builtin_provider_registry() raises -> ProviderRegistry:
 
 def builtin_model_catalog() -> List[ModelInfo]:
     return [
-        ModelInfo.id_only("gpt-5.3-codex"),
-        ModelInfo.id_only("gpt-5.2-codex"),
-        ModelInfo.id_only("gpt-4.1"),
-        ModelInfo.id_only("gpt-4.1-mini"),
-        ModelInfo.id_only("claude-opus-4-6"),
-        ModelInfo.id_only("claude-sonnet-4-6"),
-        ModelInfo.id_only("gemini-2.5-pro"),
-        ModelInfo.id_only("gemini-2.5-flash"),
+        _model_info("gpt-5.3-codex", 400000, 128000, 1.75, 14.0, 0.0, 0.175, True, True, ModelTier.strong()),
+        _model_info("gpt-5.2-codex", 400000, 128000, 1.75, 14.0, 0.0, 0.175, True, True, ModelTier.strong()),
+        _model_info("gpt-4.1", 1047576, 32768, 2.0, 8.0, 0.0, 0.5, False, True, ModelTier.medium()),
+        _model_info("gpt-4.1-mini", 1047576, 32768, 0.4, 1.6, 0.0, 0.1, False, True, ModelTier.medium()),
+        _model_info("claude-opus-4-6", 200000, 128000, 5.0, 25.0, 6.25, 0.5, True, True, ModelTier.strong()),
+        _model_info("claude-sonnet-4-6", 200000, 64000, 3.0, 15.0, 3.75, 0.3, True, True, ModelTier.medium()),
+        _model_info("gemini-2.5-pro", 1048576, 65536, 1.25, 5.0, 0.0, 0.31, True, True, ModelTier.strong()),
+        _model_info("gemini-2.5-flash", 1048576, 65536, 0.15, 0.6, 0.0, 0.04, True, True, ModelTier.medium()),
         ModelInfo.id_only("grok-4"),
         ModelInfo.id_only("deepseek-chat"),
         ModelInfo.id_only("mistral-large-latest"),
         ModelInfo.id_only("glm-4.5"),
     ]
+
+
+def find_model_info(id: String) -> ModelInfo:
+    for model in builtin_model_catalog():
+        if model.id == id:
+            return model.copy()
+    return ModelInfo.id_only(id)
+
+
+def _model_info(
+    id: String,
+    context_window: Int,
+    max_output_tokens: Int,
+    input: Float64,
+    output: Float64,
+    cache_write: Float64,
+    cache_read: Float64,
+    thinking: Bool,
+    vision: Bool,
+    tier: ModelTier,
+) -> ModelInfo:
+    return ModelInfo(
+        id,
+        Optional(context_window),
+        Optional(max_output_tokens),
+        Optional(ModelPricing(input, output, cache_write, cache_read)),
+        Optional(thinking),
+        Optional(vision),
+        Optional(tier.copy()),
+    )
 
 
 struct ApiKeyState(Copyable, Movable):
