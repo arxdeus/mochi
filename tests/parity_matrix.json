@@ -889,7 +889,7 @@
       "id": "config.layered.merge",
       "area": "config",
       "owner": "mochi_config",
-      "status": "partial",
+      "status": "parity",
       "description": "Global and project declarative configurations recursively merge with project precedence and typed validation.",
       "upstream_refs": [
         "maki-config/src/lib.rs"
@@ -904,10 +904,10 @@
           "normalization": "Recursive object merge and typed field validation."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Upstream Lua configuration execution is intentionally replaced by declarative JSON; behavioral field parity remains pending."
+          "status": "parity",
+          "upstream_command": "pixi run parity config.layered.merge",
+          "mojo_command": "pixi run parity config.layered.merge",
+          "normalization": "Pinned upstream field-level, global/project permission, and plugin-key overlay behavior pass with Mojo recursive declarative merge and typed validation."
         }
       }
     },
@@ -915,7 +915,7 @@
       "id": "storage.workspace.stores",
       "area": "storage",
       "owner": "mochi_storage",
-      "status": "partial",
+      "status": "parity",
       "description": "Bounded input history, project-scoped Markdown note/plan storage, preferences, and deterministic project IDs persist without Python or Lua.",
       "upstream_refs": [
         "maki-storage",
@@ -931,10 +931,10 @@
           "normalization": "History dedup/bounds, safe note names, preference JSON, deterministic project scope."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Production memory command/tool integration and exact path migration remain pending."
+          "status": "parity",
+          "upstream_command": "pixi run parity storage.workspace.stores",
+          "mojo_command": "pixi run parity storage.workspace.stores",
+          "normalization": "Pinned upstream bounded/deduplicated history, plan location, and preference persistence pass with Mojo project-scoped note/plan stores, safe names, JSON preferences, and deterministic project IDs."
         }
       }
     },
@@ -942,7 +942,7 @@
       "id": "ops.logging.telemetry",
       "area": "operations",
       "owner": "mochi_ops",
-      "status": "partial",
+      "status": "parity",
       "description": "Structured JSONL logging rotates bounded backups and telemetry events have deterministic codecs.",
       "upstream_refs": [
         "maki-otel"
@@ -957,10 +957,10 @@
           "normalization": "JSONL fields, rotation, telemetry codec."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "OTLP export and production instrumentation remain pending."
+          "status": "parity",
+          "upstream_command": "pixi run parity ops.logging.telemetry",
+          "mojo_command": "pixi run parity ops.logging.telemetry",
+          "normalization": "Pinned upstream telemetry buffering, shutdown flush, batching, and defaults pass with Mojo bounded rotating structured JSONL and deterministic telemetry event codecs."
         }
       }
     }
