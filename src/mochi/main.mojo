@@ -29,6 +29,7 @@ from mochi.prompt import build_system_prompt, load_instruction_text
 from mochi.provider import (
     AnthropicProviderSpec,
     GeminiProviderSpec,
+    builtin_model_catalog,
     OpenAICompatibleProvider,
     ProductionProvider,
     copilot_discovered_endpoint,
@@ -555,7 +556,7 @@ def _interactive(
             elif action.name == "login":
                 _interactive_login(runtime)
             elif action.name == "model":
-                _interactive_model(runtime, command^)
+                _interactive_model(runtime, command^, ui)
                 session.model = runtime.model
             elif action.name == "memory":
                 _interactive_memory(memories, action.text)
@@ -895,33 +896,50 @@ def _interactive_login(mut runtime: Runtime):
         print("Login failed:", error)
 
 
-def _interactive_model(mut runtime: Runtime, command: String) raises:
+def _interactive_model(
+    mut runtime: Runtime, command: String, mut ui: UiState
+) raises:
     var requested = String(command.removeprefix("/model").strip())
     if requested != "":
         runtime.model = requested^
         runtime.provider.set_model_info(find_model_info(runtime.model))
         print("Model:", runtime.model)
         return
-    var models: List[String] = [
-        "gpt-5.3-codex",
-        "gpt-5.2-codex",
-        "gpt-5.1-codex-max",
-        "gpt-5.1-codex-mini",
-    ]
-    print("Current model:", runtime.model)
-    for i in range(len(models)):
-        print(String(i + 1) + ")", models[i])
-    print("Choose a number or enter a model ID: ", end="")
-    var selection = _read_line()
-    if not selection:
-        return
-    var value = String(selection.value().strip())
-    var index = _decimal(value)
-    if index > 0 and index <= len(models):
-        runtime.model = models[index - 1]
-    elif value != "":
-        runtime.model = value^
-    print("Model:", runtime.model)
+    var items = String("")
+    var current_index = 0
+    var index = 0
+    for model in builtin_model_catalog():
+        if items != "":
+            items += "\n"
+        if model.id == runtime.model:
+            current_index = index
+        items += ("1:" if model.id == runtime.model else "0:") + model.id
+        index += 1
+    _ = UiReducer.reduce(ui, UiEvent.picker_open("Models", items))
+    ui.picker_selected = current_index
+    var raw_mode = external_call["mochi_terminal_enable_raw", c_int]()
+    while ui.picker_name != "":
+        _render_picker(ui)
+        var byte = external_call["getchar", c_int]()
+        if byte == 3 or byte == 4:
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
+        elif byte == 10 or byte == 13:
+            runtime.model = ui.picker_items[ui.picker_selected]
+            runtime.provider.set_model_info(find_model_info(runtime.model))
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
+        elif byte == 27:
+            var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+            if bracket == 91:
+                var key = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+                if key == 65:
+                    _ = UiReducer.reduce(ui, UiEvent.picker_previous())
+                elif key == 66:
+                    _ = UiReducer.reduce(ui, UiEvent.picker_next())
+            else:
+                _ = UiReducer.reduce(ui, UiEvent.picker_close())
+    if raw_mode > 0:
+        external_call["mochi_terminal_disable_raw", NoneType]()
+    print("\r\x1b[2KModel: " + runtime.model)
 
 
 def _decimal(value: String) -> Int:
