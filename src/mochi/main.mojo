@@ -524,8 +524,10 @@ def _interactive(
             if action.name == "exit":
                 return
             elif action.name == "reload":
-                print("Reload requested. Restart Mochi to reload config and extensions.")
-                return
+                try:
+                    print("Reloaded executable extensions:", runtime.reload_plugins())
+                except error:
+                    print("Reload failed:", error)
             elif action.name == "yolo":
                 runtime.permissions.yolo = not runtime.permissions.yolo
                 if runtime.permissions.yolo:

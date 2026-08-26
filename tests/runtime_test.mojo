@@ -591,6 +591,37 @@ def test_runtime_task_runs_isolated_child_and_persists_transcript() raises:
     assert_equal(saved[1].content, "child summary")
 
 
+def test_runtime_reload_replaces_plugin_routes() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var transport = PluginTransport()
+    transport.enqueue_fixture_response(handshake_result(1, "first"))
+    var first = PluginRegistration("first", "1.0.0")
+    first.tools.append(
+        parse_json('{"name":"old_tool","description":"old","inputSchema":{}}')
+    )
+    transport.enqueue_fixture_response(registration_result(2, first))
+    transport.enqueue_fixture_response(handshake_result(1, "second"))
+    var second = PluginRegistration("second", "2.0.0")
+    second.tools.append(
+        parse_json('{"name":"new_tool","description":"new","inputSchema":{}}')
+    )
+    transport.enqueue_fixture_response(registration_result(2, second))
+    var client = PluginClient(transport^)
+    client.connect()
+    runtime.add_remote_tools("plugin", "first", first.tools.copy())
+    runtime.attach_plugin("first", client^)
+    assert_true(runtime.remote.is_remote("old_tool"))
+    assert_equal(runtime.reload_plugins(), 1)
+    assert_false(runtime.remote.is_remote("old_tool"))
+    assert_true(runtime.remote.is_remote("new_tool"))
+    assert_equal(runtime.plugin_names[0], "second")
+
+
 def test_provider_error_is_visible_in_result() raises:
     var spec = ProviderSpec("fixture", "https://invalid.local")
     spec.max_retries = 0

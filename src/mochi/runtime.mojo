@@ -482,6 +482,18 @@ struct Runtime:
         self.plugin_names.append(name^)
         self.plugin_clients.append(client^)
 
+    def reload_plugins(mut self) raises -> Int:
+        for i in range(len(self.plugin_names)):
+            var old_name = self.plugin_names[i]
+            self._remove_remote_endpoint("plugin", old_name)
+            self.plugin_clients[i].reload()
+            var registration = self.plugin_clients[i].protocol.registration.value().copy()
+            self.plugin_names[i] = registration.name
+            self.add_remote_tools(
+                "plugin", registration.name, registration.tools.copy()
+            )
+        return len(self.plugin_names)
+
     def remote_status_lines(self) -> List[String]:
         var lines = List[String]()
         for i in range(len(self.mcp_stdio_names)):

@@ -442,16 +442,20 @@ struct PluginClient(Movable):
 
     var transport: PluginTransport
     var protocol: PluginProtocol
+    var executable: Optional[PluginExecutable]
 
     def __init__(out self, var transport: PluginTransport):
         self.transport = transport^
         self.protocol = PluginProtocol()
+        self.executable = None
 
     @staticmethod
     def launch(
         executable: PluginExecutable, host_name: String = "mochi"
     ) raises -> Self:
+        var saved = executable.copy()
         var client = Self(PluginTransport.spawn(executable))
+        client.executable = Optional(saved^)
         client.connect(host_name)
         return client^
 
@@ -472,6 +476,15 @@ struct PluginClient(Movable):
             self.cancel()
         self.protocol = PluginProtocol()
         self.connect(host_name)
+
+    def reload(mut self, host_name: String = "mochi") raises:
+        if self.executable:
+            self.cancel()
+            self.transport = PluginTransport.spawn(self.executable.value().copy())
+            self.protocol = PluginProtocol()
+            self.connect(host_name)
+            return
+        self.reconnect(host_name)
 
     def invoke(
         mut self, target_kind: String, name: String, var arguments: JsonValue

@@ -152,6 +152,23 @@ def test_client_reconnects_after_shutdown() raises:
     assert_equal(client.protocol.registration.value().name, "second")
 
 
+def test_client_reload_reconnects_fixture_registration() raises:
+    var transport = PluginTransport()
+    transport.enqueue_fixture_response(handshake_result(1, "first"))
+    transport.enqueue_fixture_response(
+        registration_result(2, PluginRegistration("first", "1.0.0"))
+    )
+    transport.enqueue_fixture_response(handshake_result(1, "second"))
+    transport.enqueue_fixture_response(
+        registration_result(2, PluginRegistration("second", "2.0.0"))
+    )
+    var client = PluginClient(transport^)
+    client.connect()
+    client.reload()
+    assert_true(client.is_ready())
+    assert_equal(client.protocol.registration.value().name, "second")
+
+
 def test_transport_cancel_terminates_owned_child() raises:
     var executable = PluginExecutable("/bin/sh")
     executable.add_argument("-c")
