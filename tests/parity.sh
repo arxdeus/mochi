@@ -202,6 +202,15 @@ case "${1:-all}" in
             components::search_modal::tests::search_role_prefix_matches::you_prefix -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
+    contracts.invocation.fake)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            tools::registry::tests::audience_names_round_trip -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            tools::registry::tests::definitions_excludes_wrong_audience -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            types::tests::tool_results_builds_message_with_tool_result_blocks -- --exact >/dev/null
+        run_mojo_test tests/invocation_test.mojo
+        ;;
     contracts.provider.fake)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
             types::tests::request_options_clamped_fast_requires_model_support -- --exact >/dev/null
@@ -261,7 +270,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="agent.provider_error.result permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="agent.provider_error.result permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

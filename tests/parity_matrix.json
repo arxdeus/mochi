@@ -391,9 +391,12 @@
       "id": "contracts.invocation.fake",
       "area": "tools",
       "owner": "mochi_tools",
-      "status": "partial",
+      "status": "parity",
       "description": "Unified invocation lifecycle, audience, cancellation, rich result, and bounded trace contract compiles against a deterministic fake.",
-      "upstream_refs": [],
+      "upstream_refs": [
+        "maki-agent/src/tools/registry.rs",
+        "maki-agent/src/types.rs"
+      ],
       "mojo_refs": [
         "src/mochi/invocation.mojo",
         "tests/invocation_test.mojo"
@@ -404,10 +407,10 @@
           "normalization": "Exact deterministic contract assertions."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+          "status": "parity",
+          "upstream_command": "pixi run parity contracts.invocation.fake",
+          "mojo_command": "pixi run parity contracts.invocation.fake",
+          "normalization": "Pinned upstream audience filtering and rich tool-result adaptation pass with Mojo source/audience flags, FIFO dispatch, rejection, cancellation, bounded traces, and golden codecs."
         }
       }
     },
