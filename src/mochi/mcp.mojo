@@ -43,6 +43,77 @@ struct McpAuthServerMetadata(Copyable, Movable):
     var code_challenge_methods_supported: List[String]
 
 
+@fieldwise_init
+struct McpClientRegistration(Copyable, Movable):
+    var client_id: String
+    var client_secret: String
+    var client_secret_expires_at: Int
+
+
+def register_mcp_oauth_client_with[T: HttpTransport](
+    mut transport: T, registration_endpoint: String, redirect_uri: String
+) raises -> McpClientRegistration:
+    if not mcp_endpoint_url_is_secure(registration_endpoint):
+        raise Error("MCP OAuth registration endpoint must use HTTPS")
+    var body = JsonValue.object()
+    body.set("client_name", JsonValue.string("Maki"))
+    body.set("redirect_uris", _mcp_json_string_array([redirect_uri]))
+    body.set(
+        "grant_types",
+        _mcp_json_string_array(["authorization_code", "refresh_token"]),
+    )
+    body.set("response_types", _mcp_json_string_array(["code"]))
+    body.set("token_endpoint_auth_method", JsonValue.string("none"))
+    var request = HttpRequest("POST", registration_endpoint)
+    request.add_header("Content-Type", "application/json")
+    request.body = serialize_json(body)
+    var response = transport.perform(request)
+    if response.status < 200 or response.status >= 300:
+        raise Error("MCP OAuth client registration failed with status " + String(response.status))
+    var value = parse_json(response.body)
+    if not value.contains("client_id"):
+        raise Error("MCP OAuth client registration response has no client_id")
+    var secret = String("")
+    if value.contains("client_secret"):
+        secret = value.get("client_secret").string_value
+    var expires = 0
+    if value.contains("client_secret_expires_at"):
+        expires = value.get("client_secret_expires_at").int_value
+    return McpClientRegistration(value.get("client_id").string_value, secret, expires)
+
+
+def mcp_oauth_code_exchange_request(
+    token_endpoint: String,
+    code: String,
+    redirect_uri: String,
+    code_verifier: String,
+    client_id: String,
+    client_secret: String,
+    resource: String,
+) raises -> HttpRequest:
+    if not mcp_endpoint_url_is_secure(token_endpoint):
+        raise Error("MCP OAuth token endpoint must use HTTPS")
+    var request = HttpRequest("POST", token_endpoint)
+    request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    request.body = (
+        "grant_type=authorization_code&code=" + _form_encode(code)
+        + "&redirect_uri=" + _form_encode(redirect_uri)
+        + "&code_verifier=" + _form_encode(code_verifier)
+        + "&client_id=" + _form_encode(client_id)
+        + "&resource=" + _form_encode(resource)
+    )
+    if client_secret != "":
+        request.body += "&client_secret=" + _form_encode(client_secret)
+    return request^
+
+
+def _mcp_json_string_array(values: List[String]) raises -> JsonValue:
+    var result = JsonValue.array()
+    for value in values:
+        result.append(JsonValue.string(value))
+    return result^
+
+
 def parse_mcp_url(var url: String) -> McpUrlParts:
     url = String(String(url.strip()).removesuffix("/"))
     var scheme_end = 0

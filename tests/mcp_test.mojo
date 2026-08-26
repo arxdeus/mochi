@@ -19,11 +19,13 @@ from mochi.mcp import (
     discover_mcp_resource_metadata_with,
     mcp_auth_server_metadata_urls,
     mcp_endpoint_url_is_secure,
+    mcp_oauth_code_exchange_request,
     mcp_resource_matches_server,
     mcp_resource_metadata_urls,
     mcp_server_origin,
     mcp_well_known_url,
     parse_www_authenticate,
+    register_mcp_oauth_client_with,
 )
 from mochi.storage import OAuthTokens
 
@@ -256,6 +258,47 @@ def test_mcp_oauth_injected_discovery() raises:
     insecure.enqueue(HttpResponse(404, "missing"))
     with assert_raises():
         _ = discover_mcp_auth_server_with(insecure, "https://auth.example/tenant")
+
+
+def test_mcp_oauth_registration_and_code_exchange() raises:
+    var registration_transport = MockTransport()
+    registration_transport.enqueue(
+        HttpResponse(
+            201,
+            '{"client_id":"dynamic-client","client_secret":"secret","client_secret_expires_at":1234}',
+        )
+    )
+    var registration = register_mcp_oauth_client_with(
+        registration_transport,
+        "https://auth.example/register",
+        "http://127.0.0.1:8765/callback",
+    )
+    assert_equal(registration.client_id, "dynamic-client")
+    assert_equal(registration.client_secret, "secret")
+    assert_equal(registration.client_secret_expires_at, 1234)
+    var body = parse_json(registration_transport.requests[0].body)
+    assert_equal(body.get("client_name").string_value, "Maki")
+    assert_equal(
+        body.get("redirect_uris").array_value[0].string_value,
+        "http://127.0.0.1:8765/callback",
+    )
+    assert_equal(body.get("token_endpoint_auth_method").string_value, "none")
+
+    var request = mcp_oauth_code_exchange_request(
+        "https://auth.example/token",
+        "code value",
+        "http://127.0.0.1:8765/callback",
+        "verifier",
+        "dynamic-client",
+        "secret",
+        "https://mcp.example/mcp",
+    )
+    assert_equal(request.method, "POST")
+    assert_true("grant_type=authorization_code" in request.body)
+    assert_true("code=code%20value" in request.body)
+    assert_true("code_verifier=verifier" in request.body)
+    assert_true("client_secret=secret" in request.body)
+    assert_true("resource=https%3A%2F%2Fmcp.example%2Fmcp" in request.body)
 
 
 def test_mcp_oauth_refresh_contract() raises:
