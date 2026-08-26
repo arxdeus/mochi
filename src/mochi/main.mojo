@@ -402,7 +402,10 @@ def _run_prompt(
     prompt: String,
     output_format: String,
 ):
-    var result = runtime.run(prompt, CancellationToken())
+    var cancel = CancellationToken()
+    cancel.activate_sigint()
+    var result = runtime.run(prompt, cancel^)
+    CancellationToken.deactivate_sigint()
     try:
         session.update_from_result(
             result.messages, result.usage, runtime.model, _now_ms()

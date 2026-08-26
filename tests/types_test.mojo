@@ -43,6 +43,15 @@ def test_cancellation_token() raises:
         token.check()
 
 
+def test_cancellation_sigint_activation_lifecycle() raises:
+    var token = CancellationToken()
+    token.activate_sigint()
+    assert_false(token.is_cancelled())
+    CancellationToken.deactivate_sigint()
+    token.activate_sigint()
+    CancellationToken.deactivate_sigint()
+
+
 def test_cancellation_copy_visibility() raises:
     var original = CancellationToken()
     var copied = original.copy()

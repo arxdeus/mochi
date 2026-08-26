@@ -22,6 +22,22 @@ typedef struct mochi_cancellation_state {
     struct mochi_cancellation_state *parent;
 } mochi_cancellation_state;
 
+#if defined(__unix__) || defined(__APPLE__)
+static _Atomic(mochi_cancellation_state *) mochi_active_cancellation = NULL;
+static struct sigaction mochi_previous_sigint;
+static bool mochi_sigint_installed = false;
+
+static void mochi_handle_sigint(int signal_number) {
+    (void)signal_number;
+    mochi_cancellation_state *state = atomic_load_explicit(
+        &mochi_active_cancellation, memory_order_acquire
+    );
+    if (state != NULL) {
+        atomic_store_explicit(&state->cancelled, true, memory_order_release);
+    }
+}
+#endif
+
 static mochi_cancellation_state *mochi_cancellation_alloc(
     mochi_cancellation_state *parent
 ) {
@@ -66,6 +82,45 @@ void *mochi_cancellation_child(void *handle) {
 void mochi_cancellation_cancel(void *handle) {
     mochi_cancellation_state *state = handle;
     atomic_store_explicit(&state->cancelled, true, memory_order_release);
+}
+
+void mochi_cancellation_activate_sigint(void *handle) {
+#if defined(__unix__) || defined(__APPLE__)
+    mochi_cancellation_state *state = handle;
+    mochi_cancellation_retain(state);
+    mochi_cancellation_state *previous = atomic_exchange_explicit(
+        &mochi_active_cancellation, state, memory_order_acq_rel
+    );
+    if (previous != NULL) {
+        mochi_cancellation_release(previous);
+    }
+    if (!mochi_sigint_installed) {
+        struct sigaction action;
+        memset(&action, 0, sizeof(action));
+        action.sa_handler = mochi_handle_sigint;
+        sigemptyset(&action.sa_mask);
+        if (sigaction(SIGINT, &action, &mochi_previous_sigint) == 0) {
+            mochi_sigint_installed = true;
+        }
+    }
+#else
+    (void)handle;
+#endif
+}
+
+void mochi_cancellation_deactivate_sigint(void) {
+#if defined(__unix__) || defined(__APPLE__)
+    mochi_cancellation_state *state = atomic_exchange_explicit(
+        &mochi_active_cancellation, NULL, memory_order_acq_rel
+    );
+    if (state != NULL) {
+        mochi_cancellation_release(state);
+    }
+    if (mochi_sigint_installed) {
+        (void)sigaction(SIGINT, &mochi_previous_sigint, NULL);
+        mochi_sigint_installed = false;
+    }
+#endif
 }
 
 int mochi_cancellation_is_cancelled(void *handle) {

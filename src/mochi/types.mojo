@@ -102,6 +102,13 @@ struct CancellationToken(Copyable, Movable):
     def cancel(self):
         external_call["mochi_cancellation_cancel", NoneType](self._handle)
 
+    def activate_sigint(self):
+        external_call["mochi_cancellation_activate_sigint", NoneType](self._handle)
+
+    @staticmethod
+    def deactivate_sigint():
+        external_call["mochi_cancellation_deactivate_sigint", NoneType]()
+
     def is_cancelled(self) -> Bool:
         return Bool(
             external_call["mochi_cancellation_is_cancelled", c_int](
