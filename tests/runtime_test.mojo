@@ -425,6 +425,11 @@ def test_remote_status_lines() raises:
     assert_equal(lines[0], "fixture · stdio · connecting")
     assert_equal(lines[1], "authenticated · http · running · authenticated")
     assert_equal(lines[2], "formatter · executable extension · running")
+    assert_equal(runtime.mcp_picker_items(), "1:fixture\n1:authenticated")
+    assert_true(runtime.set_mcp_enabled("fixture", False))
+    assert_equal(runtime.mcp_picker_items(), "0:fixture\n1:authenticated")
+    assert_equal(runtime.remote_status_lines()[0], "fixture · stdio · disabled")
+    assert_false(runtime.set_mcp_enabled("missing", False))
 
 
 def test_live_remote_mcp_and_plugin_dispatch() raises:

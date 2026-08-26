@@ -108,10 +108,12 @@ struct Runtime:
     var mcp_stdio_names: List[String]
     var mcp_stdio_clients: List[McpClient]
     var mcp_stdio_transports: List[StdioTransport]
+    var mcp_stdio_enabled: List[Bool]
     var mcp_http_names: List[String]
     var mcp_http_clients: List[McpClient]
     var mcp_http_transports: List[StreamableHttpTransport]
     var mcp_http_authenticated: List[Bool]
+    var mcp_http_enabled: List[Bool]
     var plugin_names: List[String]
     var plugin_clients: List[PluginClient]
 
@@ -148,10 +150,12 @@ struct Runtime:
         self.mcp_stdio_names = List[String]()
         self.mcp_stdio_clients = List[McpClient]()
         self.mcp_stdio_transports = List[StdioTransport]()
+        self.mcp_stdio_enabled = List[Bool]()
         self.mcp_http_names = List[String]()
         self.mcp_http_clients = List[McpClient]()
         self.mcp_http_transports = List[StreamableHttpTransport]()
         self.mcp_http_authenticated = List[Bool]()
+        self.mcp_http_enabled = List[Bool]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
 
@@ -187,10 +191,12 @@ struct Runtime:
         self.mcp_stdio_names = List[String]()
         self.mcp_stdio_clients = List[McpClient]()
         self.mcp_stdio_transports = List[StdioTransport]()
+        self.mcp_stdio_enabled = List[Bool]()
         self.mcp_http_names = List[String]()
         self.mcp_http_clients = List[McpClient]()
         self.mcp_http_transports = List[StreamableHttpTransport]()
         self.mcp_http_authenticated = List[Bool]()
+        self.mcp_http_enabled = List[Bool]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
 
@@ -416,6 +422,7 @@ struct Runtime:
         self.mcp_stdio_names.append(name^)
         self.mcp_stdio_clients.append(client^)
         self.mcp_stdio_transports.append(transport^)
+        self.mcp_stdio_enabled.append(True)
 
     def attach_mcp_http(
         mut self,
@@ -427,6 +434,7 @@ struct Runtime:
         self.mcp_http_names.append(name^)
         self.mcp_http_clients.append(client^)
         self.mcp_http_transports.append(transport^)
+        self.mcp_http_enabled.append(True)
 
     def attach_plugin(
         mut self, var name: String, var client: PluginClient
@@ -437,17 +445,21 @@ struct Runtime:
     def remote_status_lines(self) -> List[String]:
         var lines = List[String]()
         for i in range(len(self.mcp_stdio_names)):
-            var status = (
-                "running"
-                if self.mcp_stdio_clients[i].session.initialized
-                else "connecting"
-            )
+            var status = "disabled"
+            if self.mcp_stdio_enabled[i]:
+                status = (
+                    "running"
+                    if self.mcp_stdio_clients[i].session.initialized
+                    else "connecting"
+                )
             lines.append(
                 self.mcp_stdio_names[i] + " · stdio · " + status
             )
         for i in range(len(self.mcp_http_names)):
-            var status = "connecting"
-            if self.mcp_http_clients[i].session.initialized:
+            var status = "disabled"
+            if self.mcp_http_enabled[i]:
+                status = "connecting"
+            if self.mcp_http_enabled[i] and self.mcp_http_clients[i].session.initialized:
                 status = "running"
                 if self.mcp_http_authenticated[i]:
                     status += " · authenticated"
@@ -457,6 +469,29 @@ struct Runtime:
         for name in self.plugin_names:
             lines.append(name + " · executable extension · running")
         return lines^
+
+    def mcp_picker_items(self) -> String:
+        var result = String("")
+        for i in range(len(self.mcp_stdio_names)):
+            if result != "":
+                result += "\n"
+            result += ("1:" if self.mcp_stdio_enabled[i] else "0:") + self.mcp_stdio_names[i]
+        for i in range(len(self.mcp_http_names)):
+            if result != "":
+                result += "\n"
+            result += ("1:" if self.mcp_http_enabled[i] else "0:") + self.mcp_http_names[i]
+        return result^
+
+    def set_mcp_enabled(mut self, name: String, enabled: Bool) -> Bool:
+        for i in range(len(self.mcp_stdio_names)):
+            if self.mcp_stdio_names[i] == name:
+                self.mcp_stdio_enabled[i] = enabled
+                return True
+        for i in range(len(self.mcp_http_names)):
+            if self.mcp_http_names[i] == name:
+                self.mcp_http_enabled[i] = enabled
+                return True
+        return False
 
     def shutdown_remotes(mut self):
         for i in range(len(self.mcp_stdio_transports)):
@@ -621,7 +656,7 @@ struct Runtime:
         var endpoint = self.remote.endpoint_for(prepared.name)
         if protocol == "mcp":
             for i in range(len(self.mcp_stdio_names)):
-                if self.mcp_stdio_names[i] == endpoint:
+                if self.mcp_stdio_names[i] == endpoint and self.mcp_stdio_enabled[i]:
                     return serialize_json(
                         self.mcp_stdio_clients[i].call_tool(
                             self.mcp_stdio_transports[i],
@@ -630,7 +665,7 @@ struct Runtime:
                         )
                     )
             for i in range(len(self.mcp_http_names)):
-                if self.mcp_http_names[i] == endpoint:
+                if self.mcp_http_names[i] == endpoint and self.mcp_http_enabled[i]:
                     return serialize_json(
                         self.mcp_http_clients[i].call_tool(
                             self.mcp_http_transports[i],
