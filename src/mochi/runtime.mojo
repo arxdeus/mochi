@@ -194,6 +194,44 @@ struct Runtime:
     def set_system_prompt(mut self, prompt: String):
         self.system_prompt = prompt
 
+    def restore_modes(mut self, meta: JsonValue):
+        if meta.kind != JsonValue.OBJECT:
+            return
+        try:
+            if meta.contains("thinking"):
+                var thinking = meta.get("thinking")
+                if thinking.kind == JsonValue.STRING:
+                    _ = self.set_thinking(thinking.string_value)
+                elif thinking.kind == JsonValue.OBJECT and thinking.contains("kind"):
+                    var kind = thinking.get("kind").string_value
+                    if kind == "budget" and thinking.contains("tokens"):
+                        _ = self.set_thinking(String(thinking.get("tokens").int_value))
+                    elif kind == "effort" and thinking.contains("level"):
+                        _ = self.set_thinking(thinking.get("level").string_value)
+                    else:
+                        _ = self.set_thinking(kind)
+            if meta.contains("fast") and meta.get("fast").kind == JsonValue.BOOL:
+                _ = self.set_fast(meta.get("fast").bool_value)
+            if meta.contains("workflow") and meta.get("workflow").kind == JsonValue.BOOL:
+                self.workflow = meta.get("workflow").bool_value
+                self.tools.set_workflow(self.workflow)
+        except:
+            pass
+
+    def save_modes(self, meta: JsonValue) -> JsonValue:
+        var result = meta.copy()
+        if result.kind != JsonValue.OBJECT:
+            result = JsonValue.object()
+        try:
+            result.set(
+                "thinking", JsonValue.string(self.options.thinking.display())
+            )
+            result.set("fast", JsonValue.boolean(self.options.fast))
+            result.set("workflow", JsonValue.boolean(self.workflow))
+        except:
+            pass
+        return result^
+
     def set_thinking(mut self, input: String) -> Bool:
         var model = _runtime_model(
             self.model, self.provider.name, self.provider.model_info

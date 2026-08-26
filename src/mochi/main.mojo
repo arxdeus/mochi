@@ -134,6 +134,7 @@ def main() raises:
         max_turns=layered.max_turns.value() if layered.max_turns else 50,
     )
     runtime.set_messages(session.runtime_messages())
+    runtime.restore_modes(session.meta)
     runtime.set_system_prompt(
         build_system_prompt(
             cwd,
@@ -418,6 +419,7 @@ def _run_prompt(
         session.update_from_result(
             result.messages, result.usage, runtime.model, _now_ms()
         )
+        session.meta = runtime.save_modes(session.meta)
         store.save(session)
     except error:
         print("Session save failed:", error)
@@ -464,6 +466,8 @@ def _interactive(
                     print("YOLO mode disabled.")
             elif action.name == "thinking":
                 if runtime.set_thinking(action.text):
+                    session.meta = runtime.save_modes(session.meta)
+                    store.save(session)
                     print("Thinking:", runtime.options.thinking.display())
                 elif not _runtime_model(
                     runtime.model,
@@ -478,6 +482,8 @@ def _interactive(
             elif action.name == "fast":
                 var fast = not runtime.options.fast
                 if runtime.set_fast(fast):
+                    session.meta = runtime.save_modes(session.meta)
+                    store.save(session)
                     if fast:
                         print("Fast mode: on")
                     else:
@@ -487,7 +493,10 @@ def _interactive(
                         "Fast mode requires an Anthropic Opus 4.6+ model (API only)"
                     )
             elif action.name == "workflow":
-                if runtime.toggle_workflow():
+                var workflow = runtime.toggle_workflow()
+                session.meta = runtime.save_modes(session.meta)
+                store.save(session)
+                if workflow:
                     print("Workflow mode: on")
                 else:
                     print("Workflow mode: off")
@@ -582,6 +591,7 @@ def _run_resume(
         session.update_from_result(
             result.messages, result.usage, runtime.model, _now_ms()
         )
+        session.meta = runtime.save_modes(session.meta)
         store.save(session)
     except error:
         print("Session save failed:", error)

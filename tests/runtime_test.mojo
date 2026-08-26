@@ -124,6 +124,22 @@ def test_runtime_interactive_request_modes() raises:
     assert_false(runtime.options.fast)
     assert_true(runtime.toggle_workflow())
     assert_true(runtime.tools.workflow)
+    var meta = runtime.save_modes(JsonValue.object())
+    var restored = Runtime(
+        ProductionProvider(
+            AnthropicProviderSpec("https://api.anthropic.test", "secret"),
+            FlokiTransport(),
+            find_model_info("claude-opus-4-6"),
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "claude-opus-4-6",
+    )
+    restored.restore_modes(meta)
+    assert_equal(restored.options.thinking.budget_tokens, 8192)
+    assert_false(restored.options.fast)
+    assert_true(restored.workflow)
+    assert_true(restored.tools.workflow)
     assert_false(runtime.toggle_workflow())
     assert_false(runtime.tools.workflow)
 
