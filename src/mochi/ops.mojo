@@ -78,7 +78,23 @@ def compare_versions(left: String, right: String) -> Int:
 
 
 def is_newer_version(candidate: String, current: String) -> Bool:
+    if not _valid_release_version(candidate) or not _valid_release_version(current):
+        return False
     return compare_versions(candidate, current) > 0
+
+
+def _valid_release_version(value: String) -> Bool:
+    var parts = value.split(".")
+    if len(parts) != 3:
+        return False
+    for part in parts:
+        if String(part) == "":
+            return False
+        for cp in String(part).codepoints():
+            var digit = Int(cp.to_u32()) - 48
+            if digit < 0 or digit > 9:
+                return False
+    return True
 
 
 @fieldwise_init

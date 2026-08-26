@@ -41,6 +41,8 @@ def test_version_comparison() raises:
     assert_equal(compare_versions("1.2", "1.2.1"), -1)
     assert_equal(compare_versions("2.0.0-beta", "1.9.9"), 1)
     assert_true(is_newer_version("0.5.0", "0.4.12"))
+    assert_equal(is_newer_version("abc", "0.4.12"), False)
+    assert_equal(is_newer_version("1.0.0-rc1", "0.9.0"), False)
     var plan = plan_update("0.4.12", "0.5.0", "/usr/local/bin/mochi")
     assert_true(plan.update_available)
     assert_equal(plan.backup, "/usr/local/bin/mochi_backup")
