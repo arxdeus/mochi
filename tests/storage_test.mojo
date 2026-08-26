@@ -9,6 +9,10 @@ from mochi.storage import (
     StoragePaths,
     auth_record_from_json,
     auth_record_to_json,
+    delete_provider_credentials,
+    load_provider_credentials,
+    provider_credentials_path,
+    save_provider_credentials,
     decode_base58,
     encode_base58,
     oauth_tokens_from_json,
@@ -134,6 +138,31 @@ def test_auth_record_upstream_json_codec() raises:
     assert_false(decoded.host)
     with assert_raises():
         _ = auth_record_from_json('{"host":"missing-key"}')
+
+
+def test_provider_credentials_persistence() raises:
+    var paths = StoragePaths.from_roots(
+        "/tmp/mochi-auth-home",
+        "/tmp/mochi-auth-config",
+        "/tmp/mochi-auth-data",
+        "/tmp/mochi-auth-state",
+        "/tmp/mochi-auth-cache",
+    )
+    delete_provider_credentials(paths, "copilot")
+    assert_false(load_provider_credentials(paths, "copilot"))
+    save_provider_credentials(
+        paths, "copilot", AuthRecord("secret", Optional("github.com"))
+    )
+    assert_equal(
+        provider_credentials_path(paths, "copilot"),
+        "/tmp/mochi-auth-state/maki/auth/copilot.json",
+    )
+    var loaded = load_provider_credentials(paths, "copilot")
+    assert_true(loaded)
+    assert_equal(loaded.value().api_key, "secret")
+    assert_equal(loaded.value().host.value(), "github.com")
+    delete_provider_credentials(paths, "copilot")
+    assert_false(load_provider_credentials(paths, "copilot"))
 
 
 def main() raises:

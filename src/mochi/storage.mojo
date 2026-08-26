@@ -1,5 +1,5 @@
 from std.ffi import c_int, c_long, external_call
-from std.os import getenv
+from std.os import getenv, makedirs, remove
 from std.os.path import exists
 
 from mochi.json import JsonValue, parse_json, serialize_json
@@ -379,6 +379,57 @@ def oauth_tokens_to_json(tokens: OAuthTokens) raises -> String:
 
 def oauth_tokens_from_json(text: String) raises -> OAuthTokens:
     return OAuthTokens.from_json(parse_json(text))
+
+
+def provider_credentials_path(paths: StoragePaths, provider: String) -> String:
+    return paths.state + "/auth/" + provider + ".json"
+
+
+def save_provider_credentials(
+    paths: StoragePaths, provider: String, record: AuthRecord
+) raises:
+    var directory = paths.state + "/auth"
+    makedirs(directory, exist_ok=True)
+    _atomic_write_text(
+        provider_credentials_path(paths, provider), auth_record_to_json(record)
+    )
+
+
+def load_provider_credentials(
+    paths: StoragePaths, provider: String
+) raises -> Optional[AuthRecord]:
+    var path = provider_credentials_path(paths, provider)
+    if not exists(path):
+        return None
+    return Optional(auth_record_from_json(open(path, "r").read()))
+
+
+def delete_provider_credentials(paths: StoragePaths, provider: String):
+    try:
+        remove(provider_credentials_path(paths, provider))
+    except:
+        pass
+
+
+def _atomic_write_text(path: String, content: String) raises:
+    var temporary = path + ".tmp"
+    try:
+        with open(temporary, "w") as file:
+            file.write(content)
+        var temporary_c = temporary.as_c_string_slice()
+        var destination_path = String(path)
+        var destination = destination_path.as_c_string_slice()
+        var status = external_call["rename", c_int](
+            temporary_c.unsafe_ptr(), destination.unsafe_ptr()
+        )
+        if status != 0:
+            raise Error("credential atomic rename failed")
+    except error:
+        try:
+            remove(temporary)
+        except:
+            pass
+        raise error
 
 
 def auth_record_to_json(record: AuthRecord) raises -> String:
