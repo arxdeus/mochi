@@ -1,6 +1,6 @@
 """Pure Mojo Model Context Protocol client primitives and transports."""
 
-from std.ffi import CStringSlice, c_char, c_int, c_pid_t, external_call
+from std.ffi import CStringSlice, c_char, c_int, c_pid_t, c_size_t, external_call
 from std.os import Process
 from std.sys._libc import close, dup2, execvp, exit, pipe
 
@@ -41,6 +41,30 @@ struct McpAuthServerMetadata(Copyable, Movable):
     var token_endpoint: String
     var registration_endpoint: String
     var code_challenge_methods_supported: List[String]
+
+
+@fieldwise_init
+struct McpPkceChallenge(Copyable, Movable):
+    var verifier: String
+    var challenge: String
+
+
+def generate_mcp_pkce() raises -> McpPkceChallenge:
+    var random = List[UInt8](length=32, fill=0)
+    var status = external_call[
+        "mochi_secure_random", c_int, Pointer[mut=True, UInt8, MutAnyOrigin], c_size_t
+    ](
+        rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](random.unsafe_ptr()),
+        c_size_t(len(random)),
+    )
+    if status != 0:
+        raise Error("MCP OAuth CSPRNG unavailable")
+    var verifier = _mcp_base64url(random)
+    return McpPkceChallenge(verifier, mcp_pkce_challenge(verifier))
+
+
+def mcp_pkce_challenge(verifier: String) -> String:
+    return _mcp_base64url(_mcp_sha256(verifier))
 
 
 @fieldwise_init
@@ -112,6 +136,110 @@ def _mcp_json_string_array(values: List[String]) raises -> JsonValue:
     for value in values:
         result.append(JsonValue.string(value))
     return result^
+
+
+def _mcp_base64url(bytes: List[UInt8]) -> String:
+    comptime alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    var output = String("")
+    var index = 0
+    while index < len(bytes):
+        var first = Int(bytes[index])
+        var second = Int(bytes[index + 1]) if index + 1 < len(bytes) else 0
+        var third = Int(bytes[index + 2]) if index + 2 < len(bytes) else 0
+        output += String(alphabet[byte=(first >> 2) & 63])
+        output += String(alphabet[byte=((first & 3) << 4) | (second >> 4)])
+        if index + 1 < len(bytes):
+            output += String(alphabet[byte=((second & 15) << 2) | (third >> 6)])
+        if index + 2 < len(bytes):
+            output += String(alphabet[byte=third & 63])
+        index += 3
+    return output^
+
+
+def _mcp_sha256(value: String) -> List[UInt8]:
+    var bytes = List[UInt8]()
+    for byte in value.as_bytes():
+        bytes.append(byte)
+    var bit_length = UInt64(len(bytes)) * 8
+    bytes.append(0x80)
+    while len(bytes) % 64 != 56:
+        bytes.append(0)
+    for reverse in range(8):
+        bytes.append(UInt8((bit_length >> UInt64((7 - reverse) * 8)) & 255))
+    var hash: List[UInt64] = [
+        0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+        0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19,
+    ]
+    var constants: List[UInt64] = [
+        0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5, 0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
+        0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3, 0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174,
+        0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC, 0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
+        0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7, 0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967,
+        0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13, 0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85,
+        0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3, 0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
+        0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5, 0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3,
+        0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208, 0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2,
+    ]
+    var offset = 0
+    while offset < len(bytes):
+        var words = List[UInt64](length=64, fill=0)
+        for index in range(16):
+            var base = offset + index * 4
+            words[index] = (
+                (UInt64(bytes[base]) << 24) | (UInt64(bytes[base + 1]) << 16)
+                | (UInt64(bytes[base + 2]) << 8) | UInt64(bytes[base + 3])
+            )
+        for index in range(16, 64):
+            var s0 = _mcp_rotr(words[index - 15], 7) ^ _mcp_rotr(words[index - 15], 18) ^ (words[index - 15] >> 3)
+            var s1 = _mcp_rotr(words[index - 2], 17) ^ _mcp_rotr(words[index - 2], 19) ^ (words[index - 2] >> 10)
+            words[index] = _mcp_u32(words[index - 16] + s0 + words[index - 7] + s1)
+        var a = hash[0]
+        var b = hash[1]
+        var c = hash[2]
+        var d = hash[3]
+        var e = hash[4]
+        var f = hash[5]
+        var g = hash[6]
+        var h = hash[7]
+        for index in range(64):
+            var sum1 = _mcp_rotr(e, 6) ^ _mcp_rotr(e, 11) ^ _mcp_rotr(e, 25)
+            var choice = (e & f) ^ ((_mcp_u32(~e)) & g)
+            var temp1 = _mcp_u32(h + sum1 + choice + constants[index] + words[index])
+            var sum0 = _mcp_rotr(a, 2) ^ _mcp_rotr(a, 13) ^ _mcp_rotr(a, 22)
+            var majority = (a & b) ^ (a & c) ^ (b & c)
+            var temp2 = _mcp_u32(sum0 + majority)
+            h = g
+            g = f
+            f = e
+            e = _mcp_u32(d + temp1)
+            d = c
+            c = b
+            b = a
+            a = _mcp_u32(temp1 + temp2)
+        hash[0] = _mcp_u32(hash[0] + a)
+        hash[1] = _mcp_u32(hash[1] + b)
+        hash[2] = _mcp_u32(hash[2] + c)
+        hash[3] = _mcp_u32(hash[3] + d)
+        hash[4] = _mcp_u32(hash[4] + e)
+        hash[5] = _mcp_u32(hash[5] + f)
+        hash[6] = _mcp_u32(hash[6] + g)
+        hash[7] = _mcp_u32(hash[7] + h)
+        offset += 64
+    var result = List[UInt8]()
+    for word in hash:
+        result.append(UInt8((word >> 24) & 255))
+        result.append(UInt8((word >> 16) & 255))
+        result.append(UInt8((word >> 8) & 255))
+        result.append(UInt8(word & 255))
+    return result^
+
+
+def _mcp_u32(value: UInt64) -> UInt64:
+    return value & 0xFFFFFFFF
+
+
+def _mcp_rotr(value: UInt64, count: Int) -> UInt64:
+    return _mcp_u32((value >> UInt64(count)) | (value << UInt64(32 - count)))
 
 
 def parse_mcp_url(var url: String) -> McpUrlParts:

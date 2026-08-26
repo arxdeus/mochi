@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <arpa/inet.h>
@@ -17,6 +18,34 @@
 #include <time.h>
 #include <unistd.h>
 #endif
+
+int mochi_secure_random(void *buffer, size_t length) {
+#if defined(__unix__) || defined(__APPLE__)
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) {
+        return errno == 0 ? -1 : errno;
+    }
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t count = read(fd, (unsigned char *)buffer + offset, length - offset);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            int error = errno == 0 ? -1 : errno;
+            close(fd);
+            return error;
+        }
+        offset += (size_t)count;
+    }
+    close(fd);
+    return 0;
+#else
+    (void)buffer;
+    (void)length;
+    return -1;
+#endif
+}
 
 typedef struct mochi_cancellation_state {
     atomic_uint_least64_t references;

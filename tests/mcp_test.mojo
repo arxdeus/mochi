@@ -17,9 +17,11 @@ from mochi.mcp import (
     StreamableHttpTransport,
     discover_mcp_auth_server_with,
     discover_mcp_resource_metadata_with,
+    generate_mcp_pkce,
     mcp_auth_server_metadata_urls,
     mcp_endpoint_url_is_secure,
     mcp_oauth_code_exchange_request,
+    mcp_pkce_challenge,
     mcp_resource_matches_server,
     mcp_resource_metadata_urls,
     mcp_server_origin,
@@ -258,6 +260,19 @@ def test_mcp_oauth_injected_discovery() raises:
     insecure.enqueue(HttpResponse(404, "missing"))
     with assert_raises():
         _ = discover_mcp_auth_server_with(insecure, "https://auth.example/tenant")
+
+
+def test_mcp_oauth_pkce() raises:
+    assert_equal(
+        mcp_pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+    )
+    var first = generate_mcp_pkce()
+    var second = generate_mcp_pkce()
+    assert_equal(first.verifier.byte_length(), 43)
+    assert_equal(first.challenge.byte_length(), 43)
+    assert_true(first.verifier != second.verifier)
+    assert_true(first.challenge != second.challenge)
 
 
 def test_mcp_oauth_registration_and_code_exchange() raises:
