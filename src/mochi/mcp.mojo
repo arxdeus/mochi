@@ -4,7 +4,7 @@ from std.ffi import CStringSlice, c_char, c_int, c_pid_t, external_call
 from std.os import Process
 from std.sys._libc import close, dup2, execvp, exit, pipe
 
-from mochi.http import FlokiTransport, HttpRequest, HttpTransport
+from mochi.http import FlokiTransport, HttpRequest, HttpResponse, HttpTransport
 from mochi.json import JsonValue, parse_json, serialize_json
 from mochi.storage import OAuthTokens
 
@@ -26,6 +26,21 @@ struct McpUrlParts(Copyable, Movable):
 struct WwwAuthenticateInfo(Copyable, Movable):
     var resource_metadata: String
     var scope: String
+
+
+@fieldwise_init
+struct McpResourceMetadata(Copyable, Movable):
+    var authorization_servers: List[String]
+    var resource: String
+    var scopes_supported: List[String]
+
+
+@fieldwise_init
+struct McpAuthServerMetadata(Copyable, Movable):
+    var authorization_endpoint: String
+    var token_endpoint: String
+    var registration_endpoint: String
+    var code_challenge_methods_supported: List[String]
 
 
 def parse_mcp_url(var url: String) -> McpUrlParts:
@@ -104,6 +119,114 @@ def mcp_resource_matches_server(resource: String, server_url: String) -> Bool:
         normalized_resource == _normalize_mcp_resource(server_url)
         or normalized_resource == _normalize_mcp_resource(mcp_server_origin(server_url))
     )
+
+
+def parse_mcp_resource_metadata(body: String, server_url: String) raises -> McpResourceMetadata:
+    var value = parse_json(body)
+    if value.kind != JsonValue.OBJECT or not value.contains("resource"):
+        raise Error("MCP OAuth resource metadata requires resource")
+    var resource = value.get("resource").string_value
+    if not mcp_resource_matches_server(resource, server_url):
+        raise Error("MCP OAuth resource metadata does not match server URL")
+    return McpResourceMetadata(
+        _mcp_string_array(value, "authorization_servers"),
+        resource,
+        _mcp_string_array(value, "scopes_supported"),
+    )
+
+
+def parse_mcp_auth_server_metadata(body: String) raises -> McpAuthServerMetadata:
+    var value = parse_json(body)
+    if (
+        value.kind != JsonValue.OBJECT
+        or not value.contains("authorization_endpoint")
+        or not value.contains("token_endpoint")
+    ):
+        raise Error("MCP OAuth authorization server metadata is incomplete")
+    var authorization_endpoint = value.get("authorization_endpoint").string_value
+    var token_endpoint = value.get("token_endpoint").string_value
+    var registration_endpoint = String("")
+    if value.contains("registration_endpoint"):
+        registration_endpoint = value.get("registration_endpoint").string_value
+    if (
+        not mcp_endpoint_url_is_secure(authorization_endpoint)
+        or not mcp_endpoint_url_is_secure(token_endpoint)
+        or (
+            registration_endpoint != ""
+            and not mcp_endpoint_url_is_secure(registration_endpoint)
+        )
+    ):
+        raise Error("MCP OAuth endpoint URL must use HTTPS")
+    return McpAuthServerMetadata(
+        authorization_endpoint,
+        token_endpoint,
+        registration_endpoint,
+        _mcp_string_array(value, "code_challenge_methods_supported"),
+    )
+
+
+def discover_mcp_resource_metadata_with[T: HttpTransport](
+    mut transport: T,
+    server_url: String,
+    var www_auth: Optional[WwwAuthenticateInfo] = None,
+) raises -> McpResourceMetadata:
+    if www_auth:
+        var explicit_url = www_auth.value().resource_metadata
+        if explicit_url != "" and mcp_server_origin(explicit_url) == mcp_server_origin(server_url):
+            try:
+                return _fetch_mcp_resource_metadata(transport, explicit_url, server_url)
+            except:
+                pass
+    var candidates = mcp_resource_metadata_urls(server_url)
+    for candidate in candidates:
+        try:
+            return _fetch_mcp_resource_metadata(transport, candidate, server_url)
+        except:
+            pass
+    raise Error("MCP OAuth resource metadata discovery failed")
+
+
+def discover_mcp_auth_server_with[T: HttpTransport](
+    mut transport: T, issuer_url: String
+) raises -> McpAuthServerMetadata:
+    var candidates = mcp_auth_server_metadata_urls(issuer_url)
+    for candidate in candidates:
+        try:
+            var response = _fetch_mcp_json(transport, candidate)
+            return parse_mcp_auth_server_metadata(response.body)
+        except:
+            pass
+    raise Error("MCP OAuth authorization server discovery failed")
+
+
+def _fetch_mcp_resource_metadata[T: HttpTransport](
+    mut transport: T, url: String, server_url: String
+) raises -> McpResourceMetadata:
+    var response = _fetch_mcp_json(transport, url)
+    return parse_mcp_resource_metadata(response.body, server_url)
+
+
+def _fetch_mcp_json[T: HttpTransport](mut transport: T, url: String) raises -> HttpResponse:
+    var request = HttpRequest("GET", url)
+    request.add_header("Accept", "application/json")
+    var response = transport.perform(request)
+    if response.status < 200 or response.status >= 300:
+        raise Error("MCP OAuth metadata request failed with status " + String(response.status))
+    return response^
+
+
+def _mcp_string_array(value: JsonValue, key: String) raises -> List[String]:
+    var result = List[String]()
+    if not value.contains(key):
+        return result^
+    var raw = value.get(key)
+    if raw.kind != JsonValue.ARRAY:
+        raise Error("MCP OAuth metadata field must be an array: " + key)
+    for item in raw.array_value:
+        if item.kind != JsonValue.STRING:
+            raise Error("MCP OAuth metadata array must contain strings: " + key)
+        result.append(item.string_value)
+    return result^
 
 
 def _quoted_header_parameter(header: String, key: String) -> String:

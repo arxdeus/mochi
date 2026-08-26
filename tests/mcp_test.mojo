@@ -15,6 +15,8 @@ from mochi.mcp import (
     McpSession,
     StdioTransport,
     StreamableHttpTransport,
+    discover_mcp_auth_server_with,
+    discover_mcp_resource_metadata_with,
     mcp_auth_server_metadata_urls,
     mcp_endpoint_url_is_secure,
     mcp_resource_matches_server,
@@ -201,6 +203,59 @@ def test_mcp_oauth_discovery_primitives() raises:
     assert_false(
         mcp_resource_matches_server("https://example.com/MCP", "https://example.com/mcp")
     )
+
+
+def test_mcp_oauth_injected_discovery() raises:
+    var resource_transport = MockTransport()
+    resource_transport.enqueue(HttpResponse(404, "missing"))
+    resource_transport.enqueue(
+        HttpResponse(
+            200,
+            '{"resource":"https://mcp.example","authorization_servers":["https://auth.example/tenant"],"scopes_supported":["read"]}',
+        )
+    )
+    var resource = discover_mcp_resource_metadata_with(
+        resource_transport, "https://mcp.example/mcp"
+    )
+    assert_equal(resource.resource, "https://mcp.example")
+    assert_equal(resource.authorization_servers[0], "https://auth.example/tenant")
+    assert_equal(len(resource_transport.requests), 2)
+    assert_equal(
+        resource_transport.requests[0].url,
+        "https://mcp.example/.well-known/oauth-protected-resource/mcp",
+    )
+    assert_equal(
+        resource_transport.requests[1].url,
+        "https://mcp.example/.well-known/oauth-protected-resource",
+    )
+
+    var auth_transport = MockTransport()
+    auth_transport.enqueue(HttpResponse(404, "missing"))
+    auth_transport.enqueue(
+        HttpResponse(
+            200,
+            '{"authorization_endpoint":"https://auth.example/authorize","token_endpoint":"https://auth.example/token","registration_endpoint":"https://auth.example/register","code_challenge_methods_supported":["S256"]}',
+        )
+    )
+    var metadata = discover_mcp_auth_server_with(
+        auth_transport, "https://auth.example/tenant"
+    )
+    assert_equal(metadata.token_endpoint, "https://auth.example/token")
+    assert_equal(metadata.code_challenge_methods_supported[0], "S256")
+    assert_equal(len(auth_transport.requests), 2)
+
+    var insecure = MockTransport()
+    insecure.enqueue(
+        HttpResponse(
+            200,
+            '{"authorization_endpoint":"http://auth.example/authorize","token_endpoint":"http://auth.example/token"}',
+        )
+    )
+    insecure.enqueue(HttpResponse(404, "missing"))
+    insecure.enqueue(HttpResponse(404, "missing"))
+    insecure.enqueue(HttpResponse(404, "missing"))
+    with assert_raises():
+        _ = discover_mcp_auth_server_with(insecure, "https://auth.example/tenant")
 
 
 def test_mcp_oauth_refresh_contract() raises:
