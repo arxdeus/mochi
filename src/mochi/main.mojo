@@ -43,7 +43,12 @@ from mochi.provider import (
 )
 from mochi.runtime import Runtime, RuntimeResult
 from mochi.session import Session, SessionStore
-from mochi.storage import MakiId, SessionRef, StoragePaths
+from mochi.storage import (
+    MakiId,
+    SessionRef,
+    StoragePaths,
+    load_provider_credentials,
+)
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken
 from mochi.ui import UiEvent, UiReducer, UiState
@@ -221,6 +226,15 @@ def _production_provider(config: CliConfig) raises -> ProductionProvider:
         )
     if config.provider == "copilot":
         var token = config.api_key()
+        var host = String("github.com")
+        if token.strip() == "":
+            var saved = load_provider_credentials(
+                StoragePaths.resolve(), "copilot"
+            )
+            if saved:
+                token = saved.value().api_key
+                if saved.value().host:
+                    host = saved.value().host.value()
         if token.strip() == "":
             raise Error("not authenticated, set GH_COPILOT_TOKEN")
         var endpoint = config.provider_url
@@ -228,7 +242,7 @@ def _production_provider(config: CliConfig) raises -> ProductionProvider:
             try:
                 var transport = FlokiTransport()
                 endpoint = copilot_discovered_endpoint(
-                    transport.perform(copilot_discovery_request(token))
+                    transport.perform(copilot_discovery_request(token, host))
                 )
             except:
                 endpoint = "https://api.githubcopilot.com"
