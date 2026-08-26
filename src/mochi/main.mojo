@@ -755,8 +755,10 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
             return Optional(ui.draft.copy())
         if byte == 127 or byte == 8:
             _ = UiReducer.reduce(ui, UiEvent.delete_backward())
-        elif byte == 9 and ui.draft.startswith("/") and not " " in ui.draft:
-            _ = UiReducer.reduce(ui, UiEvent.edit(command_completion(ui.draft)))
+        elif byte == 9 and ui.draft.startswith("/"):
+            _ = UiReducer.reduce(
+                ui, UiEvent.edit(command_completion(ui.draft, ui.command_selected))
+            )
         elif byte == 27:
             var bracket = external_call[
                 "mochi_terminal_read_byte", c_int, c_int
@@ -766,9 +768,15 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                     "mochi_terminal_read_byte", c_int, c_int
                 ](20)
                 if key == 65:
-                    _ = UiReducer.reduce(ui, UiEvent.history_up())
+                    if ui.draft.startswith("/") and len(command_matches(ui.draft)) > 0:
+                        _ = UiReducer.reduce(ui, UiEvent.command_previous())
+                    else:
+                        _ = UiReducer.reduce(ui, UiEvent.history_up())
                 elif key == 66:
-                    _ = UiReducer.reduce(ui, UiEvent.history_down())
+                    if ui.draft.startswith("/") and len(command_matches(ui.draft)) > 0:
+                        _ = UiReducer.reduce(ui, UiEvent.command_next())
+                    else:
+                        _ = UiReducer.reduce(ui, UiEvent.history_down())
                 elif key == 67:
                     _ = UiReducer.reduce(ui, UiEvent.move_cursor(1))
                 elif key == 68:
@@ -842,7 +850,13 @@ def _render_editor(ui: UiState):
     if ui.draft.startswith("/") and not " " in ui.draft:
         var matches = command_matches(ui.draft)
         if len(matches) > 0:
-            print("\x1b[s\x1b[90m  " + matches[0] + "\x1b[0m\x1b[u", end="")
+            var selected = min(ui.command_selected, len(matches) - 1)
+            print(
+                "\x1b[s\x1b[90m  " + matches[selected] + "  "
+                + String(selected + 1) + "/" + String(len(matches))
+                + "\x1b[0m\x1b[u",
+                end="",
+            )
 
 
 def _read_line() raises -> Optional[String]:

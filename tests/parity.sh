@@ -81,6 +81,10 @@ case "${1:-all}" in
             components::command::tests::sync_respects_nargs -- --nocapture >/dev/null
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             components::command::tests::sync_filters_on_first_word_only -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::navigation_wraps -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::sync_clamps_selected -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
     ui.input.history)

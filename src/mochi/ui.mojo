@@ -31,6 +31,8 @@ struct UiEvent(Copyable, Movable):
     comptime SEARCH_CLOSE = 20
     comptime SEARCH_SELECT = 21
     comptime SEARCH_BACKSPACE = 22
+    comptime COMMAND_NEXT = 23
+    comptime COMMAND_PREVIOUS = 24
 
     var tag: Int
     var text: String
@@ -168,6 +170,14 @@ struct UiEvent(Copyable, Movable):
     def search_backspace() -> Self:
         return Self(Self.SEARCH_BACKSPACE)
 
+    @staticmethod
+    def command_next() -> Self:
+        return Self(Self.COMMAND_NEXT)
+
+    @staticmethod
+    def command_previous() -> Self:
+        return Self(Self.COMMAND_PREVIOUS)
+
 
 struct UiAction(Copyable, Movable):
     comptime NONE = 0
@@ -231,6 +241,7 @@ struct UiState(Copyable, Movable):
     var history: List[String]
     var history_index: Int
     var history_draft: String
+    var command_selected: Int
     var search_open: Bool
     var search_query: String
     var search_matches: List[Int]
@@ -251,6 +262,7 @@ struct UiState(Copyable, Movable):
         self.history = List[String]()
         self.history_index = -1
         self.history_draft = ""
+        self.command_selected = 0
         self.search_open = False
         self.search_query = ""
         self.search_matches = List[Int]()
@@ -401,11 +413,14 @@ def search_result_lines(state: UiState) -> List[String]:
     return lines^
 
 
-def command_completion(query: String) -> String:
-    var matches = command_matches(query)
+def command_completion(query: String, selected: Int = 0) -> String:
+    var matches = command_matches(query.copy())
     if len(matches) == 0:
         return query
-    return "/" + matches[0] + " "
+    var index = min(max(0, selected), len(matches) - 1)
+    if " " in query or "\t" in query:
+        return query
+    return "/" + matches[index] + " "
 
 
 def command_matches(query: String) -> List[String]:
@@ -462,6 +477,7 @@ struct UiReducer:
         if event.tag == UiEvent.EDIT:
             state.draft = event.text
             state.cursor = event.text.count_codepoints()
+            state.command_selected = 0
             return UiAction.none()
         if event.tag == UiEvent.SUBMIT:
             return Self._submit(state)
@@ -536,6 +552,10 @@ struct UiReducer:
                         state.search_query.count_codepoints() - 1,
                     ),
                 )
+        elif event.tag == UiEvent.COMMAND_NEXT:
+            Self._command_move(state, 1)
+        elif event.tag == UiEvent.COMMAND_PREVIOUS:
+            Self._command_move(state, -1)
         return UiAction.none()
 
     @staticmethod
@@ -647,6 +667,16 @@ struct UiReducer:
             state.draft = state.history_draft
             state.history_draft = ""
         state.cursor = state.draft.count_codepoints()
+
+    @staticmethod
+    def _command_move(mut state: UiState, direction: Int):
+        var matches = command_matches(state.draft)
+        if len(matches) == 0:
+            state.command_selected = 0
+            return
+        state.command_selected = (
+            state.command_selected + direction + len(matches)
+        ) % len(matches)
 
     @staticmethod
     def _search_open(mut state: UiState):
