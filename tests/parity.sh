@@ -77,6 +77,10 @@ case "${1:-all}" in
             components::command::tests::confirm_parses_args::btw_multi_word -- --exact >/dev/null
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             app::tests::slash_noncommand_sends_as_prompt -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::sync_respects_nargs -- --nocapture >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::command::tests::sync_filters_on_first_word_only -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
     ui.input.history)

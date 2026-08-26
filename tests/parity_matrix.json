@@ -474,7 +474,7 @@
           "status": "implemented",
           "upstream_command": "sh tests/parity.sh ui.command.catalog",
           "mojo_command": "sh tests/parity.sh ui.command.catalog",
-          "normalization": "Upstream catalog/filter/argument/noncommand fixtures and the Mojo UI suite must pass."
+          "normalization": "Upstream catalog/filter/argument-count/noncommand fixtures and the Mojo UI suite must pass."
         }
       }
     },

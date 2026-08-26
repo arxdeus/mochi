@@ -11,6 +11,7 @@ from mochi.ui import (
     command_descriptions,
     command_help_lines,
     command_matches,
+    command_max_args,
     is_builtin_command,
     command_names,
     transcript_messages,
@@ -82,11 +83,21 @@ def test_command_catalog_and_fuzzy_matches() raises:
     assert_false(is_builtin_command("memory"))
     var prefix = command_matches("/co")
     assert_equal(prefix[0], "compact")
-    var fuzzy = command_matches("pct")
+    var fuzzy = command_matches("/pct")
     assert_equal(fuzzy[0], "compact")
     assert_equal(len(command_matches("not-a-command")), 0)
     assert_equal(command_completion("/co"), "/compact ")
     assert_equal(command_completion("/not-a-command"), "/not-a-command")
+    var maximums = command_max_args()
+    assert_equal(maximums[0], 0)
+    assert_equal(maximums[10], 1)
+    assert_true(maximums[11] > 1000)
+    assert_equal(len(command_matches("/compact ")), 0)
+    assert_equal(command_matches("/cd ")[0], "cd")
+    assert_equal(command_matches("/cd ~/foo")[0], "cd")
+    assert_equal(len(command_matches("/cd ~/foo ")), 0)
+    assert_equal(command_matches("/btw hello world")[0], "btw")
+    assert_equal(command_matches("/cd  ~/foo")[0], "cd")
     var descriptions = command_descriptions()
     assert_equal(len(descriptions), len(names))
     assert_equal(descriptions[0], "Browse and search tasks")

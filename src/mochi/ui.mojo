@@ -304,6 +304,10 @@ comptime BUILTIN_COMMANDS = [
     "exit", "reload",
 ]
 
+comptime BUILTIN_COMMAND_MAX_ARGS = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2147483647, 0, 1, 0, 0, 0, 0,
+]
+
 comptime BUILTIN_COMMAND_DESCRIPTIONS = [
     "Browse and search tasks",
     "Summarize and compact conversation history",
@@ -340,6 +344,13 @@ def is_builtin_command(name: String) -> Bool:
         if normalized == plain or normalized == "/" + plain:
             return True
     return False
+
+
+def command_max_args() -> List[Int]:
+    var result = List[Int]()
+    for maximum in materialize[BUILTIN_COMMAND_MAX_ARGS]():
+        result.append(Int(maximum))
+    return result^
 
 
 def command_descriptions() -> List[String]:
@@ -398,11 +409,28 @@ def command_completion(query: String) -> String:
 
 
 def command_matches(query: String) -> List[String]:
-    var needle = String(query.removeprefix("/").strip()).lower()
+    if not query.startswith("/") and query != "":
+        return List[String]()
+    var stripped = String(query.removeprefix("/"))
+    var parts = List[String]()
+    for part in stripped.split():
+        parts.append(String(part))
+    var command_word = stripped.copy()
+    if len(parts) > 0:
+        command_word = parts[0]
+    var trailing_space = stripped.endswith(" ") or stripped.endswith("\t")
+    var argument_count = max(0, len(parts) - 1)
+    if trailing_space:
+        argument_count = len(parts)
+    var needle = _ascii_lower(command_word)
     var exact = List[String]()
     var partial = List[String]()
-    for name in materialize[BUILTIN_COMMANDS]():
-        var candidate = String(name)
+    var maximums = command_max_args()
+    var names = command_names()
+    for i in range(len(names)):
+        if argument_count > maximums[i]:
+            continue
+        var candidate = names[i]
         if needle == "" or candidate.startswith(needle):
             exact.append(candidate^)
         elif _subsequence(needle, candidate):
