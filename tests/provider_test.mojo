@@ -43,6 +43,9 @@ from mochi.provider import (
     copilot_discovered_endpoint,
     copilot_discovery_request,
     copilot_graphql_url,
+    copilot_model_endpoint,
+    copilot_models_request,
+    copilot_parse_models,
     copilot_provider_spec,
     find_model_info,
     builtin_provider_registry,
@@ -137,6 +140,31 @@ def test_copilot_auth_discovery_and_headers() raises:
     assert_true("X-Initiator" in names)
     assert_true("X-Interaction-Type" in names)
     assert_true("OpenAI-Intent" in names)
+
+
+def test_copilot_model_discovery_and_routing() raises:
+    var request = copilot_models_request("https://copilot.example.test/", "secret")
+    assert_equal(request.method, "GET")
+    assert_equal(request.url, "https://copilot.example.test/models")
+    var models = copilot_parse_models(
+        '{"data":['
+        + '{"id":"disabled","model_picker_enabled":false,"capabilities":{"type":"chat"}},'
+        + '{"id":"other","model_picker_enabled":true,"capabilities":{"type":"embeddings"}},'
+        + '{"id":"claude-sonnet","model_picker_enabled":true,"model_picker_category":"powerful","supported_endpoints":["/chat/completions","/responses","/v1/messages"],"capabilities":{"type":"chat","limits":{"max_context_window_tokens":200000,"max_output_tokens":64000},"supports":{"vision":true,"adaptive_thinking":true}}},'
+        + '{"id":"gpt","model_picker_enabled":true,"supported_endpoints":["/responses"],"capabilities":{"type":"chat","supports":{"reasoning_effort":["low","high"]}}}'
+        + ']}'
+    )
+    assert_equal(len(models), 2)
+    assert_equal(models[0].id, "claude-sonnet")
+    assert_equal(models[0].context_window.value(), 200000)
+    assert_equal(models[0].max_output_tokens.value(), 64000)
+    assert_true(models[0].supports_thinking.value())
+    assert_true(models[0].supports_vision.value())
+    assert_equal(models[0].tier.value().tag, ModelTier.STRONG)
+    assert_equal(models[1].id, "gpt")
+    var messages = parse_json('{"supported_endpoints":["/responses","/v1/messages"]}')
+    assert_equal(copilot_model_endpoint(messages), "messages")
+    assert_equal(copilot_model_endpoint(parse_json('{}')), "chat")
 
 
 def test_sse_incremental_multiline_and_finish() raises:

@@ -114,6 +114,96 @@ def copilot_discovery_request(token: String, host: String = "github.com") raises
     return request^
 
 
+def copilot_models_request(base_url: String, token: String) -> HttpRequest:
+    var request = HttpRequest(
+        "GET", String(base_url.removesuffix("/")) + "/models"
+    )
+    request.add_header("Authorization", "Bearer " + token)
+    request.add_header("Content-Type", "application/json")
+    request.add_header("Editor-Version", COPILOT_EDITOR_VERSION)
+    request.add_header("X-GitHub-Api-Version", COPILOT_API_VERSION)
+    request.add_header("User-Agent", COPILOT_EDITOR_VERSION)
+    return request^
+
+
+def copilot_model_endpoint(model: JsonValue) -> String:
+    if model.contains("supported_endpoints"):
+        try:
+            var endpoints = model.get("supported_endpoints")
+            if endpoints.kind == JsonValue.ARRAY:
+                for endpoint in endpoints.array_value:
+                    if endpoint.kind == JsonValue.STRING and endpoint.string_value == "/v1/messages":
+                        return "messages"
+                for endpoint in endpoints.array_value:
+                    if endpoint.kind == JsonValue.STRING and endpoint.string_value == "/responses":
+                        return "responses"
+        except:
+            pass
+    return "chat"
+
+
+def copilot_model_enabled(model: JsonValue) -> Bool:
+    if model.kind != JsonValue.OBJECT or _string_or(model, "id", "") == "":
+        return False
+    if not model.contains("model_picker_enabled"):
+        return False
+    try:
+        if not model.get("model_picker_enabled").bool_value:
+            return False
+        if _string_or(model.get("capabilities"), "type", "") != "chat":
+            return False
+        if model.contains("policy") and not model.get("policy").is_null():
+            return _string_or(model.get("policy"), "state", "") == "enabled"
+        return True
+    except:
+        return False
+
+
+def copilot_parse_models(body: String) raises -> List[ModelInfo]:
+    var value = parse_json(body)
+    var output = List[ModelInfo]()
+    if not value.contains("data") or value.get("data").kind != JsonValue.ARRAY:
+        return output^
+    for model in value.get("data").array_value:
+        if not copilot_model_enabled(model):
+            continue
+        var id = _string_or(model, "id", "")
+        var context: Optional[Int] = None
+        var maximum: Optional[Int] = None
+        var thinking = copilot_model_endpoint(model) != "chat"
+        var vision = False
+        try:
+            var capabilities = model.get("capabilities")
+            if capabilities.contains("limits"):
+                var limits = capabilities.get("limits")
+                if limits.contains("max_context_window_tokens"):
+                    context = Optional(limits.get("max_context_window_tokens").int_value)
+                if limits.contains("max_output_tokens"):
+                    maximum = Optional(limits.get("max_output_tokens").int_value)
+            if capabilities.contains("supports"):
+                var supports = capabilities.get("supports")
+                if supports.contains("vision"):
+                    vision = supports.get("vision").bool_value
+                thinking = thinking and (
+                    supports.contains("adaptive_thinking")
+                    or supports.contains("max_thinking_budget")
+                    or supports.contains("min_thinking_budget")
+                    or (supports.contains("reasoning_effort") and len(supports.get("reasoning_effort").array_value) > 0)
+                )
+        except:
+            pass
+        var tier: Optional[ModelTier] = None
+        var category = _string_or(model, "model_picker_category", "")
+        if category == "lightweight":
+            tier = Optional(ModelTier.weak())
+        elif category == "versatile":
+            tier = Optional(ModelTier.medium())
+        elif category == "powerful":
+            tier = Optional(ModelTier.strong())
+        output.append(ModelInfo(id^, context, maximum, None, Optional(thinking), Optional(vision), tier^))
+    return output^
+
+
 def copilot_discovered_endpoint(response: HttpResponse) -> String:
     if response.status < 200 or response.status >= 300:
         return DEFAULT_COPILOT_API_ENDPOINT
