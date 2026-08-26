@@ -370,6 +370,7 @@ struct StreamableHttpTransport(Copyable, Movable):
     var url: String
     var session_id: String
     var timeout_ms: Int
+    var bearer_token: String
     var fixture_only: Bool
     var fixture_status: Int
     var fixture_content_type: String
@@ -380,6 +381,7 @@ struct StreamableHttpTransport(Copyable, Movable):
         self.url = url
         self.session_id = ""
         self.timeout_ms = timeout_ms
+        self.bearer_token = ""
         self.fixture_only = False
         self.fixture_status = 0
         self.fixture_content_type = "application/json"
@@ -397,6 +399,12 @@ struct StreamableHttpTransport(Copyable, Movable):
 
     def session_header(self) -> String:
         return self.session_id
+
+    def set_bearer_token(mut self, token: String):
+        self.bearer_token = token
+
+    def clear_bearer_token(mut self):
+        self.bearer_token = ""
 
     def fixture_response(
         mut self,
@@ -425,6 +433,8 @@ struct StreamableHttpTransport(Copyable, Movable):
         var request = HttpRequest(method, self.url)
         request.timeout_ms = self.timeout_ms
         request.add_header("Accept", self.accept_header())
+        if self.bearer_token != "":
+            request.add_header("Authorization", "Bearer " + self.bearer_token)
         if method == "POST":
             request.add_header("Content-Type", self.content_type())
             request.body = body

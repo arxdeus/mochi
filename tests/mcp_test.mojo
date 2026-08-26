@@ -209,6 +209,21 @@ def test_http_injected_transport_updates_session() raises:
     assert_equal(http.session_header(), "injected-session")
     assert_equal(len(transport.requests), 1)
 
+    http.set_bearer_token("secret")
+    var authenticated = MockTransport()
+    authenticated.enqueue(
+        HttpResponse(200, '{"jsonrpc":"2.0","id":10,"result":{}}')
+    )
+    _ = http.send_with(
+        authenticated, parse_json('{"jsonrpc":"2.0","id":10,"method":"ping"}')
+    )
+    var authorization = String("")
+    for header in authenticated.requests[0].headers:
+        if header.name == "Authorization":
+            authorization = header.value
+    assert_equal(authorization, "Bearer secret")
+    http.clear_bearer_token()
+
 
 def test_high_level_stdio_client() raises:
     var transport = StdioTransport()
