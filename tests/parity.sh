@@ -202,6 +202,20 @@ case "${1:-all}" in
             components::search_modal::tests::search_role_prefix_matches::you_prefix -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
+    cancellation.http.active)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            cancel::tests::race_interrupted_by_concurrent_cancel -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            cancel::tests::child_cancelled_by_parent -- --exact >/dev/null
+        run_mojo_test tests/http_test.mojo
+        ;;
+    cancellation.process.active)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-lua \
+            runtime::tests::shutdown_flag_aborts_callback_even_with_fresh_scope -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            cancel::tests::cancel_map_cancel_all -- --exact >/dev/null
+        run_mojo_test tests/plugin_test.mojo
+        ;;
     contracts.extension.v1)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-lua \
             loader::tests::begin_shutdown_rejects_later_loads_and_is_idempotent -- --exact >/dev/null
@@ -295,7 +309,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="agent.provider_error.result permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="agent.provider_error.result permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output cancellation.http.active cancellation.process.active contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

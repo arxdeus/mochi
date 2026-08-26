@@ -726,9 +726,12 @@
       "id": "cancellation.http.active",
       "area": "http",
       "owner": "mochi_http",
-      "status": "partial",
+      "status": "parity",
       "description": "Cancellation aborts an active production Floki/curl transfer against a native local HTTP fixture.",
-      "upstream_refs": [],
+      "upstream_refs": [
+        "maki-agent/src/cancel.rs",
+        "maki-providers/src/providers"
+      ],
       "mojo_refs": [
         "src/floki/session.mojo",
         "tests/http_test.mojo"
@@ -739,10 +742,10 @@
           "normalization": "Exact deterministic contract assertions."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+          "status": "parity",
+          "upstream_command": "pixi run parity cancellation.http.active",
+          "mojo_command": "pixi run parity cancellation.http.active",
+          "normalization": "Pinned upstream concurrent and hierarchical cancellation pass with Mojo interruption of an active production Floki/curl transfer."
         }
       }
     },
@@ -750,9 +753,12 @@
       "id": "cancellation.process.active",
       "area": "extensions",
       "owner": "mochi_extension",
-      "status": "partial",
+      "status": "parity",
       "description": "Cancellation terminates and reaps an active owned child process.",
-      "upstream_refs": [],
+      "upstream_refs": [
+        "maki-agent/src/cancel.rs",
+        "maki-lua/src/runtime.rs"
+      ],
       "mojo_refs": [
         "src/mochi/plugin.mojo",
         "tests/plugin_test.mojo"
@@ -763,10 +769,10 @@
           "normalization": "Exact deterministic contract assertions."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+          "status": "parity",
+          "upstream_command": "pixi run parity cancellation.process.active",
+          "mojo_command": "pixi run parity cancellation.process.active",
+          "normalization": "Pinned upstream runtime shutdown and cancel-all behavior pass with Mojo termination and reaping of an active owned executable child."
         }
       }
     },
