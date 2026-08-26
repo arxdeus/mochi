@@ -24,7 +24,7 @@ from mochi.permissions import (
 )
 from mochi.provider import (
     OpenAICompatibleProvider,
-    OpenAIProviderAdapter,
+    ProductionProvider,
     ProviderResult,
     find_model_info,
     ProviderSpec,
@@ -73,7 +73,7 @@ struct RuntimeResult(Copyable, Movable):
 
 
 struct Runtime:
-    var provider: OpenAIProviderAdapter
+    var provider: ProductionProvider
     var tools: ToolRegistry
     var permissions: PermissionManager
     var remote: RemoteToolRouter
@@ -107,7 +107,40 @@ struct Runtime:
         compact_keep: Int = 12,
     ):
         var info = find_model_info(model)
-        self.provider = OpenAIProviderAdapter(provider^, info)
+        self.provider = ProductionProvider(provider^, info)
+        self.tools = tools^
+        self.permissions = permissions^
+        self.remote = RemoteToolRouter()
+        self.definitions = List[ToolDefinition]()
+        self.messages = List[Message]()
+        self.model = model^
+        self.max_turns = max_turns
+        self.max_context_chars = max_context_chars
+        self.compact_keep = compact_keep
+        self.compactions = 0
+        self.retries = 0
+        self.system_prompt = ""
+        self.permission_answers = List[PermissionAnswer]()
+        self.mcp_stdio_names = List[String]()
+        self.mcp_stdio_clients = List[McpClient]()
+        self.mcp_stdio_transports = List[StdioTransport]()
+        self.mcp_http_names = List[String]()
+        self.mcp_http_clients = List[McpClient]()
+        self.mcp_http_transports = List[StreamableHttpTransport]()
+        self.plugin_names = List[String]()
+        self.plugin_clients = List[PluginClient]()
+
+    def __init__(
+        out self,
+        var provider: ProductionProvider,
+        var tools: ToolRegistry,
+        var permissions: PermissionManager,
+        var model: String,
+        max_turns: Int = 50,
+        max_context_chars: Int = 100000,
+        compact_keep: Int = 12,
+    ):
+        self.provider = provider^
         self.tools = tools^
         self.permissions = permissions^
         self.remote = RemoteToolRouter()
@@ -239,7 +272,7 @@ struct Runtime:
         var request_messages = self.messages.copy()
         if self.system_prompt != "":
             request_messages.insert(0, Message("system", self.system_prompt))
-        if self.provider.inner.spec.responses_api:
+        if self.provider.uses_responses_api():
             return build_responses_request_body(
                 self.model, request_messages, self.definitions
             )
@@ -279,14 +312,14 @@ struct Runtime:
     def _complete_with_retry(
         mut self, cancel: CancellationToken
     ) raises -> ProviderResult:
-        var retry = RetryState(self.provider.inner.max_retries())
+        var retry = RetryState(self.provider.max_retries)
         while True:
             cancel.check()
             try:
                 var request = ProviderRequest(
                     _runtime_model(
                         self.model,
-                        self.provider.inner.spec.name,
+                        self.provider.name,
                         self.provider.model_info,
                     ),
                     cancel.copy(),
@@ -299,11 +332,11 @@ struct Runtime:
                     self.provider.stream_message(request^, sink)
                 )
             except error:
-                var status = self.provider.inner.last_http_status()
+                var status = self.provider.last_http_status()
                 var auth_failure = status == 401 or status == 403
                 var retryable = status == 0 or RetryState.retryable_status(status)
                 if auth_failure:
-                    retryable = self.provider.inner.recover_auth()
+                    retryable = self.provider.recover_auth()
                 if not retryable or not retry.can_retry():
                     raise error
                 var delay = retry.next_delay_ms()

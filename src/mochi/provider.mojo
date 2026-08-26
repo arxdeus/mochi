@@ -18,6 +18,8 @@ from mochi.domain import (
     StreamResponse,
     TokenUsage,
 )
+from std.utils import Variant
+
 from mochi.http import FlokiTransport, HttpHeader, HttpRequest, HttpResponse, HttpTransport
 from mochi.json import JsonValue, parse_json, serialize_json
 from mochi.provider_contract import (
@@ -1718,6 +1720,7 @@ def _gemini_tools(tools: JsonValue) raises -> JsonValue:
     return output^
 
 
+
 struct OpenAIProviderAdapter(Provider, Movable):
     var inner: OpenAICompatibleProvider
     var model_info: ModelInfo
@@ -1768,6 +1771,122 @@ struct OpenAIProviderAdapter(Provider, Movable):
     def _fail(mut self, error: MochiError) raises -> StreamResponse:
         self.last_error = Optional(error.copy())
         raise Error(provider_error_text(error))
+
+
+comptime ProductionProviderVariant = Variant[
+    OpenAIProviderAdapter,
+    AnthropicProviderAdapterWithTransport[FlokiTransport],
+    GeminiProviderAdapterWithTransport[FlokiTransport],
+]
+
+
+struct ProductionProvider(Movable):
+    var adapter: ProductionProviderVariant
+    var kind: String
+    var name: String
+    var model_info: ModelInfo
+    var max_retries: Int
+
+    def __init__(
+        out self, var provider: OpenAICompatibleProvider, model: ModelInfo
+    ):
+        self.kind = "openai"
+        self.name = provider.spec.name
+        self.max_retries = provider.max_retries()
+        self.model_info = model.copy()
+        self.adapter = ProductionProviderVariant(
+            OpenAIProviderAdapter(provider^, model)
+        )
+
+    def __init__(
+        out self,
+        var spec: AnthropicProviderSpec,
+        var transport: FlokiTransport,
+        model: ModelInfo,
+    ):
+        self.kind = "anthropic"
+        self.name = "anthropic"
+        self.max_retries = spec.max_retries
+        self.model_info = model.copy()
+        self.adapter = ProductionProviderVariant(
+            AnthropicProviderAdapterWithTransport(spec^, transport^, model)
+        )
+
+    def __init__(
+        out self,
+        var spec: GeminiProviderSpec,
+        var transport: FlokiTransport,
+        model: ModelInfo,
+    ):
+        self.kind = "gemini"
+        self.name = "google"
+        self.max_retries = 3
+        self.model_info = model.copy()
+        self.adapter = ProductionProviderVariant(
+            GeminiProviderAdapterWithTransport(spec^, transport^, model)
+        )
+
+    def stream_message[S: ProviderEventSink](
+        mut self, request: ProviderRequest, mut sink: S
+    ) raises -> StreamResponse:
+        if self.adapter.isa[OpenAIProviderAdapter]():
+            return self.adapter[OpenAIProviderAdapter].stream_message(request, sink)
+        if self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+            return self.adapter[
+                AnthropicProviderAdapterWithTransport[FlokiTransport]
+            ].stream_message(request, sink)
+        return self.adapter[
+            GeminiProviderAdapterWithTransport[FlokiTransport]
+        ].stream_message(request, sink)
+
+    def last_http_status(self) -> Int:
+        if self.adapter.isa[OpenAIProviderAdapter]():
+            return self.adapter[OpenAIProviderAdapter].inner.last_http_status()
+        if self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+            var error = self.adapter[
+                AnthropicProviderAdapterWithTransport[FlokiTransport]
+            ].last_error.copy()
+            if error:
+                return error.value().status
+        if self.adapter.isa[GeminiProviderAdapterWithTransport[FlokiTransport]]():
+            var error = self.adapter[
+                GeminiProviderAdapterWithTransport[FlokiTransport]
+            ].last_error.copy()
+            if error:
+                return error.value().status
+        return 0
+
+    def recover_auth(mut self) raises -> Bool:
+        if self.adapter.isa[OpenAIProviderAdapter]():
+            return self.adapter[OpenAIProviderAdapter].inner.recover_auth()
+        return False
+
+    def uses_responses_api(self) -> Bool:
+        if self.adapter.isa[OpenAIProviderAdapter]():
+            return self.adapter[OpenAIProviderAdapter].inner.spec.responses_api
+        return False
+
+    def set_model_info(mut self, model: ModelInfo):
+        self.model_info = model.copy()
+        if self.adapter.isa[OpenAIProviderAdapter]():
+            self.adapter[OpenAIProviderAdapter].model_info = model.copy()
+        elif self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+            self.adapter[
+                AnthropicProviderAdapterWithTransport[FlokiTransport]
+            ].model_info = model.copy()
+        else:
+            self.adapter[
+                GeminiProviderAdapterWithTransport[FlokiTransport]
+            ].model_info = model.copy()
+
+    def enable_openai_oauth(
+        mut self, credentials: OpenAIOAuthCredentials
+    ) raises:
+        if not self.adapter.isa[OpenAIProviderAdapter]():
+            raise Error("OpenAI OAuth requires the openai provider")
+        self.adapter[OpenAIProviderAdapter].inner.spec.responses_api = True
+        self.adapter[OpenAIProviderAdapter].inner.spec.account_id = credentials.account_id
+        self.adapter[OpenAIProviderAdapter].inner.set_oauth(credentials.oauth_state())
 
 
 struct OpenAIProviderAdapterWithTransport[

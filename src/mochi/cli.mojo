@@ -12,7 +12,10 @@ from mochi.storage import SessionRef
 
 comptime VERSION = "0.1.0"
 comptime DEFAULT_MODEL = "gpt-4.1-mini"
+comptime DEFAULT_PROVIDER = "openai"
 comptime DEFAULT_PROVIDER_URL = "https://api.openai.com/v1"
+comptime DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
+comptime DEFAULT_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 
 @fieldwise_init
@@ -23,6 +26,7 @@ struct NamedEndpoint(Copyable, Movable):
 
 struct CliConfig(Copyable, Movable):
     var model: String
+    var provider: String
     var provider_url: String
     var provider_keys: List[String]
     var print_mode: Bool
@@ -42,6 +46,7 @@ struct CliConfig(Copyable, Movable):
 
     def __init__(out self):
         self.model = DEFAULT_MODEL
+        self.provider = DEFAULT_PROVIDER
         self.provider_url = DEFAULT_PROVIDER_URL
         self.provider_keys = List[String]()
         self.print_mode = False
@@ -59,13 +64,33 @@ struct CliConfig(Copyable, Movable):
         self.session_id = None
         self.acp = False
 
+    def normalize_provider_url(mut self):
+        if self.provider_url != DEFAULT_PROVIDER_URL:
+            return
+        if self.provider == "anthropic":
+            self.provider_url = DEFAULT_ANTHROPIC_URL
+        elif self.provider == "gemini":
+            self.provider_url = DEFAULT_GEMINI_URL
+
+    def api_key(self) -> String:
+        if len(self.provider_keys) > 0:
+            return self.provider_keys[0]
+        if self.provider == "anthropic":
+            return getenv("ANTHROPIC_API_KEY", "")
+        if self.provider == "gemini":
+            var key = getenv("GEMINI_API_KEY", "")
+            if key == "":
+                key = getenv("GOOGLE_API_KEY", "")
+            return key^
+        return getenv("OPENAI_API_KEY", "")
+
     def provider_spec(self) -> ProviderSpec:
         var spec = ProviderSpec("custom", self.provider_url)
         spec.responses_api = self.openai_oauth
         for key in self.provider_keys:
             spec.add_api_key(key)
         if len(spec.api_keys) == 0:
-            var key = getenv("OPENAI_API_KEY", "")
+            var key = self.api_key()
             if key != "":
                 spec.add_api_key(key^)
         return spec^
@@ -100,6 +125,11 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
         elif argument == "--model":
             config.model = _option_value(arguments, index, argument)
             index += 1
+        elif argument == "--provider":
+            config.provider = _option_value(arguments, index, argument)
+            index += 1
+            if config.provider != "openai" and config.provider != "anthropic" and config.provider != "gemini":
+                raise Error("invalid --provider: " + config.provider + " (expected openai, anthropic, or gemini)")
         elif argument == "--provider-url":
             config.provider_url = _option_value(arguments, index, argument)
             index += 1
@@ -132,8 +162,11 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
         else:
             config.prompt = Optional(argument.copy())
         index += 1
+    config.normalize_provider_url()
     if config.openai_oauth and config.openai_oauth_login:
         raise Error("--openai-oauth and --openai-oauth-login cannot be combined")
+    if (config.openai_oauth or config.openai_oauth_login) and config.provider != "openai":
+        raise Error("OpenAI OAuth requires --provider openai")
     if config.openai_oauth and len(config.provider_keys) > 0:
         raise Error("--openai-oauth cannot be combined with --provider-key")
     if config.openai_oauth and config.provider_url != DEFAULT_PROVIDER_URL:
@@ -243,7 +276,8 @@ Options:
   -c, --continue                Resume the latest session for this directory
   -s, --session ID              Resume a specific session
       --resume ID               Alias for --session
-      --provider-url URL        OpenAI-compatible API base URL
+      --provider PROVIDER       openai, anthropic, or gemini
+      --provider-url URL        Provider API base URL
       --provider-key KEY        API key; may be repeated
       --openai-oauth            Use ChatGPT/Codex OAuth Responses API
       --openai-oauth-login      Log in to ChatGPT/Codex with a device code

@@ -5,6 +5,7 @@ from mochi.json import JsonValue, parse_json
 
 struct AppConfig(Copyable, Movable):
     var model: Optional[String]
+    var provider: Optional[String]
     var provider_url: Optional[String]
     var output_format: Optional[String]
     var yolo: Optional[Bool]
@@ -13,6 +14,7 @@ struct AppConfig(Copyable, Movable):
 
     def __init__(out self):
         self.model = None
+        self.provider = None
         self.provider_url = None
         self.output_format = None
         self.yolo = None
@@ -26,10 +28,14 @@ struct AppConfig(Copyable, Movable):
         var result = Self()
         result.raw = value.copy()
         result.model = _optional_string(value, "model")
+        if value.contains("provider") and value.get("provider").kind == JsonValue.STRING:
+            result.provider = _optional_string(value, "provider")
         result.provider_url = _optional_string(value, "provider_url")
         result.output_format = _optional_string(value, "output_format")
         result.yolo = _optional_bool(value, "yolo")
         result.max_turns = _optional_int(value, "max_turns")
+        if result.provider and result.provider.value() != "openai" and result.provider.value() != "anthropic" and result.provider.value() != "gemini":
+            raise Error("invalid configured provider")
         if result.output_format and (
             result.output_format.value() != "text"
             and result.output_format.value() != "json"

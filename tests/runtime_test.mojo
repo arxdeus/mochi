@@ -1,5 +1,6 @@
 from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
+from mochi.http import FlokiTransport
 from mochi.json import JsonValue, parse_json, serialize_json
 from mochi.mcp import McpClient, StdioTransport
 from mochi.permissions import (
@@ -17,7 +18,15 @@ from mochi.plugin import (
     registration_result,
     shutdown_result,
 )
-from mochi.provider import OpenAICompatibleProvider, ProviderSpec, RetryState
+from mochi.provider import (
+    AnthropicProviderSpec,
+    GeminiProviderSpec,
+    OpenAICompatibleProvider,
+    ProductionProvider,
+    ProviderSpec,
+    RetryState,
+    find_model_info,
+)
 from mochi.runtime import (
     Runtime,
     ToolDefinition,
@@ -53,12 +62,42 @@ def test_runtime_uses_catalog_model_metadata() raises:
     assert_equal(runtime.provider.model_info.context_window.value(), 400000)
     var model = _runtime_model(
         runtime.model,
-        runtime.provider.inner.spec.name,
+        runtime.provider.name,
         runtime.provider.model_info,
     )
     assert_equal(model.context_window, 400000)
     assert_true(model.supports_thinking())
     assert_true(model.supports_vision())
+
+
+def test_runtime_accepts_production_provider_dialects() raises:
+    var anthropic = Runtime(
+        ProductionProvider(
+            AnthropicProviderSpec("https://api.anthropic.test", "secret"),
+            FlokiTransport(),
+            find_model_info("claude-opus-4-6"),
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "claude-opus-4-6",
+    )
+    assert_equal(anthropic.provider.kind, "anthropic")
+    assert_equal(anthropic.provider.name, "anthropic")
+    assert_false(anthropic.provider.uses_responses_api())
+    var gemini = Runtime(
+        ProductionProvider(
+            GeminiProviderSpec(
+                "https://generativelanguage.googleapis.test/v1beta", "secret"
+            ),
+            FlokiTransport(),
+            find_model_info("gemini-2.5-pro"),
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gemini-2.5-pro",
+    )
+    assert_equal(gemini.provider.kind, "gemini")
+    assert_equal(gemini.provider.name, "google")
 
 
 def test_system_prompt_is_sent_but_not_persisted() raises:

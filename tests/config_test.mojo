@@ -45,6 +45,8 @@ def test_load_layered_files_and_validation() raises:
         _ = AppConfig.from_json(parse_json('{"max_turns":0}'))
     with assert_raises():
         _ = AppConfig.from_json(parse_json('{"output_format":"yaml"}'))
+    with assert_raises():
+        _ = AppConfig.from_json(parse_json('{"provider":"unknown"}'))
     remove(global_path)
     remove(project_path)
 

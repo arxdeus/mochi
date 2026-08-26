@@ -7,6 +7,7 @@ from std.sys._libc import close, exit, pipe
 from mochi.acp import AcpMessage, AcpRuntimeServer
 from mochi.cli import (
     DEFAULT_MODEL,
+    DEFAULT_PROVIDER,
     DEFAULT_PROVIDER_URL,
     VERSION,
     CliConfig,
@@ -25,7 +26,10 @@ from mochi.permissions import PermissionEffect, PermissionManager
 from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
 from mochi.prompt import build_system_prompt, load_instruction_text
 from mochi.provider import (
+    AnthropicProviderSpec,
+    GeminiProviderSpec,
     OpenAICompatibleProvider,
+    ProductionProvider,
     OpenAIOAuthCredentials,
     find_model_info,
     load_openai_oauth_credentials,
@@ -58,8 +62,11 @@ def main() raises:
     )
     if layered.model and config.model == DEFAULT_MODEL:
         config.model = layered.model.value()
+    if layered.provider and config.provider == DEFAULT_PROVIDER:
+        config.provider = layered.provider.value()
     if layered.provider_url and config.provider_url == DEFAULT_PROVIDER_URL:
         config.provider_url = layered.provider_url.value()
+    config.normalize_provider_url()
     if layered.output_format and config.output_format == "text":
         config.output_format = layered.output_format.value()
     if layered.yolo and not config.yolo:
@@ -84,17 +91,7 @@ def main() raises:
     var permissions = PermissionManager(
         PermissionEffect.prompt(), yolo=config.yolo
     )
-    var spec = config.provider_spec()
-    var provider = OpenAICompatibleProvider(spec.copy())
-    if config.openai_oauth:
-        var credentials = load_openai_oauth_credentials()
-        if credentials.expired(_now_ms()):
-            var transport = FlokiTransport()
-            credentials = refresh_openai_oauth_with(transport, credentials, _now_ms())
-            save_openai_oauth_credentials(credentials)
-        spec.account_id = credentials.account_id
-        provider = OpenAICompatibleProvider(spec^)
-        provider.set_oauth(credentials.oauth_state())
+    var provider = _production_provider(config)
     var cwd = startup_cwd
     var paths = startup_paths.copy()
     var session_store = SessionStore(paths.state + "/sessions")
@@ -205,12 +202,40 @@ def main() raises:
     runtime.shutdown_remotes()
 
 
+def _production_provider(config: CliConfig) raises -> ProductionProvider:
+    var info = find_model_info(config.model)
+    if config.provider == "anthropic":
+        return ProductionProvider(
+            AnthropicProviderSpec(config.provider_url, config.api_key()),
+            FlokiTransport(),
+            info,
+        )
+    if config.provider == "gemini":
+        return ProductionProvider(
+            GeminiProviderSpec(config.provider_url, config.api_key()),
+            FlokiTransport(),
+            info,
+        )
+    var spec = config.provider_spec()
+    var provider = OpenAICompatibleProvider(spec.copy())
+    if config.openai_oauth:
+        var credentials = load_openai_oauth_credentials()
+        if credentials.expired(_now_ms()):
+            var transport = FlokiTransport()
+            credentials = refresh_openai_oauth_with(transport, credentials, _now_ms())
+            save_openai_oauth_credentials(credentials)
+        spec.account_id = credentials.account_id
+        provider = OpenAICompatibleProvider(spec^)
+        provider.set_oauth(credentials.oauth_state())
+    return ProductionProvider(provider^, info)
+
+
 def _run_acp(config: CliConfig, cwd: String, paths: StoragePaths) raises:
     var permissions = PermissionManager(
         PermissionEffect.prompt(), yolo=config.yolo
     )
     var runtime = Runtime(
-        OpenAICompatibleProvider(config.provider_spec()),
+        _production_provider(config),
         ToolRegistry(cwd),
         permissions^,
         config.model,
@@ -436,9 +461,7 @@ def _interactive_login(mut runtime: Runtime):
             var transport = FlokiTransport()
             credentials = openai_device_login_with(transport, _now_ms(), path)
             print("Authenticated successfully.")
-        runtime.provider.inner.spec.responses_api = True
-        runtime.provider.inner.spec.account_id = credentials.account_id
-        runtime.provider.inner.set_oauth(credentials.oauth_state())
+        runtime.provider.enable_openai_oauth(credentials)
         if "codex" not in runtime.model:
             runtime.model = "gpt-5.3-codex"
         print("Model:", runtime.model)
@@ -450,7 +473,7 @@ def _interactive_model(mut runtime: Runtime, command: String) raises:
     var requested = String(command.removeprefix("/model").strip())
     if requested != "":
         runtime.model = requested^
-        runtime.provider.model_info = find_model_info(runtime.model)
+        runtime.provider.set_model_info(find_model_info(runtime.model))
         print("Model:", runtime.model)
         return
     var models: List[String] = [
