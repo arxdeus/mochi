@@ -481,7 +481,7 @@
       "id": "ui.command.catalog",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "partial",
+      "status": "parity",
       "description": "The interactive command catalog, descriptions, fuzzy matching, completion, and help output track upstream built-ins.",
       "upstream_refs": [
         "maki-ui/src/components/command.rs:20-117",
@@ -498,9 +498,9 @@
           "normalization": "Exact built-in order, descriptions, fuzzy result, and help-line assertions."
         },
         "differential": {
-          "status": "implemented",
-          "upstream_command": "sh tests/parity.sh ui.command.catalog",
-          "mojo_command": "sh tests/parity.sh ui.command.catalog",
+          "status": "parity",
+          "upstream_command": "pixi run parity ui.command.catalog",
+          "mojo_command": "pixi run parity ui.command.catalog",
           "normalization": "Upstream catalog/filter/navigation/fuzzy-confirm/argument-count/noncommand fixtures and the Mojo UI suite must pass."
         }
       }
@@ -622,7 +622,7 @@
       "id": "ui.search.escape_restore",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "partial",
+      "status": "parity",
       "description": "Closing transcript search with Escape restores the saved scroll offset and auto-scroll mode.",
       "upstream_refs": [
         "maki-ui/src/app/tests.rs:2976-2988",
@@ -639,9 +639,9 @@
           "normalization": "Exact reducer state assertions for manual and automatic scroll restoration."
         },
         "differential": {
-          "status": "implemented",
-          "upstream_command": "sh tests/parity.sh ui.search.escape_restore",
-          "mojo_command": "sh tests/parity.sh ui.search.escape_restore",
+          "status": "parity",
+          "upstream_command": "pixi run parity ui.search.escape_restore",
+          "mojo_command": "pixi run parity ui.search.escape_restore",
           "normalization": "Both upstream search escape cases and the Mojo reducer suite must pass."
         }
       }
@@ -650,7 +650,7 @@
       "id": "ui.search.navigation",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "partial",
+      "status": "parity",
       "description": "Transcript search routes arrow navigation, wraps matches, selects the active result, and closes safely without matches.",
       "upstream_refs": [
         "maki-ui/src/components/search_modal.rs:92-136",
@@ -668,9 +668,9 @@
           "normalization": "Exact reducer assertions and native terminal compilation."
         },
         "differential": {
-          "status": "implemented",
-          "upstream_command": "sh tests/parity.sh ui.search.navigation",
-          "mojo_command": "sh tests/parity.sh ui.search.navigation",
+          "status": "parity",
+          "upstream_command": "pixi run parity ui.search.navigation",
+          "mojo_command": "pixi run parity ui.search.navigation",
           "normalization": "Upstream navigation, selection, and no-match closure tests plus the Mojo UI suite must pass."
         }
       }
@@ -679,7 +679,7 @@
       "id": "ui.search.display",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "partial",
+      "status": "parity",
       "description": "Transcript search indexes upstream-style role prefixes and previews the matched line from multiline messages.",
       "upstream_refs": [
         "maki-ui/src/components/search_modal.rs:288-304",
@@ -696,9 +696,9 @@
           "normalization": "Exact role-prefix matching and matched-line preview assertions."
         },
         "differential": {
-          "status": "implemented",
-          "upstream_command": "sh tests/parity.sh ui.search.display",
-          "mojo_command": "sh tests/parity.sh ui.search.display",
+          "status": "parity",
+          "upstream_command": "pixi run parity ui.search.display",
+          "mojo_command": "pixi run parity ui.search.display",
           "normalization": "Upstream fuzzy ordering, matched-line, and role-prefix fixtures plus the Mojo UI suite must pass."
         }
       }
