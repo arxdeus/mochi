@@ -150,6 +150,13 @@ case "${1:-all}" in
             selection::tests::zone_at_overlay_wins_over_messages -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
+    ui.terminal.sgr_mouse)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::mouse_drag_updates_selection -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::mouse_up_clears_edge_scroll -- --exact >/dev/null
+        run_mojo_test tests/ui_test.mojo
+        ;;
     ui.overlay.modal_gating)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             app::tests::overlay_zone_click_gating -- --exact >/dev/null
@@ -208,7 +215,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

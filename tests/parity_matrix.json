@@ -560,8 +560,37 @@
         }
       }
     },
-    {
-      "id": "ui.overlay.modal_gating",
+      {
+        "id": "ui.terminal.sgr_mouse",
+        "area": "ui",
+        "owner": "mochi_ui",
+        "status": "parity",
+        "description": "Raw terminal input enables drag-capable SGR mouse reporting and decodes zero-based press, drag, release, and wheel events in editor and search modes.",
+        "upstream_refs": [
+          "maki-ui/src/terminal.rs",
+          "maki-ui/src/app/mouse.rs"
+        ],
+        "mojo_refs": [
+          "src/mochi/cancellation.c",
+          "src/mochi/main.mojo",
+          "src/mochi/ui.mojo",
+          "tests/ui_test.mojo"
+        ],
+        "checks": {
+          "local": {
+            "command": "pixi run test",
+            "normalization": "Exact SGR press, drag, release, wheel, malformed-input, and coordinate-conversion assertions."
+          },
+          "differential": {
+            "status": "parity",
+            "upstream_command": "pixi run parity ui.terminal.sgr_mouse",
+            "mojo_command": "pixi run parity ui.terminal.sgr_mouse",
+            "normalization": "Pinned upstream mouse lifecycle tests and Mojo SGR decoder tests pass."
+          }
+        }
+      },
+      {
+        "id": "ui.overlay.modal_gating",
       "area": "ui",
       "owner": "mochi_ui",
       "status": "parity",
