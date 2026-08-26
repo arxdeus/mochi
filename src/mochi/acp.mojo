@@ -1,4 +1,5 @@
 from mochi.json import JsonValue, parse_json
+from mochi.permissions import PermissionAnswer
 from mochi.runtime import Runtime
 from mochi.session import Session, SessionStore
 from mochi.storage import MakiId, SessionRef
@@ -333,6 +334,42 @@ def session_update(session_id: String, var update: JsonValue) raises -> AcpMessa
     params.set("sessionId", JsonValue.string(session_id))
     params.set("update", update^)
     return AcpMessage.notification("session/update", params^)
+
+
+def permission_options() raises -> JsonValue:
+    var options = JsonValue.array()
+    options.append(_permission_option("allow_once", "Allow once", "allow_once"))
+    options.append(_permission_option("allow_always", "Allow always", "allow_always"))
+    options.append(_permission_option("reject_once", "Reject once", "reject_once"))
+    options.append(_permission_option("reject_always", "Reject always", "reject_always"))
+    return options^
+
+
+def permission_answer(response: AcpMessage) -> PermissionAnswer:
+    if response.kind == AcpMessage.ERROR:
+        return PermissionAnswer.deny()
+    try:
+        var outcome = response.payload.get("outcome")
+        if _optional_string(outcome, "outcome", "") != "selected":
+            return PermissionAnswer.deny()
+        var option = _optional_string(
+            outcome.get("option"), "optionId", ""
+        )
+        if option == "allow_once":
+            return PermissionAnswer.allow_once()
+        if option == "allow_always":
+            return PermissionAnswer.allow_session()
+    except:
+        pass
+    return PermissionAnswer.deny()
+
+
+def _permission_option(id: String, name: String, kind: String) raises -> JsonValue:
+    var option = JsonValue.object()
+    option.set("optionId", JsonValue.string(id))
+    option.set("name", JsonValue.string(name))
+    option.set("kind", JsonValue.string(kind))
+    return option^
 
 
 def permission_request(

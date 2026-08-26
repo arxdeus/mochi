@@ -5,11 +5,13 @@ from mochi.acp import (
     AcpMessage,
     AcpRuntimeServer,
     AcpSession,
+    permission_answer,
+    permission_options,
     permission_request,
     session_update,
 )
 from mochi.json import JsonValue, parse_json
-from mochi.permissions import PermissionEffect, PermissionManager, PermissionRule
+from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager, PermissionRule
 from mochi.provider import OpenAICompatibleProvider, ProviderSpec
 from mochi.runtime import Runtime
 from mochi.session import Session, SessionStore
@@ -56,6 +58,21 @@ def test_acp_permission_and_unknown_method() raises:
         7, "session-1", JsonValue.object(), JsonValue.array()
     )
     assert_equal(permission.method, "session/request_permission")
+    var options = permission_options()
+    assert_equal(len(options.array_value), 4)
+    assert_equal(options.array_value[0].get("optionId").string_value, "allow_once")
+    var selected = JsonValue.object()
+    selected.set("optionId", JsonValue.string("allow_always"))
+    var outcome = JsonValue.object()
+    outcome.set("outcome", JsonValue.string("selected"))
+    outcome.set("option", selected^)
+    var response = AcpMessage.response(7, JsonValue.object())
+    response.payload.set("outcome", outcome^)
+    assert_true(permission_answer(response) == PermissionAnswer.allow_session())
+    assert_true(
+        permission_answer(AcpMessage.failure(7, -32603, "failed"))
+        == PermissionAnswer.deny()
+    )
     var session = AcpSession()
     var failure = session.handle(
         AcpMessage.request(1, "session/prompt", JsonValue.object())
