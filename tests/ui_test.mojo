@@ -177,6 +177,12 @@ def test_viewport_is_bounded_and_tracks_messages() raises:
     assert_equal(state.viewport_offset, 1)
     _ = UiReducer.reduce(state, UiEvent.message("assistant", "four"))
     assert_equal(state.viewport_offset, 2)
+    _ = UiReducer.reduce(state, UiEvent.scroll(-1))
+    assert_equal(state.viewport_offset, 1)
+    assert_false(state.auto_scroll)
+    _ = UiReducer.reduce(state, UiEvent.scroll_bottom())
+    assert_equal(state.viewport_offset, 2)
+    assert_true(state.auto_scroll)
 
 
 def test_view_is_terminal_independent_snapshot() raises:

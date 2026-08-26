@@ -22,6 +22,8 @@ struct UiEvent(Copyable, Movable):
     comptime HISTORY_DOWN = 11
     comptime CONTINUE_LINE = 12
     comptime PASTE_SPACED = 13
+    comptime SCROLL = 14
+    comptime SCROLL_BOTTOM = 15
 
     var tag: Int
     var text: String
@@ -118,6 +120,16 @@ struct UiEvent(Copyable, Movable):
         var event = Self(Self.PASTE_SPACED)
         event.text = text
         return event^
+
+    @staticmethod
+    def scroll(offset: Int) -> Self:
+        var event = Self(Self.SCROLL)
+        event.offset = offset
+        return event^
+
+    @staticmethod
+    def scroll_bottom() -> Self:
+        return Self(Self.SCROLL_BOTTOM)
 
 
 struct UiAction(Copyable, Movable):
@@ -334,6 +346,14 @@ struct UiReducer:
             Self._continue_line(state)
         elif event.tag == UiEvent.PASTE_SPACED:
             Self._paste_spaced(state, event.text)
+        elif event.tag == UiEvent.SCROLL:
+            state.auto_scroll = False
+            state.viewport_offset = Self._bounded_offset(
+                state, state.viewport_offset + event.offset, False
+            )
+        elif event.tag == UiEvent.SCROLL_BOTTOM:
+            state.auto_scroll = True
+            state.viewport_offset = Self._max_offset(state)
         return UiAction.none()
 
     @staticmethod
