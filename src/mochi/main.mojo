@@ -424,9 +424,7 @@ def _interactive(
     var ui = UiState()
     ui.set_history(history.entries.copy())
     while True:
-
-        print("> ", end="")
-        var line = _read_line()
+        var line = _read_interactive_line(ui)
         if not line:
             return
         var raw = String(line.value())
@@ -459,6 +457,7 @@ def _interactive(
                 session = _new_session(runtime.model, session.cwd)
                 runtime.set_messages(List[Message]())
                 ui = UiState()
+                ui.set_history(history.entries.copy())
                 print("Started session:", session.id)
             elif action.name == "usage":
                 _interactive_usage(session, runtime)
@@ -634,6 +633,72 @@ def _decimal(value: String) -> Int:
             return -1
         result = result * 10 + digit
     return result
+
+
+def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
+    var raw_mode = external_call["mochi_terminal_enable_raw", c_int]()
+    if raw_mode <= 0:
+        print("> ", end="")
+        return _read_line()
+    _render_editor(ui)
+    while True:
+        var byte = external_call["getchar", c_int]()
+        if byte < 0 or byte == 4:
+            external_call["mochi_terminal_disable_raw", NoneType]()
+            print()
+            if ui.draft == "":
+                return None
+            return Optional(ui.draft.copy())
+        if byte == 3:
+            _ = UiReducer.reduce(ui, UiEvent.edit(""))
+            _render_editor(ui)
+            continue
+        if byte == 10 or byte == 13:
+            external_call["mochi_terminal_disable_raw", NoneType]()
+            print()
+            return Optional(ui.draft.copy())
+        if byte == 127 or byte == 8:
+            _ = UiReducer.reduce(ui, UiEvent.delete_backward())
+        elif byte == 27:
+            var bracket = external_call["getchar", c_int]()
+            if bracket == 91:
+                var key = external_call["getchar", c_int]()
+                if key == 65:
+                    _ = UiReducer.reduce(ui, UiEvent.history_up())
+                elif key == 66:
+                    _ = UiReducer.reduce(ui, UiEvent.history_down())
+                elif key == 67:
+                    _ = UiReducer.reduce(ui, UiEvent.move_cursor(1))
+                elif key == 68:
+                    _ = UiReducer.reduce(ui, UiEvent.move_cursor(-1))
+        elif byte >= 32:
+            _ = UiReducer.reduce(ui, UiEvent.insert(_read_utf8_character(Int(byte))))
+        _render_editor(ui)
+
+
+def _read_utf8_character(first: Int) raises -> String:
+    var count = 1
+    if first >= 0xF0:
+        count = 4
+    elif first >= 0xE0:
+        count = 3
+    elif first >= 0xC0:
+        count = 2
+    var bytes = List[UInt8]()
+    bytes.append(UInt8(first))
+    for _ in range(1, count):
+        var byte = external_call["getchar", c_int]()
+        if byte < 0:
+            break
+        bytes.append(UInt8(byte))
+    return String(unsafe_from_utf8=Span(bytes))
+
+
+def _render_editor(ui: UiState):
+    var tail = ui.draft.count_codepoints() - ui.cursor
+    print("\r\x1b[2K> " + ui.draft, end="")
+    if tail > 0:
+        print("\x1b[" + String(tail) + "D", end="")
 
 
 def _read_line() raises -> Optional[String]:

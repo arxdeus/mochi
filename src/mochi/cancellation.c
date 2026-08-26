@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -79,6 +80,41 @@ int mochi_cancellation_is_cancelled(void *handle) {
 }
 
 #if defined(__unix__) || defined(__APPLE__)
+static struct termios mochi_terminal_original;
+static bool mochi_terminal_raw = false;
+
+void mochi_terminal_disable_raw(void) {
+    if (mochi_terminal_raw) {
+        (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &mochi_terminal_original);
+        mochi_terminal_raw = false;
+    }
+}
+
+int mochi_terminal_enable_raw(void) {
+    if (!isatty(STDIN_FILENO)) {
+        return 0;
+    }
+    if (mochi_terminal_raw) {
+        return 1;
+    }
+    if (tcgetattr(STDIN_FILENO, &mochi_terminal_original) != 0) {
+        return -1;
+    }
+    struct termios raw = mochi_terminal_original;
+    raw.c_iflag &= (tcflag_t)~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_oflag &= (tcflag_t)~OPOST;
+    raw.c_cflag |= CS8;
+    raw.c_lflag &= (tcflag_t)~(ECHO | ICANON | IEXTEN | ISIG);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) {
+        return -1;
+    }
+    mochi_terminal_raw = true;
+    (void)atexit(mochi_terminal_disable_raw);
+    return 1;
+}
+
 typedef struct mochi_cancel_after_args {
     mochi_cancellation_state *state;
     int milliseconds;
@@ -188,6 +224,13 @@ int mochi_http_fixture_start(void) {
     return ntohs(address.sin_port);
 }
 #else
+int mochi_terminal_enable_raw(void) {
+    return 0;
+}
+
+void mochi_terminal_disable_raw(void) {
+}
+
 int mochi_cancellation_cancel_after(void *handle, int milliseconds) {
     (void)handle;
     (void)milliseconds;
