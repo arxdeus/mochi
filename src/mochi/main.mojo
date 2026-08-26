@@ -570,7 +570,7 @@ def _interactive(
             elif action.name == "btw":
                 _interactive_btw(runtime, session, action.text)
             elif action.name == "tasks":
-                _interactive_tasks(session)
+                _interactive_tasks(session, ui)
             elif action.name == "mcp":
                 _interactive_mcp(runtime, ui, paths)
             elif action.name == "theme":
@@ -870,32 +870,45 @@ def _render_picker(ui: UiState):
         )
 
 
-def _interactive_tasks(session: Session):
-    print("Tasks:")
-    print("  Main")
-    if session.subagents.kind != JsonValue.ARRAY:
+def _interactive_tasks(session: Session, mut ui: UiState) raises:
+    var names = session.task_names()
+    var items = String("")
+    for name in names:
+        if items != "":
+            items += "\n"
+        items += "0:" + name
+    _ = UiReducer.reduce(ui, UiEvent.picker_open("Tasks", items))
+    var selected = -1
+    var raw_mode = external_call["mochi_terminal_enable_raw", c_int]()
+    while ui.picker_name != "":
+        _render_picker(ui)
+        var byte = external_call["getchar", c_int]()
+        if byte == 3 or byte == 4:
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
+        elif byte == 10 or byte == 13:
+            selected = ui.picker_selected
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
+        elif byte == 27:
+            var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+            if bracket == 91:
+                var key = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+                if key == 65:
+                    _ = UiReducer.reduce(ui, UiEvent.picker_previous())
+                elif key == 66:
+                    _ = UiReducer.reduce(ui, UiEvent.picker_next())
+            else:
+                _ = UiReducer.reduce(ui, UiEvent.picker_close())
+    if raw_mode > 0:
+        external_call["mochi_terminal_disable_raw", NoneType]()
+    print("\r\x1b[2K", end="")
+    if selected < 0:
         return
-    for item in session.subagents.array_value:
-        if item.kind != JsonValue.OBJECT:
-            continue
-        var name = String("task")
-        var id = String("")
-        var status = String("running")
-        try:
-            if item.contains("name"):
-                name = item.get("name").string_value
-            if item.contains("tool_use_id"):
-                id = item.get("tool_use_id").string_value
-            elif item.contains("id"):
-                id = item.get("id").string_value
-            if item.contains("finished") and item.get("finished").bool_value:
-                status = "done"
-        except:
-            pass
-        var detail = " [" + status + "]"
-        if id != "":
-            detail += " " + id
-        print("  " + name + detail)
+    var messages = session.task_messages(selected)
+    print("Task:", names[selected])
+    if len(messages) == 0:
+        print("  No messages.")
+    for message in messages:
+        print(message.role + ": " + message.content)
 
 
 def _interactive_cd(

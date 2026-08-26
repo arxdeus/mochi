@@ -107,6 +107,40 @@ struct Session(Copyable, Movable):
         self.subagent_ids.append(id^)
         self.subagent_messages.append(message^)
 
+    def task_names(self) -> List[String]:
+        var names = List[String]()
+        names.append("Main")
+        if self.subagents.kind != JsonValue.ARRAY:
+            return names^
+        for item in self.subagents.array_value:
+            var name = String("task")
+            if item.kind == JsonValue.OBJECT and item.contains("name"):
+                try:
+                    name = item.get("name").string_value
+                except:
+                    pass
+            names.append(name^)
+        return names^
+
+    def task_messages(self, task_index: Int) raises -> List[Message]:
+        if task_index == 0:
+            return self.runtime_messages()
+        if self.subagents.kind != JsonValue.ARRAY or task_index > len(self.subagents.array_value):
+            raise Error("task index is out of range")
+        var item = self.subagents.array_value[task_index - 1].copy()
+        if item.kind != JsonValue.OBJECT:
+            raise Error("task metadata is invalid")
+        var id = String("")
+        if item.contains("tool_use_id"):
+            id = item.get("tool_use_id").string_value
+        elif item.contains("id"):
+            id = item.get("id").string_value
+        var messages = List[Message]()
+        for i in range(len(self.subagent_ids)):
+            if self.subagent_ids[i] == id:
+                messages.append(message_from_json(self.subagent_messages[i]))
+        return messages^
+
     def records(self) raises -> List[JsonValue]:
         var records = List[JsonValue]()
         var header = JsonValue.object()

@@ -51,6 +51,24 @@ def test_maki_v2_roundtrip() raises:
     assert_equal(first.get("v").int_value, 2)
 
 
+def test_task_names_and_messages() raises:
+    var session = Session("tasks", "model", "/project", 1)
+    session.add_message(message("user", "main"))
+    var tasks = JsonValue.array()
+    var first = JsonValue.object()
+    first.set("tool_use_id", JsonValue.string("sub-1"))
+    first.set("name", JsonValue.string("research"))
+    tasks.append(first^)
+    session.subagents = tasks^
+    session.add_subagent_message("sub-1", message("assistant", "child"))
+    var names = session.task_names()
+    assert_equal(len(names), 2)
+    assert_equal(names[0], "Main")
+    assert_equal(names[1], "research")
+    assert_equal(session.task_messages(0)[0].content, "main")
+    assert_equal(session.task_messages(1)[0].content, "child")
+
+
 def test_truncated_tail_recovery() raises:
     clean()
     var store = SessionStore(TEST_DIR)
