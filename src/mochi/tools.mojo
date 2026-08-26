@@ -160,6 +160,8 @@ struct ToolRegistry(Copyable, Movable):
         self.owners.append("builtin")
         self.names.append("code_execution")
         self.owners.append("builtin")
+        self.names.append("task")
+        self.owners.append("builtin")
 
     def index_of(self, name: String) -> Int:
         for i in range(len(self.names)):
@@ -221,6 +223,9 @@ struct ToolRegistry(Copyable, Movable):
         elif name == "code_execution":
             _ = _string_arg(prepared.arguments, "code")
             prepared.add_scope("mojo-mini-interpreter")
+        elif name == "task":
+            _ = _string_arg(prepared.arguments, "prompt")
+            prepared.add_scope("subagent")
         elif self.is_remote(name):
             prepared.add_scope(self.owners[self.index_of(name)])
         return prepared^
@@ -242,6 +247,10 @@ struct ToolRegistry(Copyable, Movable):
                 return self._bash(prepared.arguments)
             if prepared.name == "code_execution":
                 return self._code_execution(prepared.arguments)
+            if prepared.name == "task":
+                if not self.workflow:
+                    return ToolResult.failure("subagents require workflow mode")
+                return ToolResult.success(self._subagent(_string_arg(prepared.arguments, "prompt")))
             return ToolResult.failure("unknown tool: " + prepared.name)
         except error:
             return ToolResult.failure("Error: " + String(error))

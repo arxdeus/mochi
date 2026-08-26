@@ -119,9 +119,10 @@ def test_provider_spec_and_builtin_definitions() raises:
     assert_equal(spec.base_url, "http://localhost/v1")
     assert_equal(spec.api_keys[0], "secret")
     var definitions = standard_tool_definitions()
-    assert_equal(len(definitions), 6)
+    assert_equal(len(definitions), 7)
     assert_equal(definitions[0].name, "read")
     assert_equal(definitions[5].name, "code_execution")
+    assert_equal(definitions[6].name, "task")
 
 
 def main() raises:

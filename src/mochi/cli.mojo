@@ -272,6 +272,7 @@ def standard_tool_definitions() raises -> List[ToolDefinition]:
     definitions.append(_tool("list", "List a directory", _properties("path", "string", True)))
     definitions.append(_tool("bash", "Run a shell command", _properties("command", "string", True)))
     definitions.append(_tool("code_execution", "Run the bounded Mochi command interpreter", _properties("code", "string", True)))
+    definitions.append(_tool("task", "Run an isolated child agent", _two_properties("prompt", "string", "name", "string")))
     return definitions^
 
 
