@@ -284,7 +284,7 @@
       "id": "mcp.streamable_http.basic",
       "area": "mcp",
       "owner": "mochi_mcp",
-      "status": "partial",
+      "status": "parity",
       "description": "MCP initialize/list/call over stdio and Streamable HTTP with JSON/SSE.",
       "upstream_refs": [
         "maki-agent/src/mcp"
@@ -299,10 +299,10 @@
           "normalization": "JSON-RPC envelopes/results."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "OAuth, manager lifecycle, protocol-version, and live agent dispatch."
+          "status": "parity",
+          "upstream_command": "pixi run parity mcp.streamable_http.basic",
+          "mojo_command": "pixi run parity mcp.streamable_http.basic",
+          "normalization": "Pinned upstream JSON-RPC codecs and negotiated HTTP protocol version pass with Mojo stdio, JSON/SSE HTTP, lifecycle, refresh, and high-level client tests."
         }
       }
     },
