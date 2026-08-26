@@ -87,6 +87,16 @@ def test_command_transition() raises:
     assert_equal(case_action.text, "~/foo")
 
 
+def test_extension_command_routes_with_arguments() raises:
+    var state = UiState()
+    state.set_extension_commands(["hello"])
+    _ = UiReducer.reduce(state, UiEvent.edit("/hello one two"))
+    var action = UiReducer.reduce(state, UiEvent.submit())
+    assert_true(action.is_command())
+    assert_equal(action.name, "hello")
+    assert_equal(action.text, "one two")
+
+
 def test_toggleable_picker_navigation_and_actions() raises:
     var state = UiState()
     _ = UiReducer.reduce(

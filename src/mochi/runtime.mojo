@@ -482,6 +482,58 @@ struct Runtime:
         self.plugin_names.append(name^)
         self.plugin_clients.append(client^)
 
+    def plugin_command_names(self) raises -> List[String]:
+        var result = List[String]()
+        for i in range(len(self.plugin_clients)):
+            if not self.plugin_clients[i].protocol.registration:
+                continue
+            var commands = self.plugin_clients[i].protocol.registration.value().commands.copy()
+            for item in commands.array_value:
+                if item.kind == JsonValue.STRING:
+                    result.append(item.string_value)
+                elif item.kind == JsonValue.OBJECT and item.contains("name"):
+                    result.append(item.get("name").string_value)
+        return result^
+
+    def invoke_plugin_command(
+        mut self, name: String, arguments: String
+    ) raises -> String:
+        for i in range(len(self.plugin_clients)):
+            if not self.plugin_clients[i].protocol.registration:
+                continue
+            var commands = self.plugin_clients[i].protocol.registration.value().commands.copy()
+            for item in commands.array_value:
+                var command = String("")
+                if item.kind == JsonValue.STRING:
+                    command = item.string_value
+                elif item.kind == JsonValue.OBJECT and item.contains("name"):
+                    command = item.get("name").string_value
+                if command == name:
+                    var input = JsonValue.object()
+                    input.set("arguments", JsonValue.string(arguments))
+                    return serialize_json(
+                        self.plugin_clients[i].invoke("command", name, input^)
+                    )
+        raise Error("unknown extension command: " + name)
+
+    def plugin_prompt_hints(self) -> String:
+        var result = String("")
+        for i in range(len(self.plugin_clients)):
+            if not self.plugin_clients[i].protocol.registration:
+                continue
+            var hints = self.plugin_clients[i].protocol.registration.value().prompt_hints.copy()
+            for hint in hints.array_value:
+                if hint.kind == JsonValue.STRING:
+                    if result != "":
+                        result += "\n"
+                    result += hint.string_value
+        return result^
+
+    def apply_plugin_prompt_hints(mut self):
+        var hints = self.plugin_prompt_hints()
+        if hints != "":
+            self.system_prompt += "\n\n" + hints
+
     def reload_plugins(mut self) raises -> Int:
         for i in range(len(self.plugin_names)):
             var old_name = self.plugin_names[i]

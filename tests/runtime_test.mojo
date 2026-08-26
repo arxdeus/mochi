@@ -13,6 +13,7 @@ from mochi.plugin import (
     PluginClient,
     PluginRegistration,
     PluginTransport,
+    RpcMessage,
     handshake_result,
     invoke_result,
     registration_result,
@@ -589,6 +590,39 @@ def test_runtime_task_runs_isolated_child_and_persists_transcript() raises:
     var saved = session.task_messages(1)
     assert_equal(len(saved), 2)
     assert_equal(saved[1].content, "child summary")
+
+
+def test_runtime_plugin_commands_and_prompt_hints() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    runtime.system_prompt = "base"
+    var transport = PluginTransport()
+    transport.enqueue_fixture_response(handshake_result(1, "extension"))
+    var registration = PluginRegistration("extension", "1.0.0")
+    registration.commands.append(parse_json('{"name":"hello"}'))
+    registration.prompt_hints.append(JsonValue.string("Extension guidance"))
+    transport.enqueue_fixture_response(registration_result(2, registration))
+    transport.enqueue_fixture_response(
+        invoke_result(3, parse_json('{"content":"command ran"}'))
+    )
+    var client = PluginClient(transport^)
+    client.connect()
+    runtime.attach_plugin("extension", client^)
+    assert_equal(runtime.plugin_command_names()[0], "hello")
+    runtime.apply_plugin_prompt_hints()
+    assert_true("Extension guidance" in runtime.system_prompt)
+    var output = parse_json(runtime.invoke_plugin_command("hello", "one two"))
+    assert_equal(output.get("content").string_value, "command ran")
+    var request = RpcMessage.parse(runtime.plugin_clients[0].transport.fixture_writes[2])
+    assert_equal(request.payload.get("kind").string_value, "command")
+    assert_equal(
+        request.payload.get("arguments").get("arguments").string_value,
+        "one two",
+    )
 
 
 def test_runtime_reload_replaces_plugin_routes() raises:

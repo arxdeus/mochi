@@ -460,6 +460,7 @@ struct UiState(Copyable, Movable):
     var selection_edge_scroll: Int
     var overlay_name: String
     var overlay_modal: Bool
+    var extension_commands: List[String]
 
     def __init__(out self):
         self.draft = ""
@@ -493,6 +494,7 @@ struct UiState(Copyable, Movable):
         self.selection_edge_scroll = 0
         self.overlay_name = ""
         self.overlay_modal = False
+        self.extension_commands = List[String]()
 
     def add_zone(mut self, area: UiRect, zone: Int):
         self.zones.append(SelectableZone(area.copy(), zone))
@@ -505,6 +507,9 @@ struct UiState(Copyable, Movable):
             if self.zones[i].area.contains(row, col):
                 return Optional(self.zones[i].copy())
         return None
+
+    def set_extension_commands(mut self, commands: List[String]):
+        self.extension_commands = commands.copy()
 
     def set_history(mut self, var history: List[String]):
         self.history = history^
@@ -919,6 +924,26 @@ struct UiReducer:
         state.draft = ""
         state.cursor = 0
         if text.startswith("/"):
+            var slash_text = text.copy()
+            var command_text = String(slash_text.removeprefix("/"))
+            var command_separator = command_text.find(" ")
+            var command_name = command_text
+            var command_arguments = String("")
+            if command_separator:
+                command_name = _byte_range(
+                    command_text, 0, command_separator.value()
+                )
+                command_arguments = String(
+                    _byte_range(
+                        command_text,
+                        command_separator.value() + 1,
+                        command_text.byte_length(),
+                    ).strip()
+                )
+            for extension in state.extension_commands:
+                if extension.lower() == command_name.lower():
+                    state.command_selected = 0
+                    return UiAction.command(extension, command_arguments^)
             var matches = command_matches(text.copy())
             if len(matches) > 0:
                 var selected = min(state.command_selected, len(matches) - 1)

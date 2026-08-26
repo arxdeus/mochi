@@ -232,6 +232,7 @@ def main() raises:
                 "initialized; tools=", len(registration.tools.array_value),
             )
             runtime.attach_plugin(registration.name, client^)
+        runtime.apply_plugin_prompt_hints()
 
         if config.print_mode and not config.prompt:
             config.prompt = Optional(read_stdin())
@@ -505,6 +506,7 @@ def _interactive(
     var ui = UiState()
     ui.set_history(history.entries.copy())
     ui.set_transcript(runtime.messages)
+    ui.set_extension_commands(runtime.plugin_command_names())
     while True:
         var line = _read_interactive_line(ui)
         if not line:
@@ -526,6 +528,7 @@ def _interactive(
             elif action.name == "reload":
                 try:
                     print("Reloaded executable extensions:", runtime.reload_plugins())
+                    ui.set_extension_commands(runtime.plugin_command_names())
                 except error:
                     print("Reload failed:", error)
             elif action.name == "yolo":
@@ -609,7 +612,10 @@ def _interactive(
             elif action.name == "help":
                 _interactive_help()
             else:
-                print("Unknown command:", action.name)
+                try:
+                    print(runtime.invoke_plugin_command(action.name, action.text))
+                except error:
+                    print("Unknown command:", action.name, "(" + String(error) + ")")
             continue
         _run_prompt(runtime, session, store, action.text, output_format)
         if _interactive_permissions(runtime):
