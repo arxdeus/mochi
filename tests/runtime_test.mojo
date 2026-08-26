@@ -26,10 +26,12 @@ from mochi.provider import (
     OpenAICompatibleProvider,
     OpenAIProviderAdapter,
     ProductionProvider,
+    ProviderResult,
     ProviderSpec,
     RetryState,
     find_model_info,
 )
+from mochi.session import Session
 from mochi.runtime import (
     Runtime,
     ToolDefinition,
@@ -555,6 +557,38 @@ def test_live_remote_mcp_and_plugin_dispatch() raises:
         '{"content":"formatted"}',
     )
     runtime.shutdown_remotes()
+
+
+def test_runtime_task_runs_isolated_child_and_persists_transcript() raises:
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("scripted", "https://invalid.local")
+    )
+    var child_response = ProviderResult()
+    child_response.message = Message("assistant", "child summary")
+    provider.enqueue_result(child_response)
+    var runtime = Runtime(
+        provider^,
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    _ = runtime.toggle_workflow()
+    runtime.dispatch(
+        ToolCall("task-1", "task", '{"description":"research","prompt":"inspect"}'),
+        CancellationToken(),
+    )
+    assert_equal(runtime.messages[len(runtime.messages) - 1].content, "child summary")
+    assert_equal(runtime.subagent_ids[0], "task-1")
+    assert_equal(runtime.subagent_names[0], "research")
+    assert_equal(len(runtime.subagent_messages[0]), 2)
+    assert_equal(runtime.subagent_messages[0][0].content, "inspect")
+    assert_equal(runtime.subagent_messages[0][1].content, "child summary")
+    var session = Session("session", "gpt-test", "/tmp", 1)
+    runtime.persist_subagents(session)
+    assert_equal(session.task_names()[1], "research")
+    var saved = session.task_messages(1)
+    assert_equal(len(saved), 2)
+    assert_equal(saved[1].content, "child summary")
 
 
 def test_provider_error_is_visible_in_result() raises:

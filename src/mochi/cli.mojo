@@ -272,7 +272,7 @@ def standard_tool_definitions() raises -> List[ToolDefinition]:
     definitions.append(_tool("list", "List a directory", _properties("path", "string", True)))
     definitions.append(_tool("bash", "Run a shell command", _properties("command", "string", True)))
     definitions.append(_tool("code_execution", "Run the bounded Mochi command interpreter", _properties("code", "string", True)))
-    definitions.append(_tool("task", "Run an isolated child agent", _two_properties("prompt", "string", "name", "string")))
+    definitions.append(_tool("task", "Run an isolated child agent", _task_properties()))
     return definitions^
 
 
@@ -293,6 +293,22 @@ def _properties(name: String, kind: String, required: Bool) raises -> JsonValue:
         required_fields.append(JsonValue.string(name))
     schema.set("required", required_fields^)
     schema.set("additionalProperties", JsonValue.boolean(False))
+    return schema^
+
+
+def _task_properties() raises -> JsonValue:
+    var schema = _two_properties("description", "string", "prompt", "string")
+    var properties = schema.get("properties")
+    var subagent_type = JsonValue.object()
+    subagent_type.set("type", JsonValue.string("string"))
+    properties.set("subagent_type", subagent_type^)
+    var model_tier = JsonValue.object()
+    model_tier.set("type", JsonValue.string("string"))
+    properties.set("model_tier", model_tier^)
+    var output_schema = JsonValue.object()
+    output_schema.set("type", JsonValue.string("object"))
+    properties.set("output_schema", output_schema^)
+    schema.set("properties", properties^)
     return schema^
 
 

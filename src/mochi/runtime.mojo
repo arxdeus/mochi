@@ -16,6 +16,7 @@ from mochi.domain import (
     ThinkingSupport,
 )
 from mochi.json import JsonValue, parse_json, serialize_json
+from mochi.session import Session, message_to_json
 from mochi.mcp import McpClient, McpOAuthState, StdioTransport, StreamableHttpTransport
 from mochi.permissions import (
     PermissionAnswer,
@@ -117,6 +118,10 @@ struct Runtime:
     var mcp_http_errors: List[String]
     var plugin_names: List[String]
     var plugin_clients: List[PluginClient]
+    var subagent_ids: List[String]
+    var subagent_names: List[String]
+    var subagent_models: List[String]
+    var subagent_messages: List[List[Message]]
 
     def __init__(
         out self,
@@ -160,6 +165,10 @@ struct Runtime:
         self.mcp_http_errors = List[String]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
+        self.subagent_ids = List[String]()
+        self.subagent_names = List[String]()
+        self.subagent_models = List[String]()
+        self.subagent_messages = List[List[Message]]()
 
     def __init__(
         out self,
@@ -202,6 +211,10 @@ struct Runtime:
         self.mcp_http_errors = List[String]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
+        self.subagent_ids = List[String]()
+        self.subagent_names = List[String]()
+        self.subagent_models = List[String]()
+        self.subagent_messages = List[List[Message]]()
 
     def set_system_prompt(mut self, prompt: String):
         self.system_prompt = prompt
@@ -273,6 +286,26 @@ struct Runtime:
     def set_messages(mut self, messages: List[Message]):
         self.messages = messages.copy()
 
+    def subagent_metadata(self) raises -> JsonValue:
+        var result = JsonValue.array()
+        for i in range(len(self.subagent_ids)):
+            var item = JsonValue.object()
+            item.set("tool_use_id", JsonValue.string(self.subagent_ids[i]))
+            item.set("name", JsonValue.string(self.subagent_names[i]))
+            item.set("model", JsonValue.string(self.subagent_models[i]))
+            result.append(item^)
+        return result^
+
+    def persist_subagents(mut self, mut session: Session) raises:
+        session.subagents = self.subagent_metadata()
+        session.subagent_ids.clear()
+        session.subagent_messages.clear()
+        for i in range(len(self.subagent_ids)):
+            for message in self.subagent_messages[i]:
+                session.add_subagent_message(
+                    self.subagent_ids[i], message_to_json(message)
+                )
+
     def ask_btw(mut self, question: String, session_id: String = "") -> String:
         comptime reminder = "<system-reminder>\nThis is a side question. Answer it directly in a single response.\n- You have NO tools: you cannot read files, run commands, or take any action.\n- One-off response: there are no follow-up turns.\n- Answer ONLY from the existing conversation context.\n- Never say \"Let me...\", \"I'll now...\", or promise any action.\n- If you don't know, say so; do not offer to look it up.\n</system-reminder>"
         var messages = self.messages.copy()
@@ -315,10 +348,13 @@ struct Runtime:
         var content = String("Permission denied")
         if answer.is_allow():
             try:
+                var permission_cancel = CancellationToken()
                 content = self._execute_prepared(
                     PreparedTool(
                         permission.tool, permission.arguments.copy()
-                    )
+                    ),
+                    permission.tool_call_id,
+                    permission_cancel^,
                 )
             except error:
                 content = "Error: " + String(error)
@@ -688,7 +724,7 @@ struct Runtime:
                         prepared.name, decision.scopes, answer
                     )
                     if answer.is_allow():
-                        content = self._execute_prepared(prepared)
+                        content = self._execute_prepared(prepared, call.id, cancel)
                     else:
                         content = "Permission denied"
                         for scope in decision.scopes:
@@ -700,18 +736,71 @@ struct Runtime:
             elif cancel.is_cancelled():
                 content = "Error: operation cancelled"
             else:
-                content = self._execute_prepared(prepared)
+                content = self._execute_prepared(prepared, call.id, cancel)
         except error:
             content = "Error: " + String(error)
         self.append_tool_result(call, ToolResult.success(content))
 
-    def _execute_prepared(mut self, prepared: PreparedTool) raises -> String:
+    def _execute_prepared(
+        mut self,
+        prepared: PreparedTool,
+        tool_call_id: String,
+        cancel: CancellationToken,
+    ) raises -> String:
+        if prepared.name == "task":
+            return self._run_subagent(prepared, tool_call_id, cancel)
         if self.remote.is_remote(prepared.name):
             var queued = self.remote.take_queued(prepared.name)
             if queued:
                 return queued.value().content
             return self._dispatch_remote(prepared)
         return self.tools.execute(prepared).content
+
+    def _run_subagent(
+        mut self,
+        prepared: PreparedTool,
+        tool_call_id: String,
+        cancel: CancellationToken,
+    ) raises -> String:
+        if not self.workflow:
+            raise Error("subagents require workflow mode")
+        if len(self.subagent_ids) >= self.tools.max_subagents:
+            raise Error("subagent limit exceeded")
+        var prompt = prepared.arguments.get("prompt").string_value
+        var name = String("task")
+        if prepared.arguments.contains("description"):
+            name = prepared.arguments.get("description").string_value
+        var child_tools = self.tools.copy()
+        child_tools.set_workflow(False)
+        var child = Runtime(
+            self.provider.clone_for_child(),
+            child_tools^,
+            self.permissions.copy(),
+            self.model,
+            max_turns=self.max_turns,
+            max_context_chars=self.max_context_chars,
+            compact_keep=self.compact_keep,
+        )
+        child.system_prompt = self.system_prompt
+        if prepared.arguments.contains("subagent_type"):
+            var subagent_type = prepared.arguments.get("subagent_type").string_value
+            if subagent_type != "research" and subagent_type != "general":
+                raise Error("unknown subagent type: " + subagent_type)
+            if subagent_type == "research":
+                child.system_prompt += "\nYou are a read-only research subagent. Do not modify files or run mutating commands."
+        for definition in self.definitions:
+            if definition.name != "task":
+                child.definitions.append(definition.copy())
+        var result = child.run(prompt, cancel)
+        self.subagent_ids.append(tool_call_id)
+        self.subagent_names.append(name^)
+        self.subagent_models.append(self.model)
+        self.subagent_messages.append(result.messages.copy())
+        if result.stop_reason == "provider_error" or result.stop_reason == "cancelled":
+            raise Error("sub-agent " + result.stop_reason + ": " + result.text)
+        if result.text == "":
+            raise Error("subagent finished without providing a summary")
+        return result.text
 
     def _dispatch_remote(mut self, prepared: PreparedTool) raises -> String:
         var protocol = self.remote.protocol_for(prepared.name)

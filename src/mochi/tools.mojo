@@ -224,6 +224,7 @@ struct ToolRegistry(Copyable, Movable):
             _ = _string_arg(prepared.arguments, "code")
             prepared.add_scope("mojo-mini-interpreter")
         elif name == "task":
+            _ = _string_arg(prepared.arguments, "description")
             _ = _string_arg(prepared.arguments, "prompt")
             prepared.add_scope("subagent")
         elif self.is_remote(name):

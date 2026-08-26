@@ -115,12 +115,12 @@ def test_code_execution_mini_interpreter_subagent_bound() raises:
     assert_false(disabled.ok)
     assert_true("workflow mode" in disabled.content)
     var task_disabled = registry.execute(
-        registry.prepare("task", '{"prompt":"first","name":"research"}')
+        registry.prepare("task", '{"description":"research","prompt":"first"}')
     )
     assert_false(task_disabled.ok)
     registry.set_workflow(True)
     var task_result = registry.execute(
-        registry.prepare("task", '{"prompt":"first","name":"research"}')
+        registry.prepare("task", '{"description":"research","prompt":"first"}')
     )
     assert_true(task_result.ok)
     assert_equal(task_result.content, "A")

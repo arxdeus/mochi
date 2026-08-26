@@ -484,6 +484,7 @@ def _run_prompt(
         session.update_from_result(
             result.messages, result.usage, runtime.model, _now_ms()
         )
+        runtime.persist_subagents(session)
         session.meta = runtime.save_modes(session.meta)
         store.save(session)
     except error:
@@ -660,6 +661,7 @@ def _run_resume(
         session.update_from_result(
             result.messages, result.usage, runtime.model, _now_ms()
         )
+        runtime.persist_subagents(session)
         session.meta = runtime.save_modes(session.meta)
         store.save(session)
     except error:

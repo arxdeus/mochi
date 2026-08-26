@@ -1246,7 +1246,7 @@ def _accept_provider_chunk(
         state[].error = String(error)
 
 
-struct OpenAICompatibleProvider:
+struct OpenAICompatibleProvider(Copyable, Movable):
     var spec: ProviderSpec
     var keys: ApiKeyState
     var oauth: OAuthState
@@ -1254,6 +1254,7 @@ struct OpenAICompatibleProvider:
     var last_usage: Usage
     var last_status: Int
     var fixture_error: String
+    var fixture_results: List[ProviderResult]
 
     def __init__(out self, var spec: ProviderSpec):
         self.keys = ApiKeyState(spec.api_keys.copy())
@@ -1263,6 +1264,7 @@ struct OpenAICompatibleProvider:
         self.last_usage = Usage()
         self.last_status = 0
         self.fixture_error = ""
+        self.fixture_results = List[ProviderResult]()
 
     def set_oauth(mut self, oauth: OAuthState):
         self.oauth = oauth.copy()
@@ -1270,6 +1272,9 @@ struct OpenAICompatibleProvider:
 
     def fail_with(mut self, error: String):
         self.fixture_error = error
+
+    def enqueue_result(mut self, result: ProviderResult):
+        self.fixture_results.append(result.copy())
 
     def rotate_key(mut self) -> Bool:
         return self.keys.rotate()
@@ -1934,6 +1939,13 @@ struct OpenAIProviderAdapter(Provider, Movable):
         else:
             body = _chat_body(request.model.id, messages, request.tools)
         _apply_openai_options(body, request)
+        if len(self.inner.fixture_results) > 0:
+            var result = self.inner.fixture_results.pop(0)
+            if result.message.content != "":
+                sink.emit(DomainProviderEvent.text_delta(result.message.content))
+            for call in result.message.tool_calls:
+                sink.emit(DomainProviderEvent.tool_use_start(call.id, call.name))
+            return _stream_response(result)
         if self.inner.fixture_error != "":
             raise Error(self.inner.fixture_error)
         var transport = FlokiTransport()
@@ -2095,6 +2107,28 @@ struct ProductionProvider(Movable):
         self.adapter[OpenAIProviderAdapter].inner.spec.responses_api = True
         self.adapter[OpenAIProviderAdapter].inner.spec.account_id = credentials.account_id
         self.adapter[OpenAIProviderAdapter].inner.set_oauth(credentials.oauth_state())
+
+    def clone_for_child(self) raises -> ProductionProvider:
+        if self.adapter.isa[OpenAIProviderAdapter]():
+            return ProductionProvider(
+                self.adapter[OpenAIProviderAdapter].inner.copy(),
+                self.model_info,
+            )
+        if self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+            return ProductionProvider(
+                self.adapter[
+                    AnthropicProviderAdapterWithTransport[FlokiTransport]
+                ].spec.copy(),
+                FlokiTransport(),
+                self.model_info,
+            )
+        return ProductionProvider(
+            self.adapter[
+                GeminiProviderAdapterWithTransport[FlokiTransport]
+            ].spec.copy(),
+            FlokiTransport(),
+            self.model_info,
+        )
 
 
 struct OpenAIProviderAdapterWithTransport[
