@@ -87,6 +87,16 @@ def test_unicode_editor_cursor_insert_and_delete() raises:
     assert_equal(state.draft, "λaéz")
 
 
+def test_multiline_continuation_replaces_backslash() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("first\\"))
+    _ = UiReducer.reduce(state, UiEvent.continue_line())
+    assert_equal(state.draft, "first\n")
+    _ = UiReducer.reduce(state, UiEvent.insert("second"))
+    assert_equal(state.draft, "first\nsecond")
+    assert_equal(state.cursor, 12)
+
+
 def test_history_navigation_preserves_draft_and_bounds() raises:
     var state = UiState()
     state.set_history(["a", "b"])

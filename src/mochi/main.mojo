@@ -657,6 +657,10 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
             _render_editor(ui)
             continue
         if byte == 10 or byte == 13:
+            if ui.cursor == ui.draft.count_codepoints() and ui.draft.endswith("\\"):
+                _ = UiReducer.reduce(ui, UiEvent.continue_line())
+                _render_editor(ui)
+                continue
             external_call["mochi_terminal_disable_raw", NoneType]()
             print()
             return Optional(ui.draft.copy())

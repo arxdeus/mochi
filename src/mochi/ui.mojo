@@ -19,6 +19,7 @@ struct UiEvent(Copyable, Movable):
     comptime INSERT = 9
     comptime HISTORY_UP = 10
     comptime HISTORY_DOWN = 11
+    comptime CONTINUE_LINE = 12
 
     var tag: Int
     var text: String
@@ -105,6 +106,10 @@ struct UiEvent(Copyable, Movable):
     @staticmethod
     def history_down() -> Self:
         return Self(Self.HISTORY_DOWN)
+
+    @staticmethod
+    def continue_line() -> Self:
+        return Self(Self.CONTINUE_LINE)
 
 
 struct UiAction(Copyable, Movable):
@@ -292,6 +297,8 @@ struct UiReducer:
             Self._history_up(state)
         elif event.tag == UiEvent.HISTORY_DOWN:
             Self._history_down(state)
+        elif event.tag == UiEvent.CONTINUE_LINE:
+            Self._continue_line(state)
         return UiAction.none()
 
     @staticmethod
@@ -353,6 +360,13 @@ struct UiReducer:
         var after = _codepoint_suffix(state.draft, state.cursor)
         state.draft = before + after
         state.cursor -= 1
+
+    @staticmethod
+    def _continue_line(mut state: UiState):
+        var before = _codepoint_prefix(state.draft, state.cursor)
+        if before.endswith("\\"):
+            Self._delete_backward(state)
+        Self._insert(state, "\n")
 
     @staticmethod
     def _history_up(mut state: UiState):
