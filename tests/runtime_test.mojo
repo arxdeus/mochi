@@ -100,6 +100,22 @@ def test_runtime_accepts_production_provider_dialects() raises:
     assert_equal(gemini.provider.name, "google")
 
 
+def test_queued_input_is_wrapped_and_consumed() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    runtime.queue_input("new direction")
+    assert_equal(runtime.queued_input_count(), 1)
+    assert_true(runtime.consume_queued_input())
+    assert_equal(runtime.queued_input_count(), 0)
+    assert_true("<user-interrupt>" in runtime.messages[0].content)
+    assert_true("new direction" in runtime.messages[0].content)
+    assert_false(runtime.consume_queued_input())
+
+
 def test_system_prompt_is_sent_but_not_persisted() raises:
     var runtime = Runtime(
         OpenAICompatibleProvider(

@@ -87,6 +87,7 @@ struct Runtime:
     var retries: Int
     var system_prompt: String
     var permission_answers: List[PermissionAnswer]
+    var queued_inputs: List[String]
     var mcp_stdio_names: List[String]
     var mcp_stdio_clients: List[McpClient]
     var mcp_stdio_transports: List[StdioTransport]
@@ -121,6 +122,7 @@ struct Runtime:
         self.retries = 0
         self.system_prompt = ""
         self.permission_answers = List[PermissionAnswer]()
+        self.queued_inputs = List[String]()
         self.mcp_stdio_names = List[String]()
         self.mcp_stdio_clients = List[McpClient]()
         self.mcp_stdio_transports = List[StdioTransport]()
@@ -154,6 +156,7 @@ struct Runtime:
         self.retries = 0
         self.system_prompt = ""
         self.permission_answers = List[PermissionAnswer]()
+        self.queued_inputs = List[String]()
         self.mcp_stdio_names = List[String]()
         self.mcp_stdio_clients = List[McpClient]()
         self.mcp_stdio_transports = List[StdioTransport]()
@@ -171,6 +174,26 @@ struct Runtime:
 
     def answer_next_permission(mut self, answer: PermissionAnswer):
         self.permission_answers.append(answer)
+
+    def queue_input(mut self, input: String):
+        self.queued_inputs.append(input)
+
+    def queued_input_count(self) -> Int:
+        return len(self.queued_inputs)
+
+    def consume_queued_input(mut self) -> Bool:
+        if len(self.queued_inputs) == 0:
+            return False
+        var input = self.queued_inputs.pop(0)
+        self.messages.append(
+            Message(
+                "user",
+                "<user-interrupt>\nThe user sent a new message while you were working. Address it and continue.\n\n"
+                + input
+                + "\n</user-interrupt>",
+            )
+        )
+        return True
 
     def add_tool(mut self, var definition: ToolDefinition) raises:
         if self.tools.index_of(definition.name) < 0:
@@ -287,6 +310,7 @@ struct Runtime:
             if cancel.is_cancelled():
                 return self._result(final_text, usage, completed_turns, "cancelled")
             _ = self.compact_if_needed()
+            _ = self.consume_queued_input()
             var response: ProviderResult
             try:
                 response = self._complete_with_retry(cancel)
