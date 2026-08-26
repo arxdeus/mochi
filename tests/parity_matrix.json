@@ -310,7 +310,7 @@
       "id": "extension.executable.lifecycle",
       "area": "extensions",
       "owner": "mochi_extension",
-      "status": "partial",
+      "status": "parity",
       "description": "Mojo executable extension handshake/register/invoke/shutdown lifecycle.",
       "upstream_refs": [
         "maki-lua/src/loader.rs",
@@ -326,10 +326,10 @@
           "normalization": "Protocol state and errors."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Host callbacks, events, commands/keymaps, and reload."
+          "status": "parity",
+          "upstream_command": "pixi run parity extension.executable.lifecycle",
+          "mojo_command": "pixi run parity extension.executable.lifecycle",
+          "normalization": "Pinned upstream load/register/shutdown/reload lifecycle tests pass with Mojo executable handshake, registration, invocation, cancellation, reconnect, stale-route replacement, commands, and prompt hints."
         }
       }
     },
