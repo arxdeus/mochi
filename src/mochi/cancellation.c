@@ -19,6 +19,64 @@
 #include <unistd.h>
 #endif
 
+int mochi_copy_file(const char *source, const char *destination) {
+#if defined(__unix__) || defined(__APPLE__)
+    int input = open(source, O_RDONLY);
+    if (input < 0) {
+        return errno == 0 ? -1 : errno;
+    }
+    int output = open(destination, O_WRONLY | O_CREAT | O_TRUNC, 0700);
+    if (output < 0) {
+        int error = errno == 0 ? -1 : errno;
+        close(input);
+        return error;
+    }
+    unsigned char buffer[65536];
+    for (;;) {
+        ssize_t count = read(input, buffer, sizeof(buffer));
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count < 0) {
+            int error = errno == 0 ? -1 : errno;
+            close(input);
+            close(output);
+            return error;
+        }
+        if (count == 0) {
+            break;
+        }
+        ssize_t offset = 0;
+        while (offset < count) {
+            ssize_t written = write(output, buffer + offset, (size_t)(count - offset));
+            if (written < 0 && errno == EINTR) {
+                continue;
+            }
+            if (written <= 0) {
+                int error = errno == 0 ? -1 : errno;
+                close(input);
+                close(output);
+                return error;
+            }
+            offset += written;
+        }
+    }
+    if (fsync(output) != 0) {
+        int error = errno == 0 ? -1 : errno;
+        close(input);
+        close(output);
+        return error;
+    }
+    close(input);
+    close(output);
+    return 0;
+#else
+    (void)source;
+    (void)destination;
+    return -1;
+#endif
+}
+
 int mochi_secure_random(void *buffer, size_t length) {
 #if defined(__unix__) || defined(__APPLE__)
     int fd = open("/dev/urandom", O_RDONLY);

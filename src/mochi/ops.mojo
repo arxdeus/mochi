@@ -1,4 +1,4 @@
-from std.ffi import c_int, external_call
+from std.ffi import CStringSlice, c_int, external_call
 from std.os import makedirs, remove
 from std.os.path import exists
 
@@ -155,9 +155,16 @@ def replace_from_download(
 
 
 def _copy_file(source: String, destination: String) raises:
-    var content = open(source, "r").read()
-    with open(destination, "w") as file:
-        file.write(content)
+    var owned_source = source
+    var owned_destination = destination
+    var status = external_call[
+        "mochi_copy_file", c_int, CStringSlice[ImmutAnyOrigin], CStringSlice[ImmutAnyOrigin]
+    ](
+        rebind[CStringSlice[ImmutAnyOrigin]](owned_source.as_c_string_slice()),
+        rebind[CStringSlice[ImmutAnyOrigin]](owned_destination.as_c_string_slice()),
+    )
+    if status != 0:
+        raise Error("binary copy failed with status " + String(status))
 
 
 def _prefix(value: String, count: Int) -> String:

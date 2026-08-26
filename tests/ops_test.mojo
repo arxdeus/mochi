@@ -61,16 +61,18 @@ def test_binary_backup_replace_and_restore() raises:
     except:
         pass
     makedirs(TEST_DIR, exist_ok=True)
+    var old_binary = String("old") + chr(0) + chr(255) + "binary"
+    var new_binary = String("new") + chr(0) + chr(254) + "binary"
     with open(TEST_DIR + "/mochi", "w") as file:
-        file.write("old")
+        file.write(old_binary)
     with open(TEST_DIR + "/download", "w") as file:
-        file.write("new")
+        file.write(new_binary)
     var backup = TEST_DIR + "/mochi_backup"
     replace_from_download(TEST_DIR + "/download", TEST_DIR + "/mochi", backup)
-    assert_equal(open(TEST_DIR + "/mochi", "r").read(), "new")
-    assert_equal(open(backup, "r").read(), "old")
+    assert_equal(open(TEST_DIR + "/mochi", "r").read(), new_binary)
+    assert_equal(open(backup, "r").read(), old_binary)
     restore_backup(backup, TEST_DIR + "/mochi")
-    assert_equal(open(TEST_DIR + "/mochi", "r").read(), "old")
+    assert_equal(open(TEST_DIR + "/mochi", "r").read(), old_binary)
 
 
 def test_telemetry_event_codec() raises:
