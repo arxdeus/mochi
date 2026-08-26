@@ -52,7 +52,7 @@ from mochi.storage import (
 )
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken, Message
-from mochi.ui import UiEvent, UiReducer, UiState
+from mochi.ui import UiEvent, UiReducer, UiState, command_completion, command_matches
 from mochi.workspace import InputHistory, NoteStore, project_id
 
 
@@ -666,6 +666,8 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
             return Optional(ui.draft.copy())
         if byte == 127 or byte == 8:
             _ = UiReducer.reduce(ui, UiEvent.delete_backward())
+        elif byte == 9 and ui.draft.startswith("/") and not " " in ui.draft:
+            _ = UiReducer.reduce(ui, UiEvent.edit(command_completion(ui.draft)))
         elif byte == 27:
             var bracket = external_call["getchar", c_int]()
             if bracket == 91:
@@ -706,6 +708,10 @@ def _render_editor(ui: UiState):
     print("\r\x1b[2K> " + ui.draft, end="")
     if tail > 0:
         print("\x1b[" + String(tail) + "D", end="")
+    if ui.draft.startswith("/") and not " " in ui.draft:
+        var matches = command_matches(ui.draft)
+        if len(matches) > 0:
+            print("\x1b[s\x1b[90m  " + matches[0] + "\x1b[0m\x1b[u", end="")
 
 
 def _read_line() raises -> Optional[String]:

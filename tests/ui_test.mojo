@@ -6,6 +6,7 @@ from mochi.ui import (
     UiReducer,
     UiState,
     ui_transcript_line,
+    command_completion,
     command_matches,
     command_names,
     validate_ui_transcript_line,
@@ -66,6 +67,8 @@ def test_command_catalog_and_fuzzy_matches() raises:
     var fuzzy = command_matches("pct")
     assert_equal(fuzzy[0], "compact")
     assert_equal(len(command_matches("not-a-command")), 0)
+    assert_equal(command_completion("/co"), "/compact ")
+    assert_equal(command_completion("/not-a-command"), "/not-a-command")
 
 
 def test_unicode_editor_cursor_insert_and_delete() raises:

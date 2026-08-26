@@ -219,6 +219,13 @@ def command_names() -> List[String]:
     return result^
 
 
+def command_completion(query: String) -> String:
+    var matches = command_matches(query)
+    if len(matches) == 0:
+        return query
+    return "/" + matches[0] + " "
+
+
 def command_matches(query: String) -> List[String]:
     var needle = String(query.removeprefix("/").strip()).lower()
     var exact = List[String]()
