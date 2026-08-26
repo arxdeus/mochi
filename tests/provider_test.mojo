@@ -18,7 +18,12 @@ from mochi.domain import (
 )
 from mochi.http import HttpRequest, HttpResponse, MockTransport
 from mochi.json import JsonValue, parse_json
-from mochi.provider_contract import ProviderEventSink, ProviderRequest
+from mochi.provider_contract import (
+    ProviderEventSink,
+    ProviderRequest,
+    RequestOptions,
+    ThinkingConfig,
+)
 from mochi.types import CancellationToken, ProviderEvent
 from mochi.provider import (
     AnthropicProviderAdapterWithTransport,
@@ -567,6 +572,7 @@ def test_anthropic_provider_contract_adapter() raises:
         messages^,
         "system",
         tools^,
+        RequestOptions(ThinkingConfig.adaptive(), True),
     )
     var sink = ContractEventLog()
     var result = adapter.stream_message(request^, sink)
@@ -585,6 +591,8 @@ def test_anthropic_provider_contract_adapter() raises:
     assert_equal(body.get("model").string_value, "claude-opus-4-6")
     assert_equal(body.get("system").array_value[0].get("text").string_value, "system")
     assert_equal(body.get("tools").array_value[0].get("name").string_value, "read")
+    assert_equal(body.get("thinking").get("type").string_value, "adaptive")
+    assert_equal(body.get("speed").string_value, "fast")
 
 
 def test_gemini_provider_contract_adapter() raises:
@@ -617,6 +625,7 @@ def test_gemini_provider_contract_adapter() raises:
         messages^,
         "system",
         tools^,
+        RequestOptions(ThinkingConfig.with_budget(8192), False),
     )
     var sink = ContractEventLog()
     var result = adapter.stream_message(request^, sink)
@@ -634,6 +643,10 @@ def test_gemini_provider_contract_adapter() raises:
     assert_equal(body.get("contents").array_value[0].get("role").string_value, "user")
     assert_equal(body.get("systemInstruction").get("parts").array_value[0].get("text").string_value, "system")
     assert_equal(body.get("tools").array_value[0].get("functionDeclarations").array_value[0].get("name").string_value, "read")
+    assert_equal(
+        body.get("generationConfig").get("thinkingConfig").get("thinkingBudget").int_value,
+        8192,
+    )
 
 
 def test_openai_provider_contract_adapter() raises:

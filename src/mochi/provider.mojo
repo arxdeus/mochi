@@ -26,6 +26,7 @@ from mochi.provider_contract import (
     Provider,
     ProviderEventSink,
     ProviderRequest,
+    ThinkingConfig,
     provider_error_text,
 )
 from mochi.types import CancellationToken, Message, ProviderEvent, ToolCall, Usage
@@ -1631,7 +1632,26 @@ def _anthropic_body(request: ProviderRequest) raises -> JsonValue:
         messages.append(raw^)
     body.set("messages", messages^)
     body.set("tools", _anthropic_tools(request.tools))
+    _apply_anthropic_options(body, request)
     return body^
+
+
+def _apply_anthropic_options(
+    mut body: JsonValue, request: ProviderRequest
+) raises:
+    var thinking = request.options.thinking.copy()
+    if not thinking.is_off():
+        var config = JsonValue.object()
+        if thinking.tag == ThinkingConfig.BUDGET:
+            config.set("type", JsonValue.string("enabled"))
+            config.set(
+                "budget_tokens", JsonValue.integer(thinking.budget_tokens)
+            )
+        else:
+            config.set("type", JsonValue.string("adaptive"))
+        body.set("thinking", config^)
+    if request.options.fast and request.model.supports_fast():
+        body.set("speed", JsonValue.string("fast"))
 
 
 def _anthropic_tools(tools: JsonValue) raises -> JsonValue:
@@ -1839,6 +1859,18 @@ def _gemini_body(request: ProviderRequest) raises -> JsonValue:
             "maxOutputTokens",
             JsonValue.integer(request.model.max_output_tokens.value()),
         )
+    if not request.options.thinking.is_off():
+        var thinking = JsonValue.object()
+        if request.options.thinking.tag == ThinkingConfig.BUDGET:
+            var budget = request.options.thinking.budget_tokens
+            if request.model.max_output_tokens:
+                budget = min(
+                    budget, request.model.max_output_tokens.value() // 2
+                )
+            thinking.set("thinkingBudget", JsonValue.integer(budget))
+        else:
+            thinking.set("includeThoughts", JsonValue.boolean(True))
+        generation.set("thinkingConfig", thinking^)
     body.set("generationConfig", generation^)
     var declarations = _gemini_tools(request.tools)
     if len(declarations.array_value) > 0:
@@ -1901,6 +1933,7 @@ struct OpenAIProviderAdapter(Provider, Movable):
             body = _responses_body(request.model.id, messages, request.tools)
         else:
             body = _chat_body(request.model.id, messages, request.tools)
+        _apply_openai_options(body, request)
         if self.inner.fixture_error != "":
             raise Error(self.inner.fixture_error)
         var transport = FlokiTransport()
@@ -2078,6 +2111,7 @@ struct OpenAIProviderAdapterWithTransport[
             body = _responses_body(request.model.id, messages, request.tools)
         else:
             body = _chat_body(request.model.id, messages, request.tools)
+        _apply_openai_options(body, request)
         var result: ProviderResult
         try:
             result = self.inner.complete_json_with_cancel(
@@ -2203,6 +2237,22 @@ def _responses_body(
     if tools.kind == JsonValue.ARRAY and len(tools.array_value) > 0:
         body.set("tools", tools.copy())
     return body^
+
+
+def _apply_openai_options(
+    mut body: JsonValue, request: ProviderRequest
+) raises:
+    var thinking = request.options.thinking.copy()
+    if thinking.is_off():
+        return
+    var effort = thinking.display()
+    if thinking.tag == ThinkingConfig.ADAPTIVE or thinking.tag == ThinkingConfig.BUDGET:
+        effort = "medium"
+    elif effort == "minimal":
+        effort = "low"
+    elif effort == "maximum":
+        effort = "high"
+    body.set("reasoning_effort", JsonValue.string(effort))
 
 
 def _stream_response(result: ProviderResult) raises -> StreamResponse:
