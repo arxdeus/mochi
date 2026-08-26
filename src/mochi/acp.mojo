@@ -164,6 +164,7 @@ struct AcpRuntimeServer:
     var store: SessionStore
     var sessions: List[Session]
     var active_session_id: String
+    var active_cancel: Optional[CancellationToken]
     var now_ms: Int
 
     def __init__(
@@ -177,6 +178,7 @@ struct AcpRuntimeServer:
         self.store = store^
         self.sessions = List[Session]()
         self.active_session_id = ""
+        self.active_cancel = None
         self.now_ms = now_ms
 
     def handle(mut self, request: AcpMessage) raises -> List[AcpMessage]:
@@ -227,7 +229,11 @@ struct AcpRuntimeServer:
                 )
                 return output^
             var prompt = _prompt_text(request.payload)
-            var result = self.runtime.run(prompt, CancellationToken())
+            var cancel = CancellationToken()
+            self.active_session_id = id
+            self.active_cancel = Optional(cancel.copy())
+            var result = self.runtime.run(prompt, cancel^)
+            self.active_cancel = None
             self.sessions[index].update_from_result(
                 result.messages, result.usage, self.runtime.model, self.now_ms
             )
@@ -240,12 +246,23 @@ struct AcpRuntimeServer:
             output.append(AcpMessage.response(request.id, response^))
             return output^
         if request.method == "session/cancel":
+            var id = _string(request.payload, "sessionId")
+            if self.active_cancel and self.active_session_id == id:
+                self.active_cancel.value().cancel()
             output.append(self.protocol.handle(request))
             return output^
         output.append(self.protocol.handle(request))
         return output^
 
+    def cancel_active(mut self, session_id: String) -> Bool:
+        if not self.active_cancel or self.active_session_id != session_id:
+            return False
+        self.active_cancel.value().cancel()
+        return True
+
     def shutdown(mut self):
+        if self.active_cancel:
+            self.active_cancel.value().cancel()
         self.runtime.shutdown_remotes()
 
     def _new_session_id(self, payload: JsonValue) raises -> String:

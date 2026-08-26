@@ -1,4 +1,4 @@
-from std.testing import TestSuite, assert_equal, assert_true
+from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from mochi.acp import (
     ACP_PROTOCOL_VERSION,
@@ -14,7 +14,7 @@ from mochi.provider import OpenAICompatibleProvider, ProviderSpec
 from mochi.runtime import Runtime
 from mochi.session import Session, SessionStore
 from mochi.tools import ToolRegistry
-from mochi.types import Message
+from mochi.types import CancellationToken, Message
 
 
 def test_acp_codec_and_initialize() raises:
@@ -110,6 +110,25 @@ def test_runtime_backed_prompt_and_session_persistence() raises:
     assert_equal(prompted[1].payload.get("stopReason").string_value, "provider_error")
     var stored = SessionStore(directory).load("acp-runtime")
     assert_equal(stored.runtime_messages()[0].content, "hello")
+
+
+def test_runtime_server_cancels_matching_active_prompt() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        _allowed(),
+        "gpt-test",
+    )
+    var server = AcpRuntimeServer(
+        runtime^, SessionStore("/tmp/mochi-acp-cancel-test"), 1
+    )
+    server.active_session_id = "active"
+    var token = CancellationToken()
+    server.active_cancel = Optional(token.copy())
+    assert_false(token.is_cancelled())
+    assert_false(server.cancel_active("other"))
+    assert_true(server.cancel_active("active"))
+    assert_true(token.is_cancelled())
 
 
 def test_runtime_backed_load_replays_history() raises:
