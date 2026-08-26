@@ -898,6 +898,155 @@ struct AnthropicStreamParser(Copyable, Movable):
         return events^
 
 
+struct GeminiStreamParser(Copyable, Movable):
+    var sse: SSEParser
+    var blocks: List[ContentBlock]
+    var usage: Usage
+    var cache_read_tokens: Int
+    var stop_reason: String
+    var next_tool_id: Int
+
+    def __init__(out self):
+        self.sse = SSEParser()
+        self.blocks = List[ContentBlock]()
+        self.usage = Usage()
+        self.cache_read_tokens = 0
+        self.stop_reason = ""
+        self.next_tool_id = 0
+
+    def feed(mut self, chunk: String) raises -> List[ProviderEvent]:
+        return self._parse_payloads(self.sse.feed(chunk))
+
+    def finish(mut self) raises -> List[ProviderEvent]:
+        return self._parse_payloads(self.sse.finish())
+
+    def message(self) -> Message:
+        var message = Message("assistant", "")
+        for block in self.blocks:
+            if block.is_text():
+                message.content += block.text
+            elif block.is_tool_use():
+                message.tool_calls.append(
+                    ToolCall(block.id, block.name, serialize_json(block.input))
+                )
+        return message^
+
+    def _parse_payloads(
+        mut self, payloads: List[String]
+    ) raises -> List[ProviderEvent]:
+        var events = List[ProviderEvent]()
+        for payload in payloads:
+            var root = parse_json(payload)
+            if root.contains("usageMetadata"):
+                var usage = root.get("usageMetadata")
+                self.usage.input_tokens = _int_or(usage, "promptTokenCount", 0)
+                self.usage.output_tokens = _int_or(usage, "candidatesTokenCount", 0)
+                self.cache_read_tokens = _int_or(
+                    usage, "cachedContentTokenCount", 0
+                )
+                events.append(ProviderEvent.usage_event(self.usage))
+            if not root.contains("candidates"):
+                continue
+            var candidates = root.get("candidates")
+            if candidates.kind != JsonValue.ARRAY:
+                raise Error("Gemini candidates is not an array")
+            for candidate in candidates.array_value:
+                if candidate.contains("content"):
+                    var content = candidate.get("content")
+                    if content.contains("parts"):
+                        var parts = content.get("parts")
+                        if parts.kind != JsonValue.ARRAY:
+                            raise Error("Gemini parts is not an array")
+                        for part in parts.array_value:
+                            if part.contains("functionCall"):
+                                var call = part.get("functionCall")
+                                var name = _string_or(call, "name", "")
+                                var input = JsonValue.object()
+                                if call.contains("args"):
+                                    input = call.get("args")
+                                    if input.kind != JsonValue.OBJECT:
+                                        input = JsonValue.object()
+                                var id = (
+                                    "call_" + name + "_"
+                                    + String(self.next_tool_id)
+                                )
+                                self.next_tool_id += 1
+                                var signature = Optional[String]()
+                                if part.contains("thoughtSignature"):
+                                    signature = Optional(
+                                        _string_or(part, "thoughtSignature", "")
+                                    )
+                                elif call.contains("thoughtSignature"):
+                                    signature = Optional(
+                                        _string_or(call, "thoughtSignature", "")
+                                    )
+                                self.blocks.append(
+                                    ContentBlock.tool_use(
+                                        id, name, input.copy(), signature^
+                                    )
+                                )
+                                events.append(
+                                    ProviderEvent.tool_call_delta(
+                                        ToolCall(id, name, serialize_json(input))
+                                    )
+                                )
+                            elif part.contains("text"):
+                                var text = _string_or(part, "text", "")
+                                var thought = (
+                                    part.contains("thought")
+                                    and part.get("thought").kind == JsonValue.BOOL
+                                    and part.get("thought").bool_value
+                                )
+                                if thought:
+                                    var signature = Optional[String]()
+                                    if part.contains("thoughtSignature"):
+                                        signature = Optional(
+                                            _string_or(
+                                                part, "thoughtSignature", ""
+                                            )
+                                        )
+                                    self._append_thinking(text, signature^)
+                                else:
+                                    self._append_text(text)
+                                    if text != "":
+                                        events.append(
+                                            ProviderEvent.text_delta(text)
+                                        )
+                var reason = _string_or(candidate, "finishReason", "")
+                if reason != "":
+                    self.stop_reason = _gemini_stop_reason(reason)
+            if self.stop_reason != "":
+                if self.next_tool_id > 0:
+                    self.stop_reason = "tool_calls"
+                events.append(ProviderEvent.done(self.stop_reason))
+        return events^
+
+    def _append_text(mut self, text: String):
+        if len(self.blocks) > 0 and self.blocks[len(self.blocks) - 1].is_text():
+            self.blocks[len(self.blocks) - 1].text += text
+        else:
+            self.blocks.append(ContentBlock.text_block(text))
+
+    def _append_thinking(
+        mut self, text: String, var signature: Optional[String]
+    ):
+        if (
+            len(self.blocks) > 0
+            and self.blocks[len(self.blocks) - 1].is_thinking()
+        ):
+            self.blocks[len(self.blocks) - 1].text += text
+            if signature:
+                self.blocks[len(self.blocks) - 1].signature = signature^
+        else:
+            self.blocks.append(ContentBlock.thinking(text, signature^))
+
+
+def _gemini_stop_reason(reason: String) -> String:
+    if reason == "MAX_TOKENS":
+        return "length"
+    return "stop"
+
+
 struct ProviderResult(Copyable, Movable):
     var message: Message
     var usage: Usage

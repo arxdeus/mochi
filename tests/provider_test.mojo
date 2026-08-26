@@ -22,6 +22,7 @@ from mochi.provider_contract import ProviderEventSink, ProviderRequest
 from mochi.types import CancellationToken, ProviderEvent
 from mochi.provider import (
     AnthropicStreamParser,
+    GeminiStreamParser,
     ApiKeyState,
     OAuthState,
     OpenAICompatibleProvider,
@@ -158,6 +159,43 @@ def test_anthropic_malformed_tool_input_falls_back_to_object() raises:
         'data: {"type":"content_block_stop","index":0}\n\n'
     )
     assert_equal(parser.message().tool_calls[0].arguments, "{}")
+
+
+def test_gemini_sse_text_thinking_tools_usage_and_stop() raises:
+    var parser = GeminiStreamParser()
+    var stream = (
+        'data: {"candidates":[{"content":{"parts":[{"text":"reason ","thought":true},{"text":"more","thought":true,"thoughtSignature":"sig"},{"text":"Hello"},{"functionCall":{"name":"bash","args":{"cmd":"ls"}},"thoughtSignature":"tool-sig"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":10,"cachedContentTokenCount":3}}\n\n'
+    )
+    var events = parser.feed(stream)
+    for event in parser.finish():
+        events.append(event.copy())
+    var message = parser.message()
+    assert_equal(message.content, "Hello")
+    assert_equal(len(message.tool_calls), 1)
+    assert_equal(message.tool_calls[0].name, "bash")
+    assert_equal(message.tool_calls[0].arguments, '{"cmd":"ls"}')
+    assert_equal(parser.blocks[0].text, "reason more")
+    assert_equal(parser.blocks[0].signature.value(), "sig")
+    assert_equal(parser.blocks[2].signature.value(), "tool-sig")
+    assert_equal(parser.usage.input_tokens, 5)
+    assert_equal(parser.usage.output_tokens, 10)
+    assert_equal(parser.cache_read_tokens, 3)
+    assert_equal(parser.stop_reason, "tool_calls")
+    assert_true(events[len(events) - 1].kind == "done")
+
+
+def test_gemini_coalesces_text_and_unique_parallel_tool_ids() raises:
+    var parser = GeminiStreamParser()
+    _ = parser.feed(
+        'data: {"candidates":[{"content":{"parts":[{"text":"Hello, "}]}}]}\n\n'
+        'data: {"candidates":[{"content":{"parts":[{"text":"world."},{"functionCall":{"name":"bash","args":{}}},{"functionCall":{"name":"bash","args":{}}}]},"finishReason":"MAX_TOKENS"}]}\n\n'
+    )
+    assert_equal(parser.message().content, "Hello, world.")
+    assert_equal(len(parser.message().tool_calls), 2)
+    assert_true(
+        parser.message().tool_calls[0].id != parser.message().tool_calls[1].id
+    )
+    assert_equal(parser.stop_reason, "tool_calls")
 
 
 def test_openai_sse_and_partial_tool_assembly() raises:

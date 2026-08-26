@@ -53,6 +53,11 @@ case "${1:-all}" in
             providers::anthropic::tests::parse_sse_text_and_usage -- --exact >/dev/null
         run_mojo_test tests/provider_test.mojo
         ;;
+    provider.google.generate.streaming)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
+            providers::google::tests::parse_sse_plain_text -- --exact >/dev/null
+        run_mojo_test tests/provider_test.mojo
+        ;;
     storage.session.latest_cwd)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-storage \
             sessions::tests::latest_returns_most_recent_for_cwd -- --exact >/dev/null
@@ -66,7 +71,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.model.catalog_metadata"
+        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

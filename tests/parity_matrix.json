@@ -227,6 +227,33 @@
       }
     },
     {
+      "id": "provider.google.generate.streaming",
+      "area": "providers",
+      "owner": "mochi_provider",
+      "status": "parity",
+      "description": "Incremental Gemini GenerateContent SSE assembles text, thinking, function calls, usage/cache counts, and stop reasons.",
+      "upstream_refs": [
+        "maki-providers/src/providers/google.rs:571-665",
+        "maki-providers/src/providers/google.rs:1063-1211"
+      ],
+      "mojo_refs": [
+        "src/mochi/provider.mojo",
+        "tests/provider_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run parity provider.google.generate.streaming",
+          "normalization": "Text, tool arguments/IDs, thinking signature, usage/cache tokens, and stop reason."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity provider.google.generate.streaming",
+          "mojo_command": "pixi run parity provider.google.generate.streaming",
+          "normalization": "Pinned upstream and Mojo deterministic Gemini SSE tests pass."
+        }
+      }
+    },
+    {
       "id": "mcp.streamable_http.basic",
       "area": "mcp",
       "owner": "mochi_mcp",
