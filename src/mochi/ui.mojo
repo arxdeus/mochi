@@ -1,6 +1,7 @@
 """Terminal-independent UI event, reducer, action, and view contracts."""
 
 from mochi.json import JsonValue, parse_json
+from mochi.types import Message
 
 
 comptime UI_TRANSCRIPT_VERSION = 1
@@ -224,6 +225,24 @@ def command_names() -> List[String]:
     for name in materialize[BUILTIN_COMMANDS]():
         result.append(String(name))
     return result^
+
+
+def transcript_messages(messages: List[Message]) -> List[String]:
+    var lines = List[String]()
+    for message in messages:
+        if message.role == "assistant":
+            if message.content != "":
+                lines.append("assistant: " + message.content)
+            for call in message.tool_calls:
+                lines.append("tool call: " + call.name)
+        elif message.role == "tool":
+            var label = "tool result"
+            if message.name != "":
+                label += " " + message.name
+            lines.append(label + ": " + message.content)
+        elif message.content != "":
+            lines.append(message.role + ": " + message.content)
+    return lines^
 
 
 def command_completion(query: String) -> String:

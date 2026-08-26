@@ -1,5 +1,6 @@
 from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
+from mochi.types import Message, ToolCall
 from mochi.ui import (
     UiAction,
     UiEvent,
@@ -9,6 +10,7 @@ from mochi.ui import (
     command_completion,
     command_matches,
     command_names,
+    transcript_messages,
     validate_ui_transcript_line,
 )
 
@@ -142,6 +144,18 @@ def test_submit_updates_history_without_consecutive_duplicates() raises:
     _ = UiReducer.reduce(state, UiEvent.edit("new"))
     _ = UiReducer.reduce(state, UiEvent.submit())
     assert_equal(len(state.history), 2)
+
+
+def test_structured_transcript_messages() raises:
+    var assistant = Message("assistant", "checking")
+    assistant.add_tool_call(ToolCall("call-1", "bash", "{}"))
+    var tool = Message("tool", "ok")
+    tool.name = "bash"
+    var lines = transcript_messages([Message("user", "run"), assistant^, tool^])
+    assert_equal(lines[0], "user: run")
+    assert_equal(lines[1], "assistant: checking")
+    assert_equal(lines[2], "tool call: bash")
+    assert_equal(lines[3], "tool result bash: ok")
 
 
 def test_viewport_is_bounded_and_tracks_messages() raises:
