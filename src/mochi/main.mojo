@@ -451,7 +451,18 @@ def _interactive(
             var command = "/" + action.name
             if action.text != "":
                 command += " " + action.text
-            if action.name == "login":
+            if action.name == "exit":
+                return
+            elif action.name == "reload":
+                print("Reload requested. Restart Mochi to reload config and extensions.")
+                return
+            elif action.name == "yolo":
+                runtime.permissions.yolo = not runtime.permissions.yolo
+                if runtime.permissions.yolo:
+                    print("YOLO mode enabled.")
+                else:
+                    print("YOLO mode disabled.")
+            elif action.name == "login":
                 _interactive_login(runtime)
             elif action.name == "model":
                 _interactive_model(runtime, command^)
@@ -476,9 +487,6 @@ def _interactive(
                 _interactive_usage(session, runtime)
             elif action.name == "queue":
                 _interactive_queue(runtime)
-            elif action.name == "history":
-                for entry in history.entries:
-                    print(entry)
             elif action.name == "help":
                 _interactive_help()
             else:
