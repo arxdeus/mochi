@@ -96,6 +96,10 @@ case "${1:-all}" in
         ;;
     ui.search.display)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::search_modal::tests::matching_finds_correct_segments -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            components::search_modal::tests::matches_sorted_by_score_descending -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             components::search_modal::tests::display_line_picks_matched_line::match_on_middle_line -- --exact >/dev/null
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             components::search_modal::tests::search_role_prefix_matches::maki_prefix -- --exact >/dev/null

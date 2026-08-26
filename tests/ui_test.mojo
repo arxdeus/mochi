@@ -228,6 +228,17 @@ def test_search_escape_restores_scroll_state() raises:
     assert_equal(state.viewport_offset, 2)
 
 
+def test_search_matches_are_sorted_by_score() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.message("user", "f---b"))
+    _ = UiReducer.reduce(state, UiEvent.message("user", "fb"))
+    _ = UiReducer.reduce(state, UiEvent.message("user", "foobar"))
+    _ = UiReducer.reduce(state, UiEvent.search_open())
+    _ = UiReducer.reduce(state, UiEvent.search_query("fb"))
+    assert_equal(len(state.search_matches), 3)
+    assert_equal(state.search_matches[0], 1)
+
+
 def test_search_matches_role_prefix_and_matched_line() raises:
     var state = UiState()
     _ = UiReducer.reduce(

@@ -531,7 +531,7 @@
           "status": "implemented",
           "upstream_command": "sh tests/parity.sh ui.search.display",
           "mojo_command": "sh tests/parity.sh ui.search.display",
-          "normalization": "Upstream matched-line and role-prefix fixtures plus the Mojo UI suite must pass."
+          "normalization": "Upstream fuzzy ordering, matched-line, and role-prefix fixtures plus the Mojo UI suite must pass."
         }
       }
     },

@@ -587,9 +587,19 @@ struct UiReducer:
         var needle = String(query.strip()).lower()
         if needle == "":
             return
+        var scores = List[Int]()
         for i in range(len(state.messages)):
-            if _subsequence(needle, _search_text(state, i).lower()):
-                state.search_matches.append(i)
+            var candidate = _search_text(state, i).lower()
+            var score = _fuzzy_score(needle, candidate)
+            if score < 0:
+                continue
+            var position = len(scores)
+            for j in range(len(scores)):
+                if score > scores[j]:
+                    position = j
+                    break
+            scores.insert(position, score)
+            state.search_matches.insert(position, i)
         Self._search_reveal(state)
 
     @staticmethod
@@ -634,6 +644,36 @@ struct UiReducer:
         if auto_scroll:
             return maximum
         return min(max(0, requested), maximum)
+
+
+def _fuzzy_score(needle: String, candidate: String) -> Int:
+    if needle == "":
+        return 0
+    var needle_index = 0
+    var candidate_index = 0
+    var first = -1
+    var previous = -2
+    var consecutive = 0
+    for cp in candidate.codepoint_slices():
+        if needle_index < needle.count_codepoints():
+            var target = String("")
+            var target_index = 0
+            for part in needle.codepoint_slices():
+                if target_index == needle_index:
+                    target = String(part)
+                    break
+                target_index += 1
+            if String(cp) == target:
+                if first < 0:
+                    first = candidate_index
+                if candidate_index == previous + 1:
+                    consecutive += 1
+                previous = candidate_index
+                needle_index += 1
+        candidate_index += 1
+    if needle_index != needle.count_codepoints():
+        return -1
+    return needle.count_codepoints() * 100 + consecutive * 25 - first - candidate_index
 
 
 def _search_text(state: UiState, index: Int) -> String:
