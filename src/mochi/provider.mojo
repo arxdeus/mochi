@@ -2067,6 +2067,26 @@ struct ProductionProvider(Movable):
                 GeminiProviderAdapterWithTransport[FlokiTransport]
             ].model_info = model.copy()
 
+    def set_api_key(mut self, key: String) raises:
+        if self.adapter.isa[OpenAIProviderAdapter]():
+            self.adapter[OpenAIProviderAdapter].inner.spec.api_keys.clear()
+            self.adapter[OpenAIProviderAdapter].inner.spec.add_api_key(key)
+            self.adapter[OpenAIProviderAdapter].inner.keys.keys.clear()
+            self.adapter[OpenAIProviderAdapter].inner.keys.keys.append(key)
+            self.adapter[OpenAIProviderAdapter].inner.keys.index = 0
+            return
+        if self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+            self.adapter[
+                AnthropicProviderAdapterWithTransport[FlokiTransport]
+            ].spec.api_key = key
+            return
+        if self.adapter.isa[GeminiProviderAdapterWithTransport[FlokiTransport]]():
+            self.adapter[
+                GeminiProviderAdapterWithTransport[FlokiTransport]
+            ].spec.api_key = key
+            return
+        raise Error("provider does not support API keys")
+
     def enable_openai_oauth(
         mut self, credentials: OpenAIOAuthCredentials
     ) raises:

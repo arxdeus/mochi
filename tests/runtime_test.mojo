@@ -24,6 +24,7 @@ from mochi.provider import (
     AnthropicProviderSpec,
     GeminiProviderSpec,
     OpenAICompatibleProvider,
+    OpenAIProviderAdapter,
     ProductionProvider,
     ProviderSpec,
     RetryState,
@@ -100,6 +101,20 @@ def test_runtime_accepts_production_provider_dialects() raises:
     )
     assert_equal(gemini.provider.kind, "gemini")
     assert_equal(gemini.provider.name, "google")
+
+
+def test_runtime_provider_api_key_update() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("openai", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    runtime.provider.set_api_key("saved-key")
+    assert_equal(
+        runtime.provider.adapter[OpenAIProviderAdapter].inner.auth_token(),
+        "saved-key",
+    )
 
 
 def test_runtime_interactive_request_modes() raises:
