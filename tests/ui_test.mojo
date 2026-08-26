@@ -94,6 +94,13 @@ def test_toggleable_picker_navigation_and_actions() raises:
     assert_false(state.picker_enabled[1])
     _ = UiReducer.reduce(state, UiEvent.picker_previous())
     assert_equal(state.picker_selected, 1)
+    _ = UiReducer.reduce(state, UiEvent.picker_filter("gth"))
+    assert_equal(len(state.picker_filtered), 1)
+    assert_equal(state.picker_selected, 1)
+    _ = UiReducer.reduce(state, UiEvent.picker_backspace())
+    _ = UiReducer.reduce(state, UiEvent.picker_backspace())
+    _ = UiReducer.reduce(state, UiEvent.picker_backspace())
+    assert_equal(len(state.picker_filtered), 2)
     var toggle = UiReducer.reduce(state, UiEvent.picker_toggle())
     assert_true(toggle.is_picker_toggle())
     assert_equal(toggle.name, "github")
@@ -104,6 +111,23 @@ def test_toggleable_picker_navigation_and_actions() raises:
     _ = UiReducer.reduce(state, UiEvent.picker_close())
     assert_equal(state.picker_name, "")
     assert_equal(len(state.picker_items), 0)
+
+
+def test_picker_filter_no_matches_and_page_navigation() raises:
+    var state = UiState()
+    var items = String("")
+    for i in range(25):
+        if items != "":
+            items += "\n"
+        items += "0:item-" + String(i)
+    _ = UiReducer.reduce(state, UiEvent.picker_open("Items", items))
+    _ = UiReducer.reduce(state, UiEvent.picker_page_next())
+    assert_equal(state.picker_selected, 10)
+    _ = UiReducer.reduce(state, UiEvent.picker_page_previous())
+    assert_equal(state.picker_selected, 0)
+    _ = UiReducer.reduce(state, UiEvent.picker_filter("zzz"))
+    assert_equal(len(state.picker_filtered), 0)
+    assert_true("No matches" in UiReducer.view(state).lines[1])
 
 
 def test_command_catalog_and_fuzzy_matches() raises:

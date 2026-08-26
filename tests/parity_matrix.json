@@ -479,6 +479,33 @@
       }
     },
     {
+      "id": "ui.picker.filter_navigation",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "parity",
+      "description": "Generic pickers support fuzzy filtering, no-match state, wrapped navigation, and clamped page movement.",
+      "upstream_refs": [
+        "maki-ui/src/components/list_picker.rs:104-225",
+        "maki-ui/src/components/list_picker.rs:329-427"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo",
+        "tests/ui_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Filtered item identities, selected original index, no-match rendering, wrap and page boundaries."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity ui.picker.filter_navigation",
+          "mojo_command": "pixi run parity ui.picker.filter_navigation",
+          "normalization": "Pinned upstream list-picker filtering/navigation tests and Mojo reducer tests pass."
+        }
+      }
+    },
+    {
       "id": "ui.search.escape_restore",
       "area": "ui",
       "owner": "mochi_ui",

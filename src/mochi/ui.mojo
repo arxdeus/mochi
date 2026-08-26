@@ -38,6 +38,10 @@ struct UiEvent(Copyable, Movable):
     comptime PICKER_PREVIOUS = 27
     comptime PICKER_TOGGLE = 28
     comptime PICKER_CLOSE = 29
+    comptime PICKER_FILTER = 30
+    comptime PICKER_BACKSPACE = 31
+    comptime PICKER_PAGE_NEXT = 32
+    comptime PICKER_PAGE_PREVIOUS = 33
 
     var tag: Int
     var text: String
@@ -206,6 +210,24 @@ struct UiEvent(Copyable, Movable):
     def picker_close() -> Self:
         return Self(Self.PICKER_CLOSE)
 
+    @staticmethod
+    def picker_filter(text: String) -> Self:
+        var event = Self(Self.PICKER_FILTER)
+        event.text = text
+        return event^
+
+    @staticmethod
+    def picker_backspace() -> Self:
+        return Self(Self.PICKER_BACKSPACE)
+
+    @staticmethod
+    def picker_page_next() -> Self:
+        return Self(Self.PICKER_PAGE_NEXT)
+
+    @staticmethod
+    def picker_page_previous() -> Self:
+        return Self(Self.PICKER_PAGE_PREVIOUS)
+
 
 struct UiAction(Copyable, Movable):
     comptime NONE = 0
@@ -290,7 +312,9 @@ struct UiState(Copyable, Movable):
     var picker_name: String
     var picker_items: List[String]
     var picker_enabled: List[Bool]
+    var picker_filtered: List[Int]
     var picker_selected: Int
+    var picker_filter: String
 
     def __init__(out self):
         self.draft = ""
@@ -315,7 +339,9 @@ struct UiState(Copyable, Movable):
         self.picker_name = ""
         self.picker_items = List[String]()
         self.picker_enabled = List[Bool]()
+        self.picker_filtered = List[Int]()
         self.picker_selected = 0
+        self.picker_filter = ""
 
     def set_history(mut self, var history: List[String]):
         self.history = history^
@@ -611,6 +637,19 @@ struct UiReducer:
             Self._picker_move(state, -1)
         elif event.tag == UiEvent.PICKER_CLOSE:
             Self._picker_close(state)
+        elif event.tag == UiEvent.PICKER_FILTER:
+            state.picker_filter += event.text
+            Self._picker_rebuild(state)
+        elif event.tag == UiEvent.PICKER_BACKSPACE:
+            if state.picker_filter.byte_length() > 0:
+                state.picker_filter = _byte_range(
+                    state.picker_filter, 0, state.picker_filter.byte_length() - 1
+                )
+                Self._picker_rebuild(state)
+        elif event.tag == UiEvent.PICKER_PAGE_NEXT:
+            Self._picker_page(state, 10)
+        elif event.tag == UiEvent.PICKER_PAGE_PREVIOUS:
+            Self._picker_page(state, -10)
         elif event.tag == UiEvent.PICKER_TOGGLE:
             if state.picker_name != "" and len(state.picker_items) > 0:
                 var selected = state.picker_selected
@@ -629,8 +668,10 @@ struct UiReducer:
         for i in range(state.viewport_offset, end):
             lines.append(state.roles[i] + ": " + state.messages[i])
         if state.picker_name != "":
-            lines.append("[" + state.picker_name + "]")
-            for i in range(len(state.picker_items)):
+            lines.append("[" + state.picker_name + "] " + state.picker_filter)
+            if len(state.picker_filtered) == 0:
+                lines.append("  No matches")
+            for i in state.picker_filtered:
                 var marker = "> " if i == state.picker_selected else "  "
                 var toggle = "[x] " if state.picker_enabled[i] else "[ ] "
                 lines.append(marker + toggle + state.picker_items[i])
@@ -751,7 +792,9 @@ struct UiReducer:
         state.picker_name = name
         state.picker_items.clear()
         state.picker_enabled.clear()
+        state.picker_filtered.clear()
         state.picker_selected = 0
+        state.picker_filter = ""
         for raw in text.split("\n"):
             var item = String(raw.strip())
             if item == "":
@@ -761,22 +804,58 @@ struct UiReducer:
                 item = _byte_range(item, 2, item.byte_length())
             state.picker_items.append(item^)
             state.picker_enabled.append(enabled)
+        Self._picker_rebuild(state)
+
+    @staticmethod
+    def _picker_rebuild(mut state: UiState):
+        state.picker_filtered.clear()
+        var needle = state.picker_filter.lower()
+        for i in range(len(state.picker_items)):
+            if needle == "" or _fuzzy_score(needle, state.picker_items[i].lower()) >= 0:
+                state.picker_filtered.append(i)
+        if len(state.picker_filtered) == 0:
+            state.picker_selected = 0
+            return
+        for i in state.picker_filtered:
+            if i == state.picker_selected:
+                return
+        state.picker_selected = state.picker_filtered[0]
 
     @staticmethod
     def _picker_move(mut state: UiState, direction: Int):
-        if len(state.picker_items) == 0:
+        if len(state.picker_filtered) == 0:
             state.picker_selected = 0
             return
-        state.picker_selected = (
-            state.picker_selected + direction + len(state.picker_items)
-        ) % len(state.picker_items)
+        var visible = 0
+        for i in range(len(state.picker_filtered)):
+            if state.picker_filtered[i] == state.picker_selected:
+                visible = i
+                break
+        visible = (visible + direction + len(state.picker_filtered)) % len(
+            state.picker_filtered
+        )
+        state.picker_selected = state.picker_filtered[visible]
+
+    @staticmethod
+    def _picker_page(mut state: UiState, direction: Int):
+        if len(state.picker_filtered) == 0:
+            return
+        var visible = 0
+        for i in range(len(state.picker_filtered)):
+            if state.picker_filtered[i] == state.picker_selected:
+                visible = i
+                break
+        visible = max(0, min(len(state.picker_filtered) - 1, visible + direction))
+        state.picker_selected = state.picker_filtered[visible]
 
     @staticmethod
     def _picker_close(mut state: UiState):
         state.picker_name = ""
         state.picker_items.clear()
         state.picker_enabled.clear()
+        state.picker_filtered.clear()
         state.picker_selected = 0
+        state.picker_filter = ""
 
     @staticmethod
     def _search_open(mut state: UiState):
