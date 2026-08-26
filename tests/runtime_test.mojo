@@ -419,6 +419,22 @@ def test_provider_error_is_visible_in_result() raises:
     assert_equal(result.text, runtime.messages[len(runtime.messages) - 1].content)
 
 
+def test_runtime_resume_does_not_append_user_message() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    runtime.messages.append(Message("tool", "approved"))
+    var cancel = CancellationToken()
+    cancel.cancel()
+    var result = runtime.resume(cancel^)
+    assert_equal(result.stop_reason, "cancelled")
+    assert_equal(len(result.messages), 1)
+    assert_equal(result.messages[0].role, "tool")
+
+
 def test_runtime_cancellation_max_turn_and_retry_helpers() raises:
     var spec = ProviderSpec("scripted", "https://invalid.local")
     var runtime = Runtime(

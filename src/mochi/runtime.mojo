@@ -356,6 +356,12 @@ struct Runtime:
 
     def run(mut self, prompt: String, cancel: CancellationToken) -> RuntimeResult:
         self.messages.append(Message("user", prompt))
+        return self._run_turns(cancel.copy())
+
+    def resume(mut self, cancel: CancellationToken) -> RuntimeResult:
+        return self._run_turns(cancel.copy())
+
+    def _run_turns(mut self, cancel: CancellationToken) -> RuntimeResult:
         var usage = Usage()
         var final_text = String("")
         var completed_turns = 0

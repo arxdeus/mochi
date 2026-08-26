@@ -475,15 +475,17 @@ def _interactive(
                 print("Unknown command:", action.name)
             continue
         _run_prompt(runtime, session, store, action.text, output_format)
-        _interactive_permissions(runtime)
+        if _interactive_permissions(runtime):
+            _run_resume(runtime, session, store, output_format)
         _ = UiReducer.reduce(ui, UiEvent.complete())
 
 
-def _interactive_permissions(mut runtime: Runtime) raises:
+def _interactive_permissions(mut runtime: Runtime) raises -> Bool:
+    var resolved = False
     while True:
         var pending = runtime.take_pending_permission()
         if not pending:
-            return
+            return resolved
         var permission = pending.value().copy()
         print("Permission required for", permission.tool)
         for scope in permission.scopes:
@@ -494,7 +496,7 @@ def _interactive_permissions(mut runtime: Runtime) raises:
             _ = runtime.resolve_permission(
                 permission, PermissionAnswer.deny()
             )
-            return
+            return resolved
         var choice = String(answer.value().strip()).lower()
         if choice == "a" or choice == "always":
             _ = runtime.resolve_permission(
@@ -506,6 +508,27 @@ def _interactive_permissions(mut runtime: Runtime) raises:
             )
         else:
             _ = runtime.resolve_permission(permission, PermissionAnswer.deny())
+        resolved = True
+
+
+def _run_resume(
+    mut runtime: Runtime,
+    mut session: Session,
+    store: SessionStore,
+    output_format: String,
+):
+    var cancel = CancellationToken()
+    cancel.activate_sigint()
+    var result = runtime.resume(cancel^)
+    CancellationToken.deactivate_sigint()
+    try:
+        session.update_from_result(
+            result.messages, result.usage, runtime.model, _now_ms()
+        )
+        store.save(session)
+    except error:
+        print("Session save failed:", error)
+    _print_result(result, output_format)
 
 
 def _interactive_help():
