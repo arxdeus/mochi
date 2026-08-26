@@ -197,16 +197,26 @@ def main() raises:
                     )
                 )
             var client = McpClient(endpoint.name)
-            var capabilities = client.initialize(transport)
-            var tools = client.list_tools(transport)
-            runtime.add_remote_tools(
-                "mcp", endpoint.name, _json_array(tools)
-            )
-            print(
-                "MCP", endpoint.name, "initialized; tools=", len(tools),
-                "capabilities=", serialize_json(capabilities),
-            )
-            runtime.attach_mcp_http(endpoint.name, client^, transport^)
+            try:
+                var capabilities = client.initialize(transport)
+                var tools = client.list_tools(transport)
+                runtime.add_remote_tools(
+                    "mcp", endpoint.name, _json_array(tools)
+                )
+                print(
+                    "MCP", endpoint.name, "initialized; tools=", len(tools),
+                    "capabilities=", serialize_json(capabilities),
+                )
+                runtime.attach_mcp_http(endpoint.name, client^, transport^)
+            except error:
+                var reason = String(error)
+                runtime.attach_mcp_http(endpoint.name, client^, transport^)
+                if "status 401" in reason:
+                    _ = runtime.mark_mcp_http_error(endpoint.name, "needs auth")
+                    print("MCP", endpoint.name, "needs authentication.")
+                else:
+                    _ = runtime.mark_mcp_http_error(endpoint.name, "error: " + reason)
+                    print("MCP", endpoint.name, "failed:", reason)
         for path in config.plugins:
             var client = PluginClient(_spawn_plugin(PluginExecutable(path)))
             client.connect()
@@ -715,6 +725,7 @@ def _interactive_mcp(
     var raw_mode = external_call["mochi_terminal_enable_raw", c_int]()
     var authenticate = String("")
     var logout = String("")
+    var reconnect = String("")
     while ui.picker_name != "":
         _render_picker(ui)
         var byte = external_call["getchar", c_int]()
@@ -729,6 +740,9 @@ def _interactive_mcp(
             _ = UiReducer.reduce(ui, UiEvent.picker_close())
         elif byte == 108:
             logout = ui.picker_items[ui.picker_selected]
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
+        elif byte == 114:
+            reconnect = ui.picker_items[ui.picker_selected]
             _ = UiReducer.reduce(ui, UiEvent.picker_close())
         elif byte == 27:
             var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
@@ -745,6 +759,13 @@ def _interactive_mcp(
     print("\r\x1b[2K", end="")
     if authenticate != "":
         _authenticate_mcp(runtime, paths, authenticate)
+    elif reconnect != "":
+        try:
+            var count = runtime.reconnect_mcp_http(reconnect)
+            print("MCP", reconnect, "reconnected; tools=", count)
+        except error:
+            _ = runtime.mark_mcp_http_error(reconnect, "error: " + String(error))
+            print("MCP", reconnect, "reconnect failed:", error)
     elif logout != "":
         var url = runtime.mcp_http_url(logout)
         if not url:
@@ -829,7 +850,12 @@ def _authenticate_mcp(
             flow.server_url,
         ),
     )
-    print("MCP", server_name, "authenticated.")
+    try:
+        var count = runtime.reconnect_mcp_http(server_name)
+        print("MCP", server_name, "authenticated; tools=", count)
+    except error:
+        _ = runtime.mark_mcp_http_error(server_name, "error: " + String(error))
+        print("MCP", server_name, "authenticated but reconnect failed:", error)
 
 
 def _render_picker(ui: UiState):

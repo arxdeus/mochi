@@ -1134,6 +1134,10 @@ struct StreamableHttpTransport(Copyable, Movable):
     var fixture_content_type: String
     var fixture_session_id: String
     var fixture_body: String
+    var fixture_statuses: List[Int]
+    var fixture_content_types: List[String]
+    var fixture_session_ids: List[String]
+    var fixture_bodies: List[String]
 
     def __init__(out self, url: String, timeout_ms: Int = 60000):
         self.url = url
@@ -1145,6 +1149,10 @@ struct StreamableHttpTransport(Copyable, Movable):
         self.fixture_content_type = "application/json"
         self.fixture_session_id = ""
         self.fixture_body = ""
+        self.fixture_statuses = List[Int]()
+        self.fixture_content_types = List[String]()
+        self.fixture_session_ids = List[String]()
+        self.fixture_bodies = List[String]()
 
     def request_body(self, message: JsonValue) -> String:
         return serialize_json(message)
@@ -1186,12 +1194,30 @@ struct StreamableHttpTransport(Copyable, Movable):
         self.fixture_body = body
         self.fixture_session_id = session_id
 
+    def enqueue_fixture_response(
+        mut self,
+        status: Int,
+        content_type: String,
+        body: String,
+        session_id: String = "",
+    ):
+        self.fixture_statuses.append(status)
+        self.fixture_content_types.append(content_type)
+        self.fixture_bodies.append(body)
+        self.fixture_session_ids.append(session_id)
+
     def consume_fixture(mut self, expected_id: Int) raises -> JsonValue:
         var status = self.fixture_status
         var content_type = self.fixture_content_type.copy()
         var body = self.fixture_body.copy()
         var session_id = self.fixture_session_id.copy()
-        self.fixture_status = 0
+        if len(self.fixture_statuses) > 0:
+            status = self.fixture_statuses.pop(0)
+            content_type = self.fixture_content_types.pop(0)
+            body = self.fixture_bodies.pop(0)
+            session_id = self.fixture_session_ids.pop(0)
+        else:
+            self.fixture_status = 0
         return self.accept_response(
             status, content_type, body, session_id, expected_id
         )
@@ -1211,7 +1237,7 @@ struct StreamableHttpTransport(Copyable, Movable):
 
     def send(mut self, message: JsonValue) raises -> JsonValue:
         var expected_id = message.get("id").int_value
-        if self.fixture_status != 0:
+        if self.fixture_status != 0 or len(self.fixture_statuses) > 0:
             return self.consume_fixture(expected_id)
         var transport = FlokiTransport()
         return self.send_with(transport, message)
@@ -1261,7 +1287,7 @@ struct StreamableHttpTransport(Copyable, Movable):
         )
 
     def notify(mut self, message: JsonValue) raises:
-        if self.fixture_only and self.fixture_status == 0:
+        if self.fixture_only and self.fixture_status == 0 and len(self.fixture_statuses) == 0:
             return
         if self.fixture_status != 0:
             var status = self.fixture_status
@@ -1278,6 +1304,16 @@ struct StreamableHttpTransport(Copyable, Movable):
     def notify_with[T: HttpTransport](
         mut self, mut transport: T, message: JsonValue
     ) raises:
+        if len(self.fixture_statuses) > 0:
+            var status = self.fixture_statuses.pop(0)
+            _ = self.fixture_content_types.pop(0)
+            _ = self.fixture_bodies.pop(0)
+            var session_id = self.fixture_session_ids.pop(0)
+            if status < 200 or status >= 300:
+                raise Error("MCP HTTP request failed with status " + String(status))
+            if session_id != "":
+                self.session_id = session_id
+            return
         var response = transport.perform(
             self._request("POST", self.request_body(message))
         )

@@ -114,6 +114,7 @@ struct Runtime:
     var mcp_http_transports: List[StreamableHttpTransport]
     var mcp_http_authenticated: List[Bool]
     var mcp_http_enabled: List[Bool]
+    var mcp_http_errors: List[String]
     var plugin_names: List[String]
     var plugin_clients: List[PluginClient]
 
@@ -156,6 +157,7 @@ struct Runtime:
         self.mcp_http_transports = List[StreamableHttpTransport]()
         self.mcp_http_authenticated = List[Bool]()
         self.mcp_http_enabled = List[Bool]()
+        self.mcp_http_errors = List[String]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
 
@@ -197,6 +199,7 @@ struct Runtime:
         self.mcp_http_transports = List[StreamableHttpTransport]()
         self.mcp_http_authenticated = List[Bool]()
         self.mcp_http_enabled = List[Bool]()
+        self.mcp_http_errors = List[String]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
 
@@ -435,6 +438,7 @@ struct Runtime:
         self.mcp_http_clients.append(client^)
         self.mcp_http_transports.append(transport^)
         self.mcp_http_enabled.append(True)
+        self.mcp_http_errors.append("")
 
     def attach_plugin(
         mut self, var name: String, var client: PluginClient
@@ -463,6 +467,8 @@ struct Runtime:
                 status = "running"
                 if self.mcp_http_authenticated[i]:
                     status += " · authenticated"
+            if self.mcp_http_enabled[i] and self.mcp_http_errors[i] != "":
+                status = self.mcp_http_errors[i]
             lines.append(
                 self.mcp_http_names[i] + " · http · " + status
             )
@@ -504,14 +510,48 @@ struct Runtime:
             if self.mcp_http_names[i] == name:
                 self.mcp_http_transports[i].apply_oauth(oauth)
                 self.mcp_http_authenticated[i] = True
+                self.mcp_http_errors[i] = ""
                 return True
         return False
+
+    def mark_mcp_http_error(mut self, name: String, error: String) -> Bool:
+        for i in range(len(self.mcp_http_names)):
+            if self.mcp_http_names[i] == name:
+                self.mcp_http_errors[i] = error
+                self.mcp_http_clients[i].session.initialized = False
+                return True
+        return False
+
+    def reconnect_mcp_http(mut self, name: String) raises -> Int:
+        for i in range(len(self.mcp_http_names)):
+            if self.mcp_http_names[i] != name or not self.mcp_http_enabled[i]:
+                continue
+            self._remove_remote_endpoint("mcp", name)
+            self.mcp_http_transports[i].session_id = ""
+            self.mcp_http_clients[i] = McpClient(name)
+            _ = self.mcp_http_clients[i].initialize(self.mcp_http_transports[i])
+            var discovered = self.mcp_http_clients[i].list_tools(
+                self.mcp_http_transports[i]
+            )
+            self.add_remote_tools("mcp", name, _json_values(discovered))
+            self.mcp_http_errors[i] = ""
+            return len(discovered)
+        raise Error("MCP HTTP server is missing or disabled: " + name)
+
+    def _remove_remote_endpoint(mut self, protocol: String, endpoint: String):
+        self.remote.remove_endpoint(protocol, endpoint)
+        self.tools.remove_owner(protocol + ":" + endpoint)
+        for i in range(len(self.definitions) - 1, -1, -1):
+            var name = self.definitions[i].name
+            if not self.remote.is_remote(name) and self.tools.index_of(name) < 0:
+                _ = self.definitions.pop(i)
 
     def clear_mcp_oauth(mut self, name: String) -> Bool:
         for i in range(len(self.mcp_http_names)):
             if self.mcp_http_names[i] == name:
                 self.mcp_http_transports[i].clear_bearer_token()
                 self.mcp_http_authenticated[i] = False
+                self.mcp_http_errors[i] = "needs auth"
                 return True
         return False
 
@@ -803,6 +843,13 @@ def _domain_messages(messages: List[Message]) raises -> List[DomainMessage]:
                 input = parse_json(call.arguments)
             message.add_block(ContentBlock.tool_use(call.id, call.name, input^))
         result.append(message^)
+    return result^
+
+
+def _json_values(values: List[JsonValue]) raises -> JsonValue:
+    var result = JsonValue.array()
+    for value in values:
+        result.append(value.copy())
     return result^
 
 

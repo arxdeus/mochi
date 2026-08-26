@@ -96,6 +96,17 @@ struct RemoteToolRouter(Copyable, Movable):
         var index = self.route_index(name)
         return self.endpoints[index] if index >= 0 else ""
 
+    def remove_endpoint(mut self, protocol: String, endpoint: String):
+        for i in range(len(self.names) - 1, -1, -1):
+            if self.protocols[i] == protocol and self.endpoints[i] == endpoint:
+                var name = self.names.pop(i)
+                _ = self.protocols.pop(i)
+                _ = self.endpoints.pop(i)
+                for j in range(len(self.result_names) - 1, -1, -1):
+                    if self.result_names[j] == name:
+                        _ = self.result_names.pop(j)
+                        _ = self.results.pop(j)
+
     def enqueue_result(mut self, var name: String, var result: ToolResult) raises:
         if not self.is_remote(name):
             raise Error("remote tool route is not registered: " + name)
@@ -174,6 +185,12 @@ struct ToolRegistry(Copyable, Movable):
     def is_remote(self, name: String) -> Bool:
         var index = self.index_of(name)
         return index >= 0 and self.owners[index] != "builtin"
+
+    def remove_owner(mut self, owner: String):
+        for i in range(len(self.names) - 1, -1, -1):
+            if self.owners[i] == owner:
+                _ = self.names.pop(i)
+                _ = self.owners.pop(i)
 
     def add_subagent_response(mut self, var prompt: String, var response: String):
         """Install a deterministic Mojo-side subagent callback response."""

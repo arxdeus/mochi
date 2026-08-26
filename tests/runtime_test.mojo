@@ -452,6 +452,45 @@ def test_remote_status_lines() raises:
     assert_true(runtime.clear_mcp_oauth("authenticated"))
     assert_equal(runtime.mcp_http_transports[0].bearer_token, "")
     assert_false(runtime.mcp_http_authenticated[0])
+    assert_equal(
+        runtime.remote_status_lines()[1],
+        "authenticated · http · needs auth",
+    )
+    assert_true(runtime.mark_mcp_http_error("authenticated", "error: offline"))
+    assert_equal(
+        runtime.remote_status_lines()[1],
+        "authenticated · http · error: offline",
+    )
+
+
+def test_runtime_reconnects_http_mcp_and_replaces_tools() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    runtime.add_remote_tools(
+        "mcp", "server", parse_json('[{"name":"old_tool"}]')
+    )
+    var transport = StreamableHttpTransport("https://mcp.example/mcp")
+    transport.enqueue_fixture_response(
+        200,
+        "application/json",
+        '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fixture","version":"1"}}}',
+    )
+    transport.enqueue_fixture_response(202, "application/json", "")
+    transport.enqueue_fixture_response(
+        200,
+        "application/json",
+        '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"new_tool"}]}}',
+    )
+    var client = McpClient("server")
+    runtime.attach_mcp_http("server", client^, transport^)
+    assert_equal(runtime.reconnect_mcp_http("server"), 1)
+    assert_equal(runtime.remote_endpoint("old_tool"), "")
+    assert_equal(runtime.remote_endpoint("new_tool"), "server")
+    assert_equal(runtime.mcp_http_errors[0], "")
 
 
 def test_live_remote_mcp_and_plugin_dispatch() raises:
