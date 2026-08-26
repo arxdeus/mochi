@@ -498,6 +498,8 @@ def _interactive(
                 _interactive_btw(runtime, session, action.text)
             elif action.name == "tasks":
                 _interactive_tasks(session)
+            elif action.name == "mcp":
+                _interactive_mcp(runtime)
             elif action.name == "login":
                 _interactive_login(runtime)
             elif action.name == "model":
@@ -584,6 +586,16 @@ def _run_resume(
     except error:
         print("Session save failed:", error)
     _print_result(result, output_format)
+
+
+def _interactive_mcp(runtime: Runtime):
+    var lines = runtime.remote_status_lines()
+    print("MCP servers:")
+    if len(lines) == 0:
+        print("  No MCP servers configured.")
+        return
+    for line in lines:
+        print("  " + line)
 
 
 def _interactive_tasks(session: Session):

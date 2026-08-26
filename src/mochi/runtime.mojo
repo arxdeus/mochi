@@ -392,6 +392,30 @@ struct Runtime:
         self.plugin_names.append(name^)
         self.plugin_clients.append(client^)
 
+    def remote_status_lines(self) -> List[String]:
+        var lines = List[String]()
+        for i in range(len(self.mcp_stdio_names)):
+            var status = (
+                "running"
+                if self.mcp_stdio_clients[i].session.initialized
+                else "connecting"
+            )
+            lines.append(
+                self.mcp_stdio_names[i] + " · stdio · " + status
+            )
+        for i in range(len(self.mcp_http_names)):
+            var status = (
+                "running"
+                if self.mcp_http_clients[i].session.initialized
+                else "connecting"
+            )
+            lines.append(
+                self.mcp_http_names[i] + " · http · " + status
+            )
+        for name in self.plugin_names:
+            lines.append(name + " · executable extension · running")
+        return lines^
+
     def shutdown_remotes(mut self):
         for i in range(len(self.mcp_stdio_transports)):
             self.mcp_stdio_transports[i].cancel()

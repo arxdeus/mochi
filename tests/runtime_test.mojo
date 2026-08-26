@@ -390,6 +390,21 @@ def test_remote_mcp_plugin_registration_and_dispatch() raises:
     assert_equal(runtime.messages[len(runtime.messages) - 1].content, '{"content":"formatted"}')
 
 
+def test_remote_status_lines() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var client = McpClient("fixture")
+    runtime.attach_mcp_stdio("fixture", client^, StdioTransport())
+    runtime.plugin_names.append("formatter")
+    var lines = runtime.remote_status_lines()
+    assert_equal(lines[0], "fixture · stdio · connecting")
+    assert_equal(lines[1], "formatter · executable extension · running")
+
+
 def test_live_remote_mcp_and_plugin_dispatch() raises:
     var runtime = Runtime(
         OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
