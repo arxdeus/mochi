@@ -418,9 +418,13 @@
       "id": "contracts.storage.codecs",
       "area": "storage",
       "owner": "mochi_storage",
-      "status": "partial",
+      "status": "parity",
       "description": "Storage paths, IDs, session references, and auth codecs have deterministic golden checks.",
-      "upstream_refs": [],
+      "upstream_refs": [
+        "maki-storage/src/id.rs",
+        "maki-storage/src/auth.rs",
+        "maki-storage/src/paths.rs"
+      ],
       "mojo_refs": [
         "src/mochi/storage.mojo",
         "tests/storage_test.mojo"
@@ -431,10 +435,10 @@
           "normalization": "Exact deterministic contract assertions."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+          "status": "parity",
+          "upstream_command": "pixi run parity contracts.storage.codecs",
+          "mojo_command": "pixi run parity contracts.storage.codecs",
+          "normalization": "Pinned upstream base58 UUID, raw SessionRef spelling, and MCP auth persistence pass with Mojo XDG/legacy paths, IDs, refs, OAuth/auth codecs, and golden checks."
         }
       }
     },
