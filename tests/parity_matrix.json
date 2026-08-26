@@ -508,6 +508,34 @@
       }
     },
     {
+      "id": "ui.search.display",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "partial",
+      "description": "Transcript search indexes upstream-style role prefixes and previews the matched line from multiline messages.",
+      "upstream_refs": [
+        "maki-ui/src/components/search_modal.rs:288-304",
+        "maki-ui/src/components/search_modal.rs:440-459"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo",
+        "src/mochi/main.mojo",
+        "tests/ui_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Exact role-prefix matching and matched-line preview assertions."
+        },
+        "differential": {
+          "status": "implemented",
+          "upstream_command": "sh tests/parity.sh ui.search.display",
+          "mojo_command": "sh tests/parity.sh ui.search.display",
+          "normalization": "Upstream matched-line and role-prefix fixtures plus the Mojo UI suite must pass."
+        }
+      }
+    },
+    {
       "id": "cancellation.http.active",
       "area": "http",
       "owner": "mochi_http",

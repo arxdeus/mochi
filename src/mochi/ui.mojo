@@ -329,6 +329,20 @@ def transcript_messages(messages: List[Message]) -> List[String]:
     return lines^
 
 
+def search_result_lines(state: UiState) -> List[String]:
+    var lines = List[String]()
+    for i in range(len(state.search_matches)):
+        var message_index = state.search_matches[i]
+        var marker = "  "
+        if i == state.search_selected:
+            marker = "> "
+        lines.append(
+            marker + state.roles[message_index] + ": "
+            + _matched_line(state.messages[message_index], state.search_query)
+        )
+    return lines^
+
+
 def command_completion(query: String) -> String:
     var matches = command_matches(query)
     if len(matches) == 0:
@@ -574,7 +588,7 @@ struct UiReducer:
         if needle == "":
             return
         for i in range(len(state.messages)):
-            if _subsequence(needle, state.messages[i].lower()):
+            if _subsequence(needle, _search_text(state, i).lower()):
                 state.search_matches.append(i)
         Self._search_reveal(state)
 
@@ -620,6 +634,27 @@ struct UiReducer:
         if auto_scroll:
             return maximum
         return min(max(0, requested), maximum)
+
+
+def _search_text(state: UiState, index: Int) -> String:
+    var prefix = state.roles[index]
+    if prefix == "user":
+        prefix = "you"
+    elif prefix == "assistant":
+        prefix = "maki"
+    return prefix + "> " + state.messages[index]
+
+
+def _matched_line(text: String, query: String) -> String:
+    var needle = String(query.strip()).lower()
+    var fallback = String("")
+    for line in text.split("\n"):
+        var candidate = String(line)
+        if fallback == "":
+            fallback = candidate.copy()
+        if needle != "" and _subsequence(needle, candidate.lower()):
+            return candidate^
+    return fallback^
 
 
 def _ends_word(value: String) -> Bool:

@@ -11,6 +11,7 @@ from mochi.ui import (
     command_matches,
     command_names,
     transcript_messages,
+    search_result_lines,
     validate_ui_transcript_line,
 )
 
@@ -225,6 +226,22 @@ def test_search_escape_restores_scroll_state() raises:
     _ = UiReducer.reduce(state, UiEvent.search_close())
     assert_true(state.auto_scroll)
     assert_equal(state.viewport_offset, 2)
+
+
+def test_search_matches_role_prefix_and_matched_line() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(
+        state, UiEvent.message("user", "header\nsecond request")
+    )
+    _ = UiReducer.reduce(state, UiEvent.message("assistant", "response"))
+    _ = UiReducer.reduce(state, UiEvent.search_open())
+    _ = UiReducer.reduce(state, UiEvent.search_query("you>"))
+    assert_equal(len(state.search_matches), 1)
+    assert_equal(state.search_matches[0], 0)
+    _ = UiReducer.reduce(state, UiEvent.search_query("second"))
+    var lines = search_result_lines(state)
+    assert_equal(len(lines), 1)
+    assert_equal(lines[0], "> user: second request")
 
 
 def test_search_enter_without_matches_restores_scroll() raises:

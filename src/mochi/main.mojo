@@ -52,7 +52,14 @@ from mochi.storage import (
 )
 from mochi.tools import ToolRegistry
 from mochi.types import CancellationToken, Message
-from mochi.ui import UiEvent, UiReducer, UiState, command_completion, command_matches
+from mochi.ui import (
+    UiEvent,
+    UiReducer,
+    UiState,
+    command_completion,
+    command_matches,
+    search_result_lines,
+)
 from mochi.workspace import InputHistory, NoteStore, project_id
 
 
@@ -815,9 +822,15 @@ def _render_editor(ui: UiState):
         var selected = 0
         if count > 0:
             selected = ui.search_selected + 1
+        var preview = String("")
+        var results = search_result_lines(ui)
+        if count > 0:
+            preview = "  |  " + results[ui.search_selected]
+        elif ui.search_query != "":
+            preview = "  |  No matches"
         print(
             "\r\x1b[2KSearch: " + ui.search_query + "  " + String(selected)
-            + "/" + String(count),
+            + "/" + String(count) + preview,
             end="",
         )
         return
