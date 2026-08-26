@@ -19,8 +19,9 @@ from mochi.domain import (
 from mochi.http import HttpRequest, HttpResponse, MockTransport
 from mochi.json import JsonValue, parse_json
 from mochi.provider_contract import ProviderEventSink, ProviderRequest
-from mochi.types import CancellationToken
+from mochi.types import CancellationToken, ProviderEvent
 from mochi.provider import (
+    AnthropicStreamParser,
     ApiKeyState,
     OAuthState,
     OpenAICompatibleProvider,
@@ -111,6 +112,52 @@ def test_sse_arbitrary_single_byte_boundaries() raises:
     assert_equal(len(payloads), 2)
     assert_equal(payloads[0], "one\ntwo")
     assert_equal(payloads[1], "tail")
+
+
+def test_anthropic_sse_text_tool_usage_thinking_and_stop() raises:
+    var parser = AnthropicStreamParser()
+    var stream = (
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":7}}}\n\n'
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n'
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think"}}\n\n'
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}\n\n'
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}\n\n'
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello"}}\n\n'
+        'data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"tu_1","name":"bash"}}\n\n'
+        'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\\"command\\":"}}\n\n'
+        'data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\"echo hi\\"}"}}\n\n'
+        'data: {"type":"content_block_stop","index":2}\n\n'
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}\n\n'
+        'data: {"type":"message_stop"}\n\n'
+    )
+    var events = List[ProviderEvent]()
+    for i in range(stream.byte_length()):
+        for event in parser.feed(String(stream[byte=i])):
+            events.append(event.copy())
+    for event in parser.finish():
+        events.append(event.copy())
+    var message = parser.message()
+    assert_equal(message.content, "Hello")
+    assert_equal(len(message.tool_calls), 1)
+    assert_equal(message.tool_calls[0].id, "tu_1")
+    assert_equal(message.tool_calls[0].name, "bash")
+    assert_equal(message.tool_calls[0].arguments, '{"command":"echo hi"}')
+    assert_equal(parser.blocks[0].text, "think")
+    assert_equal(parser.blocks[0].signature.value(), "sig")
+    assert_equal(parser.usage.input_tokens, 7)
+    assert_equal(parser.usage.output_tokens, 5)
+    assert_equal(parser.stop_reason, "tool_use")
+    assert_true(events[len(events) - 1].kind == "done")
+
+
+def test_anthropic_malformed_tool_input_falls_back_to_object() raises:
+    var parser = AnthropicStreamParser()
+    _ = parser.feed(
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu","name":"read"}}\n\n'
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{broken"}}\n\n'
+        'data: {"type":"content_block_stop","index":0}\n\n'
+    )
+    assert_equal(parser.message().tool_calls[0].arguments, "{}")
 
 
 def test_openai_sse_and_partial_tool_assembly() raises:

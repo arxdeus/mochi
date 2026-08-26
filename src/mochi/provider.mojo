@@ -753,6 +753,151 @@ struct OpenAIStreamParser(Copyable, Movable):
         return events^
 
 
+struct AnthropicStreamParser(Copyable, Movable):
+    var sse: SSEParser
+    var blocks: List[ContentBlock]
+    var tool_arguments: List[String]
+    var usage: Usage
+    var stop_reason: String
+
+    def __init__(out self):
+        self.sse = SSEParser()
+        self.blocks = List[ContentBlock]()
+        self.tool_arguments = List[String]()
+        self.usage = Usage()
+        self.stop_reason = ""
+
+    def feed(mut self, chunk: String) raises -> List[ProviderEvent]:
+        return self._parse_payloads(self.sse.feed(chunk))
+
+    def finish(mut self) raises -> List[ProviderEvent]:
+        return self._parse_payloads(self.sse.finish())
+
+    def message(self) -> Message:
+        var message = Message("assistant", "")
+        for block in self.blocks:
+            if block.is_text():
+                message.content += block.text
+            elif block.is_tool_use():
+                message.tool_calls.append(
+                    ToolCall(block.id, block.name, serialize_json(block.input))
+                )
+        return message^
+
+    def _parse_payloads(
+        mut self, payloads: List[String]
+    ) raises -> List[ProviderEvent]:
+        var events = List[ProviderEvent]()
+        for payload in payloads:
+            var root = parse_json(payload)
+            var event_type = _string_or(root, "type", "")
+            if event_type == "message_start":
+                if root.contains("message"):
+                    var message = root.get("message")
+                    if message.contains("usage"):
+                        var usage = message.get("usage")
+                        self.usage.input_tokens = _int_or(usage, "input_tokens", 0)
+                        events.append(ProviderEvent.usage_event(self.usage))
+                continue
+            if event_type == "content_block_start":
+                var index = _int_or(root, "index", len(self.blocks))
+                var raw = root.get("content_block")
+                while len(self.blocks) <= index:
+                    self.blocks.append(ContentBlock.text_block(""))
+                    self.tool_arguments.append("")
+                var kind = _string_or(raw, "type", "")
+                if kind == "tool_use":
+                    self.blocks[index] = ContentBlock.tool_use(
+                        _string_or(raw, "id", ""),
+                        _string_or(raw, "name", ""),
+                        JsonValue.object(),
+                    )
+                    events.append(
+                        ProviderEvent.tool_call_delta(
+                            ToolCall(
+                                _string_or(raw, "id", ""),
+                                _string_or(raw, "name", ""),
+                                "",
+                            )
+                        )
+                    )
+                elif kind == "thinking":
+                    self.blocks[index] = ContentBlock.thinking(
+                        _string_or(raw, "thinking", "")
+                    )
+                elif kind == "redacted_thinking":
+                    self.blocks[index] = ContentBlock.redacted_thinking(
+                        _string_or(raw, "data", "")
+                    )
+                else:
+                    self.blocks[index] = ContentBlock.text_block(
+                        _string_or(raw, "text", "")
+                    )
+                continue
+            if event_type == "content_block_delta":
+                var index = _int_or(root, "index", 0)
+                if index < 0 or index >= len(self.blocks):
+                    continue
+                var delta = root.get("delta")
+                var kind = _string_or(delta, "type", "")
+                if kind == "text_delta":
+                    var text = _string_or(delta, "text", "")
+                    self.blocks[index].text += text
+                    if text != "":
+                        events.append(ProviderEvent.text_delta(text))
+                elif kind == "thinking_delta":
+                    self.blocks[index].text += _string_or(delta, "thinking", "")
+                elif kind == "signature_delta":
+                    self.blocks[index].signature = Optional(
+                        _string_or(delta, "signature", "")
+                    )
+                elif kind == "input_json_delta":
+                    var partial = _string_or(delta, "partial_json", "")
+                    self.tool_arguments[index] += partial
+                    events.append(
+                        ProviderEvent.tool_call_delta(
+                            ToolCall("", "", partial)
+                        )
+                    )
+                continue
+            if event_type == "content_block_stop":
+                var index = _int_or(root, "index", 0)
+                if (
+                    index >= 0
+                    and index < len(self.blocks)
+                    and self.blocks[index].is_tool_use()
+                ):
+                    var input = JsonValue.object()
+                    if self.tool_arguments[index] != "":
+                        try:
+                            input = parse_json(self.tool_arguments[index])
+                        except:
+                            input = JsonValue.object()
+                    self.blocks[index].input = input^
+                continue
+            if event_type == "message_delta":
+                if root.contains("usage"):
+                    var usage = root.get("usage")
+                    self.usage.output_tokens = _int_or(usage, "output_tokens", 0)
+                    events.append(ProviderEvent.usage_event(self.usage))
+                if root.contains("delta"):
+                    self.stop_reason = _string_or(
+                        root.get("delta"), "stop_reason", self.stop_reason
+                    )
+                continue
+            if event_type == "message_stop":
+                if self.stop_reason == "":
+                    self.stop_reason = "end_turn"
+                events.append(ProviderEvent.done(self.stop_reason))
+                continue
+            if event_type == "error":
+                var message = "Anthropic stream error"
+                if root.contains("error"):
+                    message = _string_or(root.get("error"), "message", message)
+                raise Error(message)
+        return events^
+
+
 struct ProviderResult(Copyable, Movable):
     var message: Message
     var usage: Usage

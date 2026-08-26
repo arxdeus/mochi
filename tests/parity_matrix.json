@@ -200,6 +200,33 @@
       }
     },
     {
+      "id": "provider.anthropic.messages.streaming",
+      "area": "providers",
+      "owner": "mochi_provider",
+      "status": "parity",
+      "description": "Incremental Anthropic Messages SSE assembles text, thinking, tools, usage, and stop reasons across arbitrary chunks.",
+      "upstream_refs": [
+        "maki-providers/src/providers/anthropic/shared.rs:241-374",
+        "maki-providers/src/providers/anthropic/mod.rs:671-812"
+      ],
+      "mojo_refs": [
+        "src/mochi/provider.mojo",
+        "tests/provider_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run parity provider.anthropic.messages.streaming",
+          "normalization": "Text, tool input, thinking signature, usage, and stop reason."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity provider.anthropic.messages.streaming",
+          "mojo_command": "pixi run parity provider.anthropic.messages.streaming",
+          "normalization": "Pinned upstream and Mojo deterministic Anthropic SSE tests pass."
+        }
+      }
+    },
+    {
       "id": "mcp.streamable_http.basic",
       "area": "mcp",
       "owner": "mochi_mcp",
