@@ -13,6 +13,7 @@ from mochi.domain import (
     ModelInfo,
     ModelPricing,
     ModelTier,
+    Role,
     StopReason,
     StreamResponse,
     TokenUsage,
@@ -1274,6 +1275,235 @@ struct OpenAICompatibleProvider:
         if not self.has_oauth:
             return self.rotate_key()
         return False
+
+
+@fieldwise_init
+struct AnthropicProviderSpec(Copyable, Movable):
+    var base_url: String
+    var api_key: String
+    var version: String
+    var max_retries: Int
+    var timeout_ms: Int
+
+    def __init__(out self, base_url: String, api_key: String):
+        self.base_url = base_url
+        self.api_key = api_key
+        self.version = "2023-06-01"
+        self.max_retries = 3
+        self.timeout_ms = 120000
+
+    def messages_url(self) -> String:
+        var base = String(self.base_url.removesuffix("/"))
+        if base.endswith("/v1/messages"):
+            return base^
+        return base + "/v1/messages"
+
+
+struct _AnthropicStreamState(Movable):
+    var parser: AnthropicStreamParser
+    var error: String
+
+    def __init__(out self):
+        self.parser = AnthropicStreamParser()
+        self.error = ""
+
+
+def _accept_anthropic_chunk(
+    chunk: String, userdata: Pointer[NoneType, MutUntrackedOrigin]
+):
+    var state = userdata.unsafe_bitcast[_AnthropicStreamState]()
+    try:
+        _ = state[].parser.feed(chunk)
+    except error:
+        state[].error = String(error)
+
+
+struct AnthropicProviderAdapterWithTransport[
+    T: HttpTransport & Movable & Deinitable
+](Provider, Movable):
+    var spec: AnthropicProviderSpec
+    var transport: Self.T
+    var model_info: ModelInfo
+    var last_error: Optional[MochiError]
+
+    def __init__(
+        out self,
+        var spec: AnthropicProviderSpec,
+        var transport: Self.T,
+        model: ModelInfo,
+    ):
+        self.spec = spec^
+        self.transport = transport^
+        self.model_info = model.copy()
+        self.last_error = None
+
+    def list_models(mut self) raises -> List[ModelInfo]:
+        return [self.model_info.copy()]
+
+    def stream_message[S: ProviderEventSink](
+        mut self, request: ProviderRequest, mut sink: S
+    ) raises -> StreamResponse:
+        self.last_error = None
+        request.cancel.check()
+        var body = _anthropic_body(request)
+        var http = HttpRequest("POST", self.spec.messages_url())
+        http.timeout_ms = self.spec.timeout_ms
+        http.body = serialize_json(body)
+        http.add_header("Content-Type", "application/json")
+        http.add_header("Accept", "text/event-stream")
+        http.add_header("anthropic-version", self.spec.version)
+        http.add_header("x-api-key", self.spec.api_key)
+        var state = _AnthropicStreamState()
+        var response: HttpResponse
+        try:
+            response = self.transport.perform_stream_cancellable(
+                http^,
+                _accept_anthropic_chunk,
+                Pointer(to=state).unsafe_bitcast[NoneType]().unsafe_origin_cast[MutUntrackedOrigin](),
+                request.cancel.copy(),
+            )
+        except error:
+            if request.cancel.is_cancelled():
+                return self._fail(MochiError.cancelled())
+            return self._fail(MochiError.http(String(error)))
+        if state.error != "":
+            return self._fail(MochiError.internal(state.error))
+        if response.status < 200 or response.status >= 300:
+            return self._fail(MochiError.api(response.status, response.body))
+        var tail = state.parser.finish()
+        for event in tail:
+            _emit_legacy_event(event, sink)
+        for block in state.parser.blocks:
+            if block.is_text() and block.text != "":
+                sink.emit(DomainProviderEvent.text_delta(block.text))
+            elif block.is_tool_use():
+                sink.emit(DomainProviderEvent.tool_use_start(block.id, block.name))
+        var message = DomainMessage(Role.assistant())
+        for block in state.parser.blocks:
+            message.add_block(block.copy())
+        var usage = TokenUsage(
+            state.parser.usage.input_tokens,
+            state.parser.usage.output_tokens,
+            0,
+            0,
+        )
+        return StreamResponse(
+            message^,
+            usage^,
+            Optional(StopReason.from_anthropic(state.parser.stop_reason)),
+        )
+
+    def _fail(mut self, error: MochiError) raises -> StreamResponse:
+        self.last_error = Optional(error.copy())
+        raise Error(provider_error_text(error))
+
+
+def _emit_legacy_event[S: ProviderEventSink](
+    event: ProviderEvent, mut sink: S
+) raises:
+    if event.kind == "text_delta":
+        sink.emit(DomainProviderEvent.text_delta(event.text))
+    elif event.kind == "tool_call_delta" and event.tool_call:
+        var call = event.tool_call.value().copy()
+        if call.id != "" or call.name != "":
+            sink.emit(DomainProviderEvent.tool_use_start(call.id, call.name))
+
+
+def _anthropic_body(request: ProviderRequest) raises -> JsonValue:
+    var body = JsonValue.object()
+    body.set("model", JsonValue.string(request.model.id))
+    body.set("max_tokens", JsonValue.integer(
+        request.model.max_output_tokens.value()
+        if request.model.max_output_tokens else 8192
+    ))
+    body.set("stream", JsonValue.boolean(True))
+    var system = JsonValue.array()
+    if request.system != "":
+        var block = JsonValue.object()
+        block.set("type", JsonValue.string("text"))
+        block.set("text", JsonValue.string(request.system))
+        var cache = JsonValue.object()
+        cache.set("type", JsonValue.string("ephemeral"))
+        block.set("cache_control", cache^)
+        system.append(block^)
+    body.set("system", system^)
+    var messages = JsonValue.array()
+    for message in request.messages:
+        var raw = JsonValue.object()
+        raw.set(
+            "role",
+            JsonValue.string(
+                "assistant" if message.role.is_assistant() else "user"
+            ),
+        )
+        var content = JsonValue.array()
+        for domain_block in message.content:
+            var item = JsonValue.object()
+            if domain_block.is_text():
+                if domain_block.text.strip() == "":
+                    continue
+                item.set("type", JsonValue.string("text"))
+                item.set("text", JsonValue.string(domain_block.text))
+            elif domain_block.is_tool_use():
+                item.set("type", JsonValue.string("tool_use"))
+                item.set("id", JsonValue.string(domain_block.id))
+                item.set("name", JsonValue.string(domain_block.name))
+                item.set("input", domain_block.input.copy())
+            elif domain_block.is_tool_result():
+                item.set("type", JsonValue.string("tool_result"))
+                item.set("tool_use_id", JsonValue.string(domain_block.id))
+                item.set("content", JsonValue.string(domain_block.text))
+                item.set("is_error", JsonValue.boolean(domain_block.is_error))
+            elif domain_block.is_thinking():
+                item.set("type", JsonValue.string("thinking"))
+                item.set("thinking", JsonValue.string(domain_block.text))
+                if domain_block.signature:
+                    item.set(
+                        "signature",
+                        JsonValue.string(domain_block.signature.value()),
+                    )
+            else:
+                continue
+            content.append(item^)
+        if len(content.array_value) == 0:
+            var empty = JsonValue.object()
+            empty.set("type", JsonValue.string("text"))
+            empty.set("text", JsonValue.string("(empty)"))
+            content.append(empty^)
+        raw.set("content", content^)
+        messages.append(raw^)
+    body.set("messages", messages^)
+    body.set("tools", _anthropic_tools(request.tools))
+    return body^
+
+
+def _anthropic_tools(tools: JsonValue) raises -> JsonValue:
+    var output = JsonValue.array()
+    if tools.kind != JsonValue.ARRAY:
+        return output^
+    for tool in tools.array_value:
+        var source = tool.copy()
+        if tool.contains("function"):
+            source = tool.get("function")
+        var item = JsonValue.object()
+        item.set("name", JsonValue.string(_string_or(source, "name", "")))
+        item.set(
+            "description",
+            JsonValue.string(_string_or(source, "description", "")),
+        )
+        item.set(
+            "input_schema",
+            source.get("parameters")
+            if source.contains("parameters") else JsonValue.object(),
+        )
+        output.append(item^)
+    if len(output.array_value) > 0:
+        var cache = JsonValue.object()
+        cache.set("type", JsonValue.string("ephemeral"))
+        output.array_value[len(output.array_value) - 1].set(
+            "cache_control", cache^
+        )
+    return output^
 
 
 struct OpenAIProviderAdapter(Provider, Movable):

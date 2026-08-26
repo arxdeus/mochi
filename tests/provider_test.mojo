@@ -21,6 +21,8 @@ from mochi.json import JsonValue, parse_json
 from mochi.provider_contract import ProviderEventSink, ProviderRequest
 from mochi.types import CancellationToken, ProviderEvent
 from mochi.provider import (
+    AnthropicProviderAdapterWithTransport,
+    AnthropicProviderSpec,
     AnthropicStreamParser,
     GeminiStreamParser,
     ApiKeyState,
@@ -435,6 +437,59 @@ struct ContractEventLog(ProviderEventSink, Copyable, Movable):
 
     def emit(mut self, event: DomainProviderEvent) raises:
         self.events.append(event.copy())
+
+
+def test_anthropic_provider_contract_adapter() raises:
+    var transport = MockTransport()
+    var chunks: List[String] = [
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":4}}}\n\n',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu","name":"read"}}\n\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\":\\"README.md\\"}"}}\n\ndata: {"type":"content_block_stop","index":1}\n\n',
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":3}}\n\ndata: {"type":"message_stop"}\n\n',
+    ]
+    transport.enqueue_stream(HttpResponse(200, ""), chunks)
+    var adapter = AnthropicProviderAdapterWithTransport(
+        AnthropicProviderSpec("https://api.anthropic.com", "secret"),
+        transport^,
+        find_model_info("claude-opus-4-6"),
+    )
+    var model = Model(
+        "claude-opus-4-6",
+        "anthropic",
+        ModelTier.strong(),
+        ModelFamily.claude(),
+        ThinkingSupport.yes(),
+        Optional(True),
+        ModelPricing(),
+        Optional(128000),
+        200000,
+    )
+    var messages: List[DomainMessage] = [DomainMessage.user("inspect")]
+    var tools = parse_json('[{"type":"function","function":{"name":"read","description":"Read","parameters":{"type":"object"}}}]')
+    var request = ProviderRequest(
+        model^,
+        CancellationToken(),
+        messages^,
+        "system",
+        tools^,
+    )
+    var sink = ContractEventLog()
+    var result = adapter.stream_message(request^, sink)
+    assert_equal(result.message.content[0].text, "hello")
+    assert_true(result.message.content[1].is_tool_use())
+    assert_equal(result.message.content[1].input.get("path").string_value, "README.md")
+    assert_equal(result.usage.input, 4)
+    assert_equal(result.usage.output, 3)
+    assert_true(result.stop_reason.value().is_tool_use())
+    assert_equal(len(adapter.transport.requests), 1)
+    var sent = adapter.transport.requests[0].copy()
+    assert_equal(sent.url, "https://api.anthropic.com/v1/messages")
+    assert_equal(sent.headers[2].name, "anthropic-version")
+    assert_equal(sent.headers[3].name, "x-api-key")
+    var body = parse_json(sent.body)
+    assert_equal(body.get("model").string_value, "claude-opus-4-6")
+    assert_equal(body.get("system").array_value[0].get("text").string_value, "system")
+    assert_equal(body.get("tools").array_value[0].get("name").string_value, "read")
 
 
 def test_openai_provider_contract_adapter() raises:
