@@ -46,6 +46,17 @@ struct McpOAuthState(Copyable, Movable):
             request.body += "&resource=" + _form_encode(self.resource)
         return request^
 
+    def refresh_with[T: HttpTransport](
+        mut self, mut transport: T, now_ms: Int
+    ) raises -> String:
+        var response = transport.perform(self.refresh_request())
+        if response.status < 200 or response.status >= 300:
+            raise Error(
+                "MCP OAuth refresh failed with status " + String(response.status)
+            )
+        self.apply_refresh_response(response.body, now_ms)
+        return self.authorization_header()
+
     def apply_refresh_response(mut self, body: String, now_ms: Int) raises:
         var value = parse_json(body)
         if not value.contains("access_token"):
@@ -475,6 +486,15 @@ struct StreamableHttpTransport(Copyable, Movable):
 
     def clear_bearer_token(mut self):
         self.bearer_token = ""
+
+    def apply_oauth(mut self, oauth: McpOAuthState):
+        self.bearer_token = oauth.tokens.access
+
+    def refresh_oauth_with[T: HttpTransport](
+        mut self, mut oauth: McpOAuthState, mut transport: T, now_ms: Int
+    ) raises:
+        _ = oauth.refresh_with(transport, now_ms)
+        self.apply_oauth(oauth)
 
     def fixture_response(
         mut self,

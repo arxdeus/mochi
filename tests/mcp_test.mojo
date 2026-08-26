@@ -169,6 +169,22 @@ def test_mcp_oauth_refresh_contract() raises:
     assert_equal(oauth.tokens.refresh, "next")
     assert_equal(oauth.tokens.expires, 61000)
 
+    var refreshed = McpOAuthState(
+        OAuthTokens("old", "refresh", 100, None),
+        "https://auth.example/token",
+        "client",
+        "",
+        "",
+    )
+    var refresh_transport = MockTransport()
+    refresh_transport.enqueue(
+        HttpResponse(200, '{"access_token":"fresh","expires_in":120}')
+    )
+    var http = StreamableHttpTransport("https://mcp.example/mcp")
+    http.refresh_oauth_with(refreshed, refresh_transport, 2000)
+    assert_equal(http.bearer_token, "fresh")
+    assert_equal(refreshed.tokens.expires, 122000)
+
 
 def test_streamable_http_fixture_json_and_sse() raises:
     var transport = StreamableHttpTransport("http://fixture.invalid/mcp")
