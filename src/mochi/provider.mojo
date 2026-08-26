@@ -129,9 +129,13 @@ def copilot_models_request(base_url: String, token: String) -> HttpRequest:
 
 
 def copilot_guess_endpoint(model: String) -> String:
-    if model.startswith("claude-"):
+    var id = model
+    var parts = model.split("/")
+    if len(parts) > 1:
+        id = String(parts[len(parts) - 1])
+    if id.startswith("claude-"):
         return "messages"
-    if "gpt-5" in model or "codex" in model:
+    if "gpt-5" in id or "codex" in id:
         return "responses"
     return "chat"
 
@@ -1426,6 +1430,7 @@ struct AnthropicProviderSpec(Copyable, Movable):
     var version: String
     var max_retries: Int
     var timeout_ms: Int
+    var bearer_auth: Bool
 
     def __init__(out self, base_url: String, api_key: String):
         self.base_url = base_url
@@ -1433,6 +1438,7 @@ struct AnthropicProviderSpec(Copyable, Movable):
         self.version = "2023-06-01"
         self.max_retries = 3
         self.timeout_ms = 120000
+        self.bearer_auth = False
 
     def messages_url(self) -> String:
         var base = String(self.base_url.removesuffix("/"))
@@ -1494,7 +1500,16 @@ struct AnthropicProviderAdapterWithTransport[
         http.add_header("Content-Type", "application/json")
         http.add_header("Accept", "text/event-stream")
         http.add_header("anthropic-version", self.spec.version)
-        http.add_header("x-api-key", self.spec.api_key)
+        if self.spec.bearer_auth:
+            http.add_header("Authorization", "Bearer " + self.spec.api_key)
+            http.add_header("Editor-Version", COPILOT_EDITOR_VERSION)
+            http.add_header("X-GitHub-Api-Version", COPILOT_API_VERSION)
+            http.add_header("User-Agent", COPILOT_EDITOR_VERSION)
+            http.add_header("X-Initiator", "agent")
+            http.add_header("X-Interaction-Type", "conversation-agent")
+            http.add_header("OpenAI-Intent", "conversation-agent")
+        else:
+            http.add_header("x-api-key", self.spec.api_key)
         var state = _AnthropicStreamState()
         var response: HttpResponse
         try:

@@ -31,6 +31,7 @@ from mochi.provider import (
     OpenAICompatibleProvider,
     ProductionProvider,
     copilot_discovered_endpoint,
+    copilot_guess_endpoint,
     copilot_discovery_request,
     copilot_provider_spec,
     OpenAIOAuthCredentials,
@@ -246,9 +247,14 @@ def _production_provider(config: CliConfig) raises -> ProductionProvider:
                 )
             except:
                 endpoint = "https://api.githubcopilot.com"
-        return ProductionProvider(
-            OpenAICompatibleProvider(copilot_provider_spec(endpoint, token)), info
-        )
+        var dialect = copilot_guess_endpoint(config.model)
+        if dialect == "messages":
+            var spec = AnthropicProviderSpec(endpoint, token)
+            spec.bearer_auth = True
+            return ProductionProvider(spec^, FlokiTransport(), info)
+        var spec = copilot_provider_spec(endpoint, token)
+        spec.responses_api = dialect == "responses"
+        return ProductionProvider(OpenAICompatibleProvider(spec^), info)
     var spec = config.provider_spec()
     var provider = OpenAICompatibleProvider(spec.copy())
     if config.openai_oauth:

@@ -167,7 +167,13 @@ def test_copilot_model_discovery_and_routing() raises:
     assert_equal(copilot_model_endpoint(messages), "messages")
     assert_equal(copilot_model_endpoint(parse_json('{}')), "chat")
     assert_equal(copilot_guess_endpoint("claude-sonnet-4.6"), "messages")
+    assert_equal(
+        copilot_guess_endpoint("copilot/claude-sonnet-4.6"), "messages"
+    )
     assert_equal(copilot_guess_endpoint("gpt-5.6-terra"), "responses")
+    assert_equal(
+        copilot_guess_endpoint("copilot/gpt-5.6-terra"), "responses"
+    )
     assert_equal(copilot_guess_endpoint("gpt-4.1"), "chat")
     var responses = copilot_provider_spec(
         "https://api.githubcopilot.com", "secret"
