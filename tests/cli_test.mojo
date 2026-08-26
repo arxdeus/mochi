@@ -96,6 +96,11 @@ def test_provider_selection() raises:
     )
     var copilot = parse_args(["--provider", "copilot"])
     assert_equal(copilot.provider_url, "https://api.githubcopilot.com")
+    var deepseek = parse_args(["--provider", "deepseek"])
+    assert_equal(deepseek.provider_url, "https://api.deepseek.com/v1")
+    assert_equal(deepseek.provider_spec().name, "deepseek")
+    var ollama = parse_args(["--provider", "ollama"])
+    assert_equal(ollama.provider_url, "http://127.0.0.1:11434/v1")
     with assert_raises():
         _ = parse_args(["--provider", "unknown"])
 
@@ -105,6 +110,7 @@ def test_provider_spec_and_builtin_definitions() raises:
         "--provider-url", "http://localhost/v1", "--provider-key", "secret"
     ])
     var spec = config.provider_spec()
+    assert_equal(spec.name, "openai")
     assert_equal(spec.base_url, "http://localhost/v1")
     assert_equal(spec.api_keys[0], "secret")
     var definitions = standard_tool_definitions()

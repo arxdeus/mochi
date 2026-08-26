@@ -5,7 +5,7 @@ from std.os import getenv
 from mochi.json import JsonValue
 from mochi.mcp import McpSession, StdioTransport, StreamableHttpTransport
 from mochi.plugin import PluginExecutable, PluginProtocol
-from mochi.provider import ProviderSpec
+from mochi.provider import ProviderSpec, builtin_provider_registry
 from mochi.runtime import ToolDefinition
 from mochi.storage import SessionRef
 
@@ -17,6 +17,11 @@ comptime DEFAULT_PROVIDER_URL = "https://api.openai.com/v1"
 comptime DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
 comptime DEFAULT_GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
 comptime DEFAULT_COPILOT_URL = "https://api.githubcopilot.com"
+comptime OPENAI_COMPATIBLE_PROVIDERS = [
+    "openai", "openrouter", "xai", "deepseek", "mistral", "zai", "groq",
+    "together", "fireworks", "perplexity", "cerebras", "moonshot", "ollama",
+    "lmstudio", "vllm",
+]
 
 
 @fieldwise_init
@@ -74,6 +79,13 @@ struct CliConfig(Copyable, Movable):
             self.provider_url = DEFAULT_GEMINI_URL
         elif self.provider == "copilot":
             self.provider_url = DEFAULT_COPILOT_URL
+        else:
+            try:
+                self.provider_url = builtin_provider_registry().get(
+                    self.provider
+                ).base_url
+            except:
+                pass
 
     def api_key(self) -> String:
         if len(self.provider_keys) > 0:
@@ -90,10 +102,32 @@ struct CliConfig(Copyable, Movable):
             if key.strip() == "":
                 key = getenv("COPILOT_GITHUB_TOKEN", "")
             return key^
-        return getenv("OPENAI_API_KEY", "")
+        if self.provider == "openrouter":
+            return getenv("OPENROUTER_API_KEY", "")
+        if self.provider == "xai":
+            return getenv("XAI_API_KEY", "")
+        if self.provider == "deepseek":
+            return getenv("DEEPSEEK_API_KEY", "")
+        if self.provider == "mistral":
+            return getenv("MISTRAL_API_KEY", "")
+        if self.provider == "zai":
+            return getenv("ZHIPU_API_KEY", "")
+        if self.provider == "groq":
+            return getenv("GROQ_API_KEY", "")
+        if self.provider == "together":
+            return getenv("TOGETHER_API_KEY", "")
+        if self.provider == "fireworks":
+            return getenv("FIREWORKS_API_KEY", "")
+        if self.provider == "perplexity":
+            return getenv("PERPLEXITY_API_KEY", "")
+        if self.provider == "cerebras":
+            return getenv("CEREBRAS_API_KEY", "")
+        if self.provider == "moonshot":
+            return getenv("MOONSHOT_API_KEY", "")
+        return getenv("OPENAI_API_KEY", "") if self.provider == "openai" else ""
 
     def provider_spec(self) -> ProviderSpec:
-        var spec = ProviderSpec("custom", self.provider_url)
+        var spec = ProviderSpec(self.provider, self.provider_url)
         spec.responses_api = self.openai_oauth
         for key in self.provider_keys:
             spec.add_api_key(key)
@@ -102,6 +136,15 @@ struct CliConfig(Copyable, Movable):
             if key != "":
                 spec.add_api_key(key^)
         return spec^
+
+
+def _valid_provider(provider: String) -> Bool:
+    if provider == "anthropic" or provider == "gemini" or provider == "copilot":
+        return True
+    for candidate in materialize[OPENAI_COMPATIBLE_PROVIDERS]():
+        if provider == candidate:
+            return True
+    return False
 
 
 def parse_args(arguments: List[String]) raises -> CliConfig:
@@ -136,8 +179,8 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
         elif argument == "--provider":
             config.provider = _option_value(arguments, index, argument)
             index += 1
-            if config.provider != "openai" and config.provider != "anthropic" and config.provider != "gemini" and config.provider != "copilot":
-                raise Error("invalid --provider: " + config.provider + " (expected openai, anthropic, gemini, or copilot)")
+            if not _valid_provider(config.provider):
+                raise Error("invalid --provider: " + config.provider)
         elif argument == "--provider-url":
             config.provider_url = _option_value(arguments, index, argument)
             index += 1

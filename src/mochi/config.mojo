@@ -1,5 +1,6 @@
 from std.os.path import exists
 
+from mochi.cli import _valid_provider
 from mochi.json import JsonValue, parse_json
 
 
@@ -34,7 +35,7 @@ struct AppConfig(Copyable, Movable):
         result.output_format = _optional_string(value, "output_format")
         result.yolo = _optional_bool(value, "yolo")
         result.max_turns = _optional_int(value, "max_turns")
-        if result.provider and result.provider.value() != "openai" and result.provider.value() != "anthropic" and result.provider.value() != "gemini" and result.provider.value() != "copilot":
+        if result.provider and not _valid_provider(result.provider.value()):
             raise Error("invalid configured provider")
         if result.output_format and (
             result.output_format.value() != "text"
