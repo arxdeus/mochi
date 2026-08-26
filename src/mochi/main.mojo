@@ -61,7 +61,7 @@ from mochi.ui import (
     command_matches,
     search_result_lines,
 )
-from mochi.workspace import InputHistory, NoteStore, project_id
+from mochi.workspace import InputHistory, NoteStore, PreferenceStore, project_id
 
 
 def main() raises:
@@ -206,12 +206,15 @@ def main() raises:
                 + project_id(cwd)
                 + "/memories"
             )
+            var preferences = PreferenceStore(paths.state + "/preferences.json")
+            preferences.load()
             _interactive(
                 runtime,
                 session,
                 session_store,
                 history,
                 memories,
+                preferences,
                 config.output_format,
             )
     except error:
@@ -447,6 +450,7 @@ def _interactive(
     store: SessionStore,
     mut history: InputHistory,
     mut memories: NoteStore,
+    mut preferences: PreferenceStore,
     output_format: String,
 ) raises:
     var ui = UiState()
@@ -524,6 +528,8 @@ def _interactive(
                 _interactive_tasks(session)
             elif action.name == "mcp":
                 _interactive_mcp(runtime)
+            elif action.name == "theme":
+                _interactive_theme(preferences)
             elif action.name == "login":
                 _interactive_login(runtime)
             elif action.name == "model":
@@ -611,6 +617,28 @@ def _run_resume(
     except error:
         print("Session save failed:", error)
     _print_result(result, output_format)
+
+
+def _interactive_theme(mut preferences: PreferenceStore) raises:
+    comptime themes = [
+        "ayu_dark", "ayu_light", "ayu_mirage", "carbonfox",
+        "catppuccin_frappe", "catppuccin_latte", "catppuccin_macchiato",
+        "catppuccin_mocha", "dark_daltonized", "dracula", "everforest_dark",
+        "fleet_dark", "github_dark", "gruvbox", "gruvbox_light", "kanagawa",
+        "kanagawa_ink", "kanagawa_plum", "material_darker", "monokai_pro",
+        "night_owl", "nightfox", "nord", "onedark", "rose_pine",
+        "rose_pine_dawn", "rose_pine_midnight", "rose_pine_moon",
+        "solarized_dark", "solarized_light", "tokyonight", "vscode_dark_plus",
+        "zenburn",
+    ]
+    print("Themes:")
+    var current = String("dracula")
+    var saved = preferences.get("theme")
+    if saved and saved.value().kind == JsonValue.STRING:
+        current = saved.value().string_value
+    for theme in materialize[themes]():
+        print(("* " if theme == current else "  ") + theme)
+    print("Set theme in preferences.json or use the interactive picker when available.")
 
 
 def _interactive_mcp(runtime: Runtime):
