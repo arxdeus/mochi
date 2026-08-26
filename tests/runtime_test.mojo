@@ -114,6 +114,17 @@ def test_queued_input_is_wrapped_and_consumed() raises:
     assert_true("<user-interrupt>" in runtime.messages[0].content)
     assert_true("new direction" in runtime.messages[0].content)
     assert_false(runtime.consume_queued_input())
+    runtime.messages = [
+        Message("user", "one"),
+        Message("assistant", "two"),
+        Message("user", "three"),
+    ]
+    runtime.compact_keep = 1
+    runtime.queue_compaction()
+    assert_equal(runtime.queued_compaction_count(), 1)
+    assert_true(runtime.consume_queued_command())
+    assert_equal(runtime.queued_compaction_count(), 0)
+    assert_equal(runtime.compactions, 1)
 
 
 def test_system_prompt_is_sent_but_not_persisted() raises:

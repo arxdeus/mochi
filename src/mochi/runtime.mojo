@@ -88,6 +88,7 @@ struct Runtime:
     var system_prompt: String
     var permission_answers: List[PermissionAnswer]
     var queued_inputs: List[String]
+    var queued_compactions: Int
     var mcp_stdio_names: List[String]
     var mcp_stdio_clients: List[McpClient]
     var mcp_stdio_transports: List[StdioTransport]
@@ -123,6 +124,7 @@ struct Runtime:
         self.system_prompt = ""
         self.permission_answers = List[PermissionAnswer]()
         self.queued_inputs = List[String]()
+        self.queued_compactions = 0
         self.mcp_stdio_names = List[String]()
         self.mcp_stdio_clients = List[McpClient]()
         self.mcp_stdio_transports = List[StdioTransport]()
@@ -157,6 +159,7 @@ struct Runtime:
         self.system_prompt = ""
         self.permission_answers = List[PermissionAnswer]()
         self.queued_inputs = List[String]()
+        self.queued_compactions = 0
         self.mcp_stdio_names = List[String]()
         self.mcp_stdio_clients = List[McpClient]()
         self.mcp_stdio_transports = List[StdioTransport]()
@@ -178,8 +181,20 @@ struct Runtime:
     def queue_input(mut self, input: String):
         self.queued_inputs.append(input)
 
+    def queue_compaction(mut self):
+        self.queued_compactions += 1
+
     def queued_input_count(self) -> Int:
         return len(self.queued_inputs)
+
+    def queued_compaction_count(self) -> Int:
+        return self.queued_compactions
+
+    def consume_queued_command(mut self) -> Bool:
+        if self.queued_compactions > 0:
+            self.queued_compactions -= 1
+            return self.compact_if_needed(force=True)
+        return self.consume_queued_input()
 
     def consume_queued_input(mut self) -> Bool:
         if len(self.queued_inputs) == 0:
@@ -310,7 +325,7 @@ struct Runtime:
             if cancel.is_cancelled():
                 return self._result(final_text, usage, completed_turns, "cancelled")
             _ = self.compact_if_needed()
-            _ = self.consume_queued_input()
+            _ = self.consume_queued_command()
             var response: ProviderResult
             try:
                 response = self._complete_with_retry(cancel)
