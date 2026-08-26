@@ -390,6 +390,10 @@ struct Runtime:
                 if cancel.is_cancelled():
                     return self._result(final_text, usage, completed_turns, "cancelled")
                 self.dispatch(call, cancel)
+                if len(self.pending_permissions) > 0:
+                    return self._result(
+                        final_text, usage, completed_turns, "permission"
+                    )
         return self._result(final_text, usage, completed_turns, "max_turns")
 
     def _complete_with_retry(
