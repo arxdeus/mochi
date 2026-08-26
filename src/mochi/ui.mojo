@@ -20,6 +20,7 @@ struct UiEvent(Copyable, Movable):
     comptime HISTORY_UP = 10
     comptime HISTORY_DOWN = 11
     comptime CONTINUE_LINE = 12
+    comptime PASTE_SPACED = 13
 
     var tag: Int
     var text: String
@@ -110,6 +111,12 @@ struct UiEvent(Copyable, Movable):
     @staticmethod
     def continue_line() -> Self:
         return Self(Self.CONTINUE_LINE)
+
+    @staticmethod
+    def paste_spaced(text: String) -> Self:
+        var event = Self(Self.PASTE_SPACED)
+        event.text = text
+        return event^
 
 
 struct UiAction(Copyable, Movable):
@@ -306,6 +313,8 @@ struct UiReducer:
             Self._history_down(state)
         elif event.tag == UiEvent.CONTINUE_LINE:
             Self._continue_line(state)
+        elif event.tag == UiEvent.PASTE_SPACED:
+            Self._paste_spaced(state, event.text)
         return UiAction.none()
 
     @staticmethod
@@ -369,6 +378,17 @@ struct UiReducer:
         state.cursor -= 1
 
     @staticmethod
+    def _paste_spaced(mut state: UiState, text: String):
+        var before = _codepoint_prefix(state.draft, state.cursor)
+        var after = _codepoint_suffix(state.draft, state.cursor)
+        var pasted = text
+        if _ends_word(before) and not pasted.startswith(" "):
+            pasted = " " + pasted
+        if _starts_word(after) and not pasted.endswith(" "):
+            pasted += " "
+        Self._insert(state, pasted^)
+
+    @staticmethod
     def _continue_line(mut state: UiState):
         var before = _codepoint_prefix(state.draft, state.cursor)
         if before.endswith("\\"):
@@ -410,6 +430,28 @@ struct UiReducer:
         if auto_scroll:
             return maximum
         return min(max(0, requested), maximum)
+
+
+def _ends_word(value: String) -> Bool:
+    var last = String("")
+    for cp in value.codepoint_slices():
+        last = String(cp)
+    return _word_boundary(last)
+
+
+def _starts_word(value: String) -> Bool:
+    for cp in value.codepoint_slices():
+        return _word_boundary(String(cp))
+    return False
+
+
+def _word_boundary(value: String) -> Bool:
+    if value == "_" or value == ")" or value == "]" or value == "}" or value == ">":
+        return True
+    for cp in value.codepoints():
+        var code = Int(cp.to_u32())
+        return (code >= 48 and code <= 57) or (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or code >= 128
+    return False
 
 
 def _codepoint_prefix(value: String, count: Int) -> String:

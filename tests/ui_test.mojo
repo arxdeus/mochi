@@ -90,6 +90,17 @@ def test_unicode_editor_cursor_insert_and_delete() raises:
     assert_equal(state.draft, "λaéz")
 
 
+def test_paste_adds_spaces_at_word_boundaries() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("readfile"))
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-4))
+    _ = UiReducer.reduce(state, UiEvent.paste_spaced("/tmp/x"))
+    assert_equal(state.draft, "read /tmp/x file")
+    _ = UiReducer.reduce(state, UiEvent.edit("λx"))
+    _ = UiReducer.reduce(state, UiEvent.paste_spaced("value"))
+    assert_equal(state.draft, "λx value")
+
+
 def test_multiline_continuation_replaces_backslash() raises:
     var state = UiState()
     _ = UiReducer.reduce(state, UiEvent.edit("first\\"))
