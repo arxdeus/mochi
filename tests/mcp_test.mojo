@@ -15,6 +15,13 @@ from mochi.mcp import (
     McpSession,
     StdioTransport,
     StreamableHttpTransport,
+    mcp_auth_server_metadata_urls,
+    mcp_endpoint_url_is_secure,
+    mcp_resource_matches_server,
+    mcp_resource_metadata_urls,
+    mcp_server_origin,
+    mcp_well_known_url,
+    parse_www_authenticate,
 )
 from mochi.storage import OAuthTokens
 
@@ -145,6 +152,55 @@ def test_stdio_fixture_transport() raises:
     )
     assert_true(response.get("result").get("ok").bool_value)
     assert_equal(len(transport.fixture_writes), 1)
+
+
+def test_mcp_oauth_discovery_primitives() raises:
+    var auth = parse_www_authenticate(
+        'Bearer realm="example", resource_metadata="https://rs.example.com/meta", scope="read write"'
+    )
+    assert_true(auth)
+    assert_equal(auth.value().resource_metadata, "https://rs.example.com/meta")
+    assert_equal(auth.value().scope, "read write")
+    assert_false(parse_www_authenticate('Basic realm="example"'))
+
+    assert_equal(mcp_server_origin("https://example.com/api/v1/"), "https://example.com")
+    assert_equal(
+        mcp_well_known_url("https://example.com/api/v1", "oauth-authorization-server"),
+        "https://example.com/.well-known/oauth-authorization-server/api/v1",
+    )
+    var resource_urls = mcp_resource_metadata_urls("https://example.com/mcp")
+    assert_equal(len(resource_urls), 2)
+    assert_equal(
+        resource_urls[0],
+        "https://example.com/.well-known/oauth-protected-resource/mcp",
+    )
+    assert_equal(
+        resource_urls[1],
+        "https://example.com/.well-known/oauth-protected-resource",
+    )
+    var auth_urls = mcp_auth_server_metadata_urls("https://auth.example/tenant")
+    assert_equal(len(auth_urls), 4)
+    assert_equal(
+        auth_urls[0],
+        "https://auth.example/.well-known/oauth-authorization-server/tenant",
+    )
+    assert_equal(
+        auth_urls[3], "https://auth.example/.well-known/openid-configuration"
+    )
+
+    assert_true(mcp_endpoint_url_is_secure("https://example.com/token"))
+    assert_true(mcp_endpoint_url_is_secure("http://localhost:8080/token"))
+    assert_true(mcp_endpoint_url_is_secure("http://127.0.0.1:8080/token"))
+    assert_false(mcp_endpoint_url_is_secure("http://example.com/token"))
+    assert_true(
+        mcp_resource_matches_server("HTTPS://EXAMPLE.com/mcp/", "https://example.com/mcp")
+    )
+    assert_true(
+        mcp_resource_matches_server("https://example.com", "https://example.com/mcp")
+    )
+    assert_false(
+        mcp_resource_matches_server("https://example.com/MCP", "https://example.com/mcp")
+    )
 
 
 def test_mcp_oauth_refresh_contract() raises:

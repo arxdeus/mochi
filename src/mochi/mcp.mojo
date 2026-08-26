@@ -13,6 +13,134 @@ comptime MCP_PROTOCOL_VERSION = "2025-06-18"
 
 
 @fieldwise_init
+struct McpUrlParts(Copyable, Movable):
+    var scheme: String
+    var authority: String
+    var path: String
+
+    def origin(self) -> String:
+        return self.scheme + self.authority
+
+
+@fieldwise_init
+struct WwwAuthenticateInfo(Copyable, Movable):
+    var resource_metadata: String
+    var scope: String
+
+
+def parse_mcp_url(var url: String) -> McpUrlParts:
+    url = String(String(url.strip()).removesuffix("/"))
+    var scheme_end = 0
+    var marker = url.find("://")
+    if marker:
+        scheme_end = marker.value() + 3
+    var authority_end = url.byte_length()
+    for index in range(scheme_end, url.byte_length()):
+        if url[byte=index] == "/":
+            authority_end = index
+            break
+    return McpUrlParts(
+        _mcp_byte_range(url, 0, scheme_end),
+        _mcp_byte_range(url, scheme_end, authority_end),
+        _mcp_byte_range(url, authority_end, url.byte_length()),
+    )
+
+
+def mcp_server_origin(url: String) -> String:
+    return parse_mcp_url(url).origin()
+
+
+def mcp_well_known_url(base_url: String, name: String) -> String:
+    var parts = parse_mcp_url(base_url)
+    var result = parts.origin() + "/.well-known/" + name
+    if parts.path != "" and parts.path != "/":
+        result += parts.path
+    return result^
+
+
+def mcp_resource_metadata_urls(server_url: String) -> List[String]:
+    var path_specific = mcp_well_known_url(server_url, "oauth-protected-resource")
+    var root = mcp_server_origin(server_url) + "/.well-known/oauth-protected-resource"
+    var candidates: List[String] = [path_specific]
+    if path_specific != root:
+        candidates.append(root)
+    return candidates^
+
+
+def mcp_auth_server_metadata_urls(issuer_url: String) -> List[String]:
+    var parts = parse_mcp_url(issuer_url)
+    var candidates: List[String] = [
+        mcp_well_known_url(issuer_url, "oauth-authorization-server"),
+        mcp_well_known_url(issuer_url, "openid-configuration"),
+    ]
+    if parts.path != "" and parts.path != "/":
+        candidates.append(parts.origin() + "/.well-known/oauth-authorization-server")
+        candidates.append(parts.origin() + "/.well-known/openid-configuration")
+    return candidates^
+
+
+def parse_www_authenticate(header: String) -> Optional[WwwAuthenticateInfo]:
+    if "Bearer" not in header:
+        return None
+    return Optional(
+        WwwAuthenticateInfo(
+            _quoted_header_parameter(header, "resource_metadata"),
+            _quoted_header_parameter(header, "scope"),
+        )
+    )
+
+
+def mcp_endpoint_url_is_secure(url: String) -> Bool:
+    return (
+        url.startswith("https://")
+        or url.startswith("http://127.0.0.1")
+        or url.startswith("http://localhost")
+    )
+
+
+def mcp_resource_matches_server(resource: String, server_url: String) -> Bool:
+    var normalized_resource = _normalize_mcp_resource(resource)
+    return (
+        normalized_resource == _normalize_mcp_resource(server_url)
+        or normalized_resource == _normalize_mcp_resource(mcp_server_origin(server_url))
+    )
+
+
+def _quoted_header_parameter(header: String, key: String) -> String:
+    var prefix = key + "=\""
+    var start = header.find(prefix)
+    if not start:
+        return ""
+    var value_start = start.value() + prefix.byte_length()
+    for index in range(value_start, header.byte_length()):
+        if header[byte=index] == "\"":
+            return _mcp_byte_range(header, value_start, index)
+    return ""
+
+
+def _normalize_mcp_resource(url: String) -> String:
+    var parts = parse_mcp_url(url)
+    return _mcp_ascii_lower(parts.scheme) + _mcp_ascii_lower(parts.authority) + parts.path
+
+
+def _mcp_byte_range(value: String, start: Int, end: Int) -> String:
+    var output = String("")
+    for index in range(start, end):
+        output += String(value[byte=index])
+    return output^
+
+
+def _mcp_ascii_lower(value: String) -> String:
+    var output = String("")
+    for byte in value.as_bytes():
+        var code = Int(byte)
+        if code >= 65 and code <= 90:
+            code += 32
+        output += chr(code)
+    return output^
+
+
+@fieldwise_init
 struct McpOAuthState(Copyable, Movable):
     var tokens: OAuthTokens
     var token_endpoint: String
