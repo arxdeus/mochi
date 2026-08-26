@@ -809,7 +809,7 @@
       "id": "provider.openai.contract_adapter",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "partial",
+      "status": "parity",
       "description": "The live OpenAI-compatible parser and transport implement the frozen provider request/event/response contract through an adapter.",
       "upstream_refs": [
         "maki-providers/src/providers/openai_compat.rs"
@@ -824,10 +824,10 @@
           "normalization": "Wire request, ordered canonical events, final message/tool/usage/stop response, and pre-cancellation."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Expand existing OpenAI SSE oracle to canonical adapter output."
+          "status": "parity",
+          "upstream_command": "pixi run parity provider.openai.contract_adapter",
+          "mojo_command": "pixi run parity provider.openai.contract_adapter",
+          "normalization": "Pinned upstream message/tool conversion and parallel streamed tool assembly pass with Mojo canonical request/event/response adapter, ordered incremental transport parsing, and pre-cancellation."
         }
       }
     },

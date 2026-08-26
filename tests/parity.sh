@@ -50,6 +50,16 @@ case "${1:-all}" in
             sessions::tests::crash_recovery_truncated_line -- --exact >/dev/null
         run_mojo_test tests/session_test.mojo
         ;;
+    provider.openai.contract_adapter)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
+            providers::openai_compat::tests::convert_messages_structure -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
+            providers::openai_compat::tests::convert_tools_structure -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
+            providers::openai_compat::tests::parse_sse_multiple_parallel_tool_calls -- --exact >/dev/null
+        run_mojo_test tests/provider_test.mojo
+        run_mojo_test tests/provider_contract_test.mojo
+        ;;
     provider.openai.chat.streaming)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
             providers::openai_compat::tests::parse_sse_text_and_usage -- --exact >/dev/null
@@ -320,7 +330,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="agent.provider_error.result permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output storage.session.resume_continue cancellation.http.active cancellation.process.active contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="agent.provider_error.result permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.openai.contract_adapter provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output storage.session.resume_continue cancellation.http.active cancellation.process.active contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))
