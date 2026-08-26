@@ -6,9 +6,79 @@ from std.sys._libc import close, dup2, execvp, exit, pipe
 
 from mochi.http import FlokiTransport, HttpRequest, HttpTransport
 from mochi.json import JsonValue, parse_json, serialize_json
+from mochi.storage import OAuthTokens
 
 
 comptime MCP_PROTOCOL_VERSION = "2025-06-18"
+
+
+@fieldwise_init
+struct McpOAuthState(Copyable, Movable):
+    var tokens: OAuthTokens
+    var token_endpoint: String
+    var client_id: String
+    var client_secret: String
+    var resource: String
+
+    def expired(self, now_ms: Int, margin_ms: Int = 30000) -> Bool:
+        return self.tokens.expires > 0 and now_ms + margin_ms >= self.tokens.expires
+
+    def can_refresh(self) -> Bool:
+        return self.tokens.refresh != "" and self.token_endpoint != "" and self.client_id != ""
+
+    def authorization_header(self) -> String:
+        if self.tokens.access == "":
+            return ""
+        return "Bearer " + self.tokens.access
+
+    def refresh_request(self) raises -> HttpRequest:
+        if not self.can_refresh():
+            raise Error("MCP OAuth refresh is not configured")
+        var request = HttpRequest("POST", self.token_endpoint)
+        request.add_header("Content-Type", "application/x-www-form-urlencoded")
+        request.body = (
+            "grant_type=refresh_token&refresh_token=" + _form_encode(self.tokens.refresh)
+            + "&client_id=" + _form_encode(self.client_id)
+        )
+        if self.client_secret != "":
+            request.body += "&client_secret=" + _form_encode(self.client_secret)
+        if self.resource != "":
+            request.body += "&resource=" + _form_encode(self.resource)
+        return request^
+
+    def apply_refresh_response(mut self, body: String, now_ms: Int) raises:
+        var value = parse_json(body)
+        if not value.contains("access_token"):
+            raise Error("MCP OAuth refresh response has no access token")
+        self.tokens.access = value.get("access_token").string_value
+        if value.contains("refresh_token"):
+            var refresh = value.get("refresh_token").string_value
+            if refresh != "":
+                self.tokens.refresh = refresh
+        var expires_in = 3600
+        if value.contains("expires_in"):
+            expires_in = value.get("expires_in").int_value
+        self.tokens.expires = now_ms + expires_in * 1000
+
+
+def _form_encode(value: String) -> String:
+    var output = String("")
+    comptime digits = "0123456789ABCDEF"
+    for byte in value.as_bytes():
+        var code = Int(byte)
+        if (
+            (code >= 48 and code <= 57)
+            or (code >= 65 and code <= 90)
+            or (code >= 97 and code <= 122)
+            or code == 45
+            or code == 46
+            or code == 95
+            or code == 126
+        ):
+            output += chr(code)
+        else:
+            output += "%" + String(digits[byte=(code >> 4) & 15]) + String(digits[byte=code & 15])
+    return output^
 
 
 def _empty_object() -> JsonValue:

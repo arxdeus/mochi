@@ -11,10 +11,12 @@ from mochi.json import JsonValue, parse_json
 from mochi.mcp import (
     MCP_PROTOCOL_VERSION,
     McpClient,
+    McpOAuthState,
     McpSession,
     StdioTransport,
     StreamableHttpTransport,
 )
+from mochi.storage import OAuthTokens
 
 
 def test_initialize_and_initialized() raises:
@@ -38,6 +40,7 @@ def test_initialize_and_initialized() raises:
         session.initialized_notification().get("method").string_value,
         "notifications/initialized",
     )
+
 
 
 def test_json_rpc_errors_and_fixture_exchange() raises:
@@ -142,6 +145,29 @@ def test_stdio_fixture_transport() raises:
     )
     assert_true(response.get("result").get("ok").bool_value)
     assert_equal(len(transport.fixture_writes), 1)
+
+
+def test_mcp_oauth_refresh_contract() raises:
+    var oauth = McpOAuthState(
+        OAuthTokens("old", "refresh token", 100, None),
+        "https://auth.example/token",
+        "client",
+        "secret",
+        "https://mcp.example/mcp",
+    )
+    assert_true(oauth.expired(100))
+    assert_true(oauth.can_refresh())
+    var request = oauth.refresh_request()
+    assert_equal(request.method, "POST")
+    assert_true("refresh_token=refresh%20token" in request.body)
+    assert_true("client_secret=secret" in request.body)
+    oauth.apply_refresh_response(
+        '{"access_token":"new","refresh_token":"next","expires_in":60}',
+        1000,
+    )
+    assert_equal(oauth.authorization_header(), "Bearer new")
+    assert_equal(oauth.tokens.refresh, "next")
+    assert_equal(oauth.tokens.expires, 61000)
 
 
 def test_streamable_http_fixture_json_and_sse() raises:
