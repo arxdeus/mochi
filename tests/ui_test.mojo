@@ -158,6 +158,21 @@ def test_structured_transcript_messages() raises:
     assert_equal(lines[3], "tool result bash: ok")
 
 
+def test_state_loads_structured_transcript_for_search() raises:
+    var state = UiState()
+    var assistant = Message("assistant", "checking")
+    assistant.add_tool_call(ToolCall("call-1", "bash", "{}"))
+    var tool = Message("tool", "ok")
+    tool.name = "bash"
+    state.set_transcript([Message("user", "run"), assistant^, tool^])
+    assert_equal(len(state.messages), 4)
+    assert_equal(state.roles[0], "user")
+    assert_equal(state.messages[1], "checking")
+    assert_equal(state.roles[2], "tool call")
+    assert_equal(state.messages[2], "bash")
+    assert_equal(state.roles[3], "tool result bash")
+
+
 def test_viewport_is_bounded_and_tracks_messages() raises:
     var state = UiState()
     _ = UiReducer.reduce(state, UiEvent.viewport(40, 2, 99, False))

@@ -426,6 +426,7 @@ def _interactive(
 ) raises:
     var ui = UiState()
     ui.set_history(history.entries.copy())
+    ui.set_transcript(runtime.messages)
     while True:
         var line = _read_interactive_line(ui)
         if not line:
@@ -461,6 +462,7 @@ def _interactive(
                 runtime.set_messages(List[Message]())
                 ui = UiState()
                 ui.set_history(history.entries.copy())
+                ui.set_transcript(runtime.messages)
                 print("Started session:", session.id)
             elif action.name == "usage":
                 _interactive_usage(session, runtime)
@@ -477,6 +479,7 @@ def _interactive(
         _run_prompt(runtime, session, store, action.text, output_format)
         if _interactive_permissions(runtime):
             _run_resume(runtime, session, store, output_format)
+        ui.set_transcript(runtime.messages)
         _ = UiReducer.reduce(ui, UiEvent.complete())
 
 

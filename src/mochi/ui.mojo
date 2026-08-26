@@ -263,6 +263,29 @@ struct UiState(Copyable, Movable):
         self.history_index = -1
         self.history_draft = ""
 
+    def set_transcript(mut self, messages: List[Message]):
+        self.roles.clear()
+        self.messages.clear()
+        for message in messages:
+            if message.role == "assistant":
+                if message.content != "":
+                    self.roles.append("assistant")
+                    self.messages.append(message.content)
+                for call in message.tool_calls:
+                    self.roles.append("tool call")
+                    self.messages.append(call.name)
+            elif message.role == "tool":
+                var role = String("tool result")
+                if message.name != "":
+                    role += " " + message.name
+                self.roles.append(role^)
+                self.messages.append(message.content)
+            elif message.content != "":
+                self.roles.append(message.role)
+                self.messages.append(message.content)
+        if self.auto_scroll:
+            self.viewport_offset = max(0, len(self.messages) - self.viewport_height)
+
 
 @fieldwise_init
 struct UiView(Copyable, Movable):
