@@ -24,6 +24,8 @@ from mochi.provider import (
     AnthropicProviderAdapterWithTransport,
     AnthropicProviderSpec,
     AnthropicStreamParser,
+    GeminiProviderAdapterWithTransport,
+    GeminiProviderSpec,
     GeminiStreamParser,
     ApiKeyState,
     OAuthState,
@@ -490,6 +492,55 @@ def test_anthropic_provider_contract_adapter() raises:
     assert_equal(body.get("model").string_value, "claude-opus-4-6")
     assert_equal(body.get("system").array_value[0].get("text").string_value, "system")
     assert_equal(body.get("tools").array_value[0].get("name").string_value, "read")
+
+
+def test_gemini_provider_contract_adapter() raises:
+    var transport = MockTransport()
+    var chunks: List[String] = [
+        'data: {"candidates":[{"content":{"parts":[{"text":"hello"},{"functionCall":{"name":"read","args":{"path":"README.md"}}}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":3,"cachedContentTokenCount":2}}\n\n'
+    ]
+    transport.enqueue_stream(HttpResponse(200, ""), chunks)
+    var adapter = GeminiProviderAdapterWithTransport(
+        GeminiProviderSpec("https://generativelanguage.googleapis.com/v1beta", "secret"),
+        transport^,
+        find_model_info("gemini-2.5-pro"),
+    )
+    var model = Model(
+        "gemini-2.5-pro",
+        "google",
+        ModelTier.strong(),
+        ModelFamily.gemini(),
+        ThinkingSupport.yes(),
+        Optional(True),
+        ModelPricing(),
+        Optional(65536),
+        1048576,
+    )
+    var messages: List[DomainMessage] = [DomainMessage.user("inspect")]
+    var tools = parse_json('[{"type":"function","function":{"name":"read","description":"Read","parameters":{"type":"object"}}}]')
+    var request = ProviderRequest(
+        model^,
+        CancellationToken(),
+        messages^,
+        "system",
+        tools^,
+    )
+    var sink = ContractEventLog()
+    var result = adapter.stream_message(request^, sink)
+    assert_equal(result.message.content[0].text, "hello")
+    assert_true(result.message.content[1].is_tool_use())
+    assert_equal(result.message.content[1].input.get("path").string_value, "README.md")
+    assert_equal(result.usage.input, 4)
+    assert_equal(result.usage.output, 3)
+    assert_equal(result.usage.cache_read, 2)
+    assert_true(result.stop_reason.value().is_tool_use())
+    var sent = adapter.transport.requests[0].copy()
+    assert_true("gemini-2.5-pro:streamGenerateContent?alt=sse" in sent.url)
+    assert_equal(sent.headers[2].name, "x-goog-api-key")
+    var body = parse_json(sent.body)
+    assert_equal(body.get("contents").array_value[0].get("role").string_value, "user")
+    assert_equal(body.get("systemInstruction").get("parts").array_value[0].get("text").string_value, "system")
+    assert_equal(body.get("tools").array_value[0].get("functionDeclarations").array_value[0].get("name").string_value, "read")
 
 
 def test_openai_provider_contract_adapter() raises:

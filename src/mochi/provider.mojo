@@ -1506,6 +1506,218 @@ def _anthropic_tools(tools: JsonValue) raises -> JsonValue:
     return output^
 
 
+@fieldwise_init
+struct GeminiProviderSpec(Copyable, Movable):
+    var base_url: String
+    var api_key: String
+    var timeout_ms: Int
+
+    def __init__(out self, base_url: String, api_key: String):
+        self.base_url = base_url
+        self.api_key = api_key
+        self.timeout_ms = 120000
+
+    def stream_url(self, model: String) -> String:
+        return (
+            String(self.base_url.removesuffix("/")) + "/models/" + model
+            + ":streamGenerateContent?alt=sse"
+        )
+
+
+struct _GeminiStreamState(Movable):
+    var parser: GeminiStreamParser
+    var error: String
+
+    def __init__(out self):
+        self.parser = GeminiStreamParser()
+        self.error = ""
+
+
+def _accept_gemini_chunk(
+    chunk: String, userdata: Pointer[NoneType, MutUntrackedOrigin]
+):
+    var state = userdata.unsafe_bitcast[_GeminiStreamState]()
+    try:
+        _ = state[].parser.feed(chunk)
+    except error:
+        state[].error = String(error)
+
+
+struct GeminiProviderAdapterWithTransport[
+    T: HttpTransport & Movable & Deinitable
+](Provider, Movable):
+    var spec: GeminiProviderSpec
+    var transport: Self.T
+    var model_info: ModelInfo
+    var last_error: Optional[MochiError]
+
+    def __init__(
+        out self,
+        var spec: GeminiProviderSpec,
+        var transport: Self.T,
+        model: ModelInfo,
+    ):
+        self.spec = spec^
+        self.transport = transport^
+        self.model_info = model.copy()
+        self.last_error = None
+
+    def list_models(mut self) raises -> List[ModelInfo]:
+        return [self.model_info.copy()]
+
+    def stream_message[S: ProviderEventSink](
+        mut self, request: ProviderRequest, mut sink: S
+    ) raises -> StreamResponse:
+        self.last_error = None
+        request.cancel.check()
+        var http = HttpRequest(
+            "POST", self.spec.stream_url(request.model.id)
+        )
+        http.timeout_ms = self.spec.timeout_ms
+        http.body = serialize_json(_gemini_body(request))
+        http.add_header("Content-Type", "application/json")
+        http.add_header("Accept", "text/event-stream")
+        http.add_header("x-goog-api-key", self.spec.api_key)
+        var state = _GeminiStreamState()
+        var response: HttpResponse
+        try:
+            response = self.transport.perform_stream_cancellable(
+                http^,
+                _accept_gemini_chunk,
+                Pointer(to=state).unsafe_bitcast[NoneType]().unsafe_origin_cast[MutUntrackedOrigin](),
+                request.cancel.copy(),
+            )
+        except error:
+            if request.cancel.is_cancelled():
+                return self._fail(MochiError.cancelled())
+            return self._fail(MochiError.http(String(error)))
+        if state.error != "":
+            return self._fail(MochiError.internal(state.error))
+        if response.status < 200 or response.status >= 300:
+            return self._fail(MochiError.api(response.status, response.body))
+        _ = state.parser.finish()
+        for block in state.parser.blocks:
+            if block.is_text() and block.text != "":
+                sink.emit(DomainProviderEvent.text_delta(block.text))
+            elif block.is_tool_use():
+                sink.emit(DomainProviderEvent.tool_use_start(block.id, block.name))
+        var message = DomainMessage(Role.assistant())
+        for block in state.parser.blocks:
+            message.add_block(block.copy())
+        var usage = TokenUsage(
+            state.parser.usage.input_tokens,
+            state.parser.usage.output_tokens,
+            0,
+            state.parser.cache_read_tokens,
+        )
+        return StreamResponse(
+            message^,
+            usage^,
+            Optional(StopReason.from_openai(state.parser.stop_reason)),
+        )
+
+    def _fail(mut self, error: MochiError) raises -> StreamResponse:
+        self.last_error = Optional(error.copy())
+        raise Error(provider_error_text(error))
+
+
+def _gemini_body(request: ProviderRequest) raises -> JsonValue:
+    var body = JsonValue.object()
+    var contents = JsonValue.array()
+    for message in request.messages:
+        var raw = JsonValue.object()
+        raw.set(
+            "role",
+            JsonValue.string(
+                "model" if message.role.is_assistant() else "user"
+            ),
+        )
+        var parts = JsonValue.array()
+        for block in message.content:
+            var part = JsonValue.object()
+            if block.is_text():
+                part.set("text", JsonValue.string(block.text))
+            elif block.is_tool_use():
+                var call = JsonValue.object()
+                call.set("name", JsonValue.string(block.name))
+                call.set("args", block.input.copy())
+                part.set("functionCall", call^)
+                if block.signature:
+                    part.set(
+                        "thoughtSignature",
+                        JsonValue.string(block.signature.value()),
+                    )
+            elif block.is_tool_result():
+                var response = JsonValue.object()
+                response.set("result", JsonValue.string(block.text))
+                var function = JsonValue.object()
+                function.set("name", JsonValue.string(block.name))
+                function.set("response", response^)
+                part.set("functionResponse", function^)
+            elif block.is_thinking():
+                part.set("text", JsonValue.string(block.text))
+                part.set("thought", JsonValue.boolean(True))
+                if block.signature:
+                    part.set(
+                        "thoughtSignature",
+                        JsonValue.string(block.signature.value()),
+                    )
+            else:
+                continue
+            parts.append(part^)
+        raw.set("parts", parts^)
+        contents.append(raw^)
+    body.set("contents", contents^)
+    if request.system != "":
+        var system = JsonValue.object()
+        var parts = JsonValue.array()
+        var text = JsonValue.object()
+        text.set("text", JsonValue.string(request.system))
+        parts.append(text^)
+        system.set("parts", parts^)
+        body.set("systemInstruction", system^)
+    var generation = JsonValue.object()
+    if request.model.max_output_tokens:
+        generation.set(
+            "maxOutputTokens",
+            JsonValue.integer(request.model.max_output_tokens.value()),
+        )
+    body.set("generationConfig", generation^)
+    var declarations = _gemini_tools(request.tools)
+    if len(declarations.array_value) > 0:
+        var group = JsonValue.object()
+        group.set("functionDeclarations", declarations^)
+        var groups = JsonValue.array()
+        groups.append(group^)
+        body.set("tools", groups^)
+    return body^
+
+
+def _gemini_tools(tools: JsonValue) raises -> JsonValue:
+    var output = JsonValue.array()
+    if tools.kind != JsonValue.ARRAY:
+        return output^
+    for tool in tools.array_value:
+        var source = tool.copy()
+        if tool.contains("function"):
+            source = tool.get("function")
+        var declaration = JsonValue.object()
+        declaration.set(
+            "name", JsonValue.string(_string_or(source, "name", ""))
+        )
+        declaration.set(
+            "description",
+            JsonValue.string(_string_or(source, "description", "")),
+        )
+        declaration.set(
+            "parameters",
+            source.get("parameters")
+            if source.contains("parameters") else JsonValue.object(),
+        )
+        output.append(declaration^)
+    return output^
+
+
 struct OpenAIProviderAdapter(Provider, Movable):
     var inner: OpenAICompatibleProvider
     var model_info: ModelInfo
