@@ -337,9 +337,12 @@
       "id": "contracts.domain.adt",
       "area": "core",
       "owner": "mochi_core",
-      "status": "partial",
+      "status": "parity",
       "description": "Canonical provider-neutral content, message, usage, model, and error contracts compile and preserve tagged variants.",
-      "upstream_refs": [],
+      "upstream_refs": [
+        "maki-providers/src/types.rs",
+        "maki-providers/src/error.rs"
+      ],
       "mojo_refs": [
         "src/mochi/domain.mojo",
         "tests/domain_test.mojo"
@@ -350,10 +353,10 @@
           "normalization": "Exact deterministic contract assertions."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+          "status": "parity",
+          "upstream_command": "pixi run parity contracts.domain.adt",
+          "mojo_command": "pixi run parity contracts.domain.adt",
+          "normalization": "Pinned upstream image/content, backward-compatible message kind, and typed retryability tests pass with Mojo tagged ADT and golden-codec tests."
         }
       }
     },
