@@ -21,7 +21,7 @@ from mochi.cli import (
 from mochi.config import load_layered_config
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, serialize_json
-from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
+from mochi.mcp import McpClient, McpOAuthState, StdioTransport, StreamableHttpTransport
 from mochi.ops import restore_backup
 from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager
 from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
@@ -49,6 +49,7 @@ from mochi.storage import (
     MakiId,
     SessionRef,
     StoragePaths,
+    load_mcp_auth,
     load_provider_credentials,
 )
 from mochi.tools import ToolRegistry
@@ -170,6 +171,20 @@ def main() raises:
             runtime.attach_mcp_stdio(endpoint.name, client^, transport^)
         for endpoint in config.mcp_http:
             var transport = StreamableHttpTransport(endpoint.value)
+            var saved_auth = load_mcp_auth(
+                paths, endpoint.name, endpoint.value, _now_ms() // 1000
+            )
+            if saved_auth and saved_auth.value().tokens:
+                var auth = saved_auth.value().copy()
+                transport.apply_oauth(
+                    McpOAuthState(
+                        auth.tokens.value().copy(),
+                        auth.token_endpoint.value() if auth.token_endpoint else "",
+                        auth.client_id,
+                        auth.client_secret.value() if auth.client_secret else "",
+                        endpoint.value,
+                    )
+                )
             var client = McpClient(endpoint.name)
             var capabilities = client.initialize(transport)
             var tools = client.list_tools(transport)
