@@ -3,7 +3,12 @@ from std.os.path import exists
 from std.testing import TestSuite, assert_equal, assert_true
 
 from mochi.json import JsonValue, parse_json
-from mochi.ops import StructuredLogger, TelemetryEvent
+from mochi.ops import (
+    StructuredLogger,
+    TelemetryEvent,
+    compare_versions,
+    is_newer_version,
+)
 
 
 comptime PATH = "/tmp/mochi-ops/logs/mochi.jsonl"
@@ -27,6 +32,14 @@ def test_structured_logging_and_rotation() raises:
     var line = String(open(PATH, "r").read().split("\n")[0])
     var value = parse_json(line)
     assert_equal(value.get("event").string_value, "turn")
+
+
+def test_version_comparison() raises:
+    assert_equal(compare_versions("v1.2.3", "1.2.3"), 0)
+    assert_equal(compare_versions("1.2.4", "1.2.3"), 1)
+    assert_equal(compare_versions("1.2", "1.2.1"), -1)
+    assert_equal(compare_versions("2.0.0-beta", "1.9.9"), 1)
+    assert_true(is_newer_version("0.5.0", "0.4.12"))
 
 
 def test_telemetry_event_codec() raises:

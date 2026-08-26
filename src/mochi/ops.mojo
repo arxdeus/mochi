@@ -63,6 +63,34 @@ struct TelemetryEvent(Copyable, Movable):
         return value^
 
 
+def compare_versions(left: String, right: String) -> Int:
+    var left_parts = String(left.removeprefix("v")).split(".")
+    var right_parts = String(right.removeprefix("v")).split(".")
+    var count = max(len(left_parts), len(right_parts))
+    for i in range(count):
+        var left_value = 0 if i >= len(left_parts) else _version_part(String(left_parts[i]))
+        var right_value = 0 if i >= len(right_parts) else _version_part(String(right_parts[i]))
+        if left_value < right_value:
+            return -1
+        if left_value > right_value:
+            return 1
+    return 0
+
+
+def is_newer_version(candidate: String, current: String) -> Bool:
+    return compare_versions(candidate, current) > 0
+
+
+def _version_part(part: String) -> Int:
+    var result = 0
+    for cp in part.codepoints():
+        var digit = Int(cp.to_u32()) - 48
+        if digit < 0 or digit > 9:
+            break
+        result = result * 10 + digit
+    return result
+
+
 def _rename(source: String, destination: String) raises:
     var source_copy = source
     var destination_copy = destination
