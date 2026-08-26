@@ -91,6 +91,18 @@ case "${1:-all}" in
             components::command::tests::sync_clamps_selected -- --exact >/dev/null
         run_mojo_test tests/ui_test.mojo
         ;;
+    ui.command.request_modes)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
+            types::tests::thinking_parse -- --nocapture >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::thinking_toggle_cycles_off_adaptive -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::fast_toggle_on_off_on_opus -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
+            app::tests::workflow_toggle_flows_into_agent_input -- --exact >/dev/null
+        run_mojo_test tests/provider_contract_test.mojo
+        run_mojo_test tests/runtime_test.mojo
+        ;;
     ui.input.history)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             components::input::tests::history -- --exact >/dev/null
@@ -138,7 +150,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.command.catalog ui.input.history ui.input.word_aware_paste ui.search.escape_restore ui.search.navigation ui.search.display ops.version.newer"
+        behaviors="permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.search.escape_restore ui.search.navigation ui.search.display ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))
