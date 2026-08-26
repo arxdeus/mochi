@@ -1,7 +1,7 @@
 """Pure Mojo tool preparation, authorization, and tagged built-in execution."""
 
 from std.ffi import c_int, external_call
-from std.os import listdir
+from std.os import listdir, remove
 from std.os.path import exists, isdir
 
 from mochi.json import JsonValue, parse_json
@@ -258,14 +258,28 @@ struct ToolRegistry(Copyable, Movable):
 
     def _bash(self, arguments: JsonValue) raises -> ToolResult:
         var command = _string_arg(arguments, "command")
-        var output_path = "/tmp/mochi-tool-output.txt"
-        var wrapped = "(" + command + ") > " + output_path + " 2>&1"
+        var pid = external_call["getpid", c_int]()
+        var output_path = "/tmp/mochi-tool-output-" + String(pid) + ".txt"
+        var wrapped = (
+            "cd " + _shell_quote(self.cwd) + " && (" + command + ") > "
+            + _shell_quote(output_path) + " 2>&1"
+        )
         var c_command = wrapped.as_c_string_slice()
         var status = external_call["system", c_int](c_command.unsafe_ptr())
         var output = String("")
         if exists(output_path):
             output = open(output_path, "r").read()
-        return ToolResult.success("{\"exit_code\":" + String(status) + ",\"output\":" + _json_quote(output) + "}")
+            remove(output_path)
+        var exit_code = status
+        if status >= 0:
+            exit_code = (status >> 8) & 255
+        var content = (
+            "{\"exit_code\":" + String(exit_code)
+            + ",\"output\":" + _json_quote(output) + "}"
+        )
+        if exit_code == 0:
+            return ToolResult.success(content^)
+        return ToolResult.failure(content^)
 
     def _subagent(mut self, prompt: String) raises -> String:
         self.subagent_calls += 1
@@ -315,6 +329,10 @@ def _string_arg(arguments: JsonValue, key: String) raises -> String:
 
 def _count(value: String, needle: String) -> Int:
     return len(value.split(needle)) - 1
+
+
+def _shell_quote(value: String) -> String:
+    return "'" + value.replace("'", "'\\''") + "'"
 
 
 def _json_quote(value: String) -> String:

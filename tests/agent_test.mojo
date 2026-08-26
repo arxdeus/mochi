@@ -74,7 +74,18 @@ def test_prepare_authorize_execute_and_practical_builtins() raises:
     var listing = registry.execute(registry.prepare("list", "{\"path\":\".\"}"))
     assert_true("a.txt" in listing.content)
     var shell = registry.execute(registry.prepare("bash", "{\"command\":\"printf mojo\"}"))
+    assert_true(shell.ok)
     assert_true("mojo" in shell.content)
+    var cwd = registry.execute(
+        registry.prepare("bash", "{\"command\":\"pwd\"}")
+    )
+    assert_true(TEST_DIR in cwd.content)
+    var failed = registry.execute(
+        registry.prepare("bash", "{\"command\":\"printf bad; exit 7\"}")
+    )
+    assert_false(failed.ok)
+    assert_true('"exit_code":7' in failed.content)
+    assert_true("bad" in failed.content)
 
 
 def test_permission_denial_does_not_execute() raises:
