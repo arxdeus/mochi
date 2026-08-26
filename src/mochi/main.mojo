@@ -222,20 +222,32 @@ def main() raises:
 
 def _production_provider(config: CliConfig) raises -> ProductionProvider:
     var info = find_model_info(config.model)
+    var api_key = config.api_key()
+    var saved_host: Optional[String] = None
+    if api_key.strip() == "":
+        var saved = load_provider_credentials(
+            StoragePaths.resolve(), config.provider
+        )
+        if saved:
+            api_key = saved.value().api_key
+            saved_host = saved.value().host.copy()
+    var provider_url = config.provider_url
+    if saved_host:
+        provider_url = saved_host.value()
     if config.provider == "anthropic":
         return ProductionProvider(
-            AnthropicProviderSpec(config.provider_url, config.api_key()),
+            AnthropicProviderSpec(provider_url, api_key),
             FlokiTransport(),
             info,
         )
     if config.provider == "gemini":
         return ProductionProvider(
-            GeminiProviderSpec(config.provider_url, config.api_key()),
+            GeminiProviderSpec(provider_url, api_key),
             FlokiTransport(),
             info,
         )
     if config.provider == "copilot":
-        var token = config.api_key()
+        var token = api_key.copy()
         var host = String("github.com")
         if token.strip() == "":
             var saved = load_provider_credentials(
@@ -265,6 +277,9 @@ def _production_provider(config: CliConfig) raises -> ProductionProvider:
         spec.responses_api = dialect == "responses"
         return ProductionProvider(OpenAICompatibleProvider(spec^), info)
     var spec = config.provider_spec()
+    spec.base_url = provider_url
+    if len(spec.api_keys) == 0 and api_key != "":
+        spec.add_api_key(api_key)
     var provider = OpenAICompatibleProvider(spec.copy())
     if config.openai_oauth:
         var credentials = load_openai_oauth_credentials()
