@@ -551,7 +551,7 @@ def _interactive(
             elif action.name == "mcp":
                 _interactive_mcp(runtime, ui)
             elif action.name == "theme":
-                _interactive_theme(preferences)
+                _interactive_theme(preferences, ui)
             elif action.name == "login":
                 _interactive_login(runtime)
             elif action.name == "model":
@@ -641,7 +641,9 @@ def _run_resume(
     _print_result(result, output_format)
 
 
-def _interactive_theme(mut preferences: PreferenceStore) raises:
+def _interactive_theme(
+    mut preferences: PreferenceStore, mut ui: UiState
+) raises:
     comptime themes = [
         "ayu_dark", "ayu_light", "ayu_mirage", "carbonfox",
         "catppuccin_frappe", "catppuccin_latte", "catppuccin_macchiato",
@@ -653,14 +655,39 @@ def _interactive_theme(mut preferences: PreferenceStore) raises:
         "solarized_dark", "solarized_light", "tokyonight", "vscode_dark_plus",
         "zenburn",
     ]
-    print("Themes:")
     var current = String("dracula")
     var saved = preferences.get("theme")
     if saved and saved.value().kind == JsonValue.STRING:
         current = saved.value().string_value
+    var items = String("")
     for theme in materialize[themes]():
-        print(("* " if theme == current else "  ") + theme)
-    print("Set theme in preferences.json or use the interactive picker when available.")
+        if items != "":
+            items += "\n"
+        items += ("1:" if theme == current else "0:") + theme
+    _ = UiReducer.reduce(ui, UiEvent.picker_open("Themes", items))
+    var raw_mode = external_call["mochi_terminal_enable_raw", c_int]()
+    while ui.picker_name != "":
+        _render_picker(ui)
+        var byte = external_call["getchar", c_int]()
+        if byte == 3 or byte == 4:
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
+        elif byte == 10 or byte == 13:
+            current = ui.picker_items[ui.picker_selected]
+            preferences.set("theme", JsonValue.string(current))
+            _ = UiReducer.reduce(ui, UiEvent.picker_close())
+        elif byte == 27:
+            var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+            if bracket == 91:
+                var key = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+                if key == 65:
+                    _ = UiReducer.reduce(ui, UiEvent.picker_previous())
+                elif key == 66:
+                    _ = UiReducer.reduce(ui, UiEvent.picker_next())
+            else:
+                _ = UiReducer.reduce(ui, UiEvent.picker_close())
+    if raw_mode > 0:
+        external_call["mochi_terminal_disable_raw", NoneType]()
+    print("\r\x1b[2KTheme: " + current)
 
 
 def _interactive_mcp(mut runtime: Runtime, mut ui: UiState) raises:
