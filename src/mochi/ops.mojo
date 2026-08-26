@@ -123,6 +123,43 @@ def plan_update(current: String, latest: String, executable: String) -> UpdatePl
     )
 
 
+def backup_binary(executable: String, backup: String) raises:
+    if not exists(executable):
+        raise Error("executable does not exist: " + executable)
+    _ensure_parent(backup)
+    _copy_file(executable, backup)
+
+
+def restore_backup(backup: String, executable: String) raises:
+    if not exists(backup):
+        raise Error("no backup found at " + backup)
+    var temporary = executable + ".mochi_tmp"
+    _copy_file(backup, temporary)
+    _rename(temporary, executable)
+
+
+def replace_from_download(
+    downloaded: String, executable: String, backup: String
+) raises:
+    if not exists(downloaded):
+        raise Error("downloaded binary does not exist: " + downloaded)
+    backup_binary(executable, backup)
+    var temporary = executable + ".mochi_tmp"
+    _copy_file(downloaded, temporary)
+    try:
+        _rename(temporary, executable)
+    except error:
+        if exists(temporary):
+            remove(temporary)
+        raise error
+
+
+def _copy_file(source: String, destination: String) raises:
+    var content = open(source, "r").read()
+    with open(destination, "w") as file:
+        file.write(content)
+
+
 def _prefix(value: String, count: Int) -> String:
     var output = String("")
     for i in range(count):

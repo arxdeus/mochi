@@ -1,18 +1,22 @@
-from std.os import remove
+from std.os import makedirs, remove
 from std.os.path import exists
 from std.testing import TestSuite, assert_equal, assert_true
 
 from mochi.json import JsonValue, parse_json
 from mochi.ops import (
+    backup_binary,
     StructuredLogger,
     TelemetryEvent,
     compare_versions,
     is_newer_version,
     plan_update,
+    replace_from_download,
+    restore_backup,
 )
 
 
 comptime PATH = "/tmp/mochi-ops/logs/mochi.jsonl"
+comptime TEST_DIR = "/tmp/mochi-ops-update"
 
 
 def _clean():
@@ -47,6 +51,26 @@ def test_version_comparison() raises:
     assert_true(plan.update_available)
     assert_equal(plan.backup, "/usr/local/bin/mochi_backup")
     assert_equal(plan.executable, "/usr/local/bin/mochi")
+
+
+def test_binary_backup_replace_and_restore() raises:
+    try:
+        remove(TEST_DIR + "/mochi")
+        remove(TEST_DIR + "/download")
+        remove(TEST_DIR + "/mochi_backup")
+    except:
+        pass
+    makedirs(TEST_DIR, exist_ok=True)
+    with open(TEST_DIR + "/mochi", "w") as file:
+        file.write("old")
+    with open(TEST_DIR + "/download", "w") as file:
+        file.write("new")
+    var backup = TEST_DIR + "/mochi_backup"
+    replace_from_download(TEST_DIR + "/download", TEST_DIR + "/mochi", backup)
+    assert_equal(open(TEST_DIR + "/mochi", "r").read(), "new")
+    assert_equal(open(backup, "r").read(), "old")
+    restore_backup(backup, TEST_DIR + "/mochi")
+    assert_equal(open(TEST_DIR + "/mochi", "r").read(), "old")
 
 
 def test_telemetry_event_codec() raises:
