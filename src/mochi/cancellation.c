@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <errno.h>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <arpa/inet.h>
@@ -161,6 +162,21 @@ int mochi_terminal_read_byte(int timeout_milliseconds) {
     return read(STDIN_FILENO, &byte, 1) == 1 ? (int)byte : -1;
 }
 
+int mochi_change_directory(
+    const char *path, char *resolved, size_t resolved_capacity
+) {
+    if (path == NULL || resolved == NULL || resolved_capacity == 0) {
+        return EINVAL;
+    }
+    if (chdir(path) != 0) {
+        return errno;
+    }
+    if (getcwd(resolved, resolved_capacity) == NULL) {
+        return errno;
+    }
+    return 0;
+}
+
 int mochi_terminal_enable_raw(void) {
     if (!isatty(STDIN_FILENO)) {
         return 0;
@@ -297,6 +313,15 @@ int mochi_http_fixture_start(void) {
 #else
 int mochi_terminal_read_byte(int timeout_milliseconds) {
     (void)timeout_milliseconds;
+    return -1;
+}
+
+int mochi_change_directory(
+    const char *path, char *resolved, size_t resolved_capacity
+) {
+    (void)path;
+    (void)resolved;
+    (void)resolved_capacity;
     return -1;
 }
 

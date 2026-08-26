@@ -223,6 +223,31 @@ struct Runtime:
     def set_messages(mut self, messages: List[Message]):
         self.messages = messages.copy()
 
+    def ask_btw(mut self, question: String, session_id: String = "") -> String:
+        comptime reminder = "<system-reminder>\nThis is a side question. Answer it directly in a single response.\n- You have NO tools: you cannot read files, run commands, or take any action.\n- One-off response: there are no follow-up turns.\n- Answer ONLY from the existing conversation context.\n- Never say \"Let me...\", \"I'll now...\", or promise any action.\n- If you don't know, say so; do not offer to look it up.\n</system-reminder>"
+        var messages = self.messages.copy()
+        messages.append(Message("user", reminder + "\n\n" + question))
+        var model = _runtime_model(
+            self.model, self.provider.name, self.provider.model_info
+        )
+        try:
+            var request = ProviderRequest(
+                model^,
+                CancellationToken(),
+                _domain_messages(messages),
+                self.system_prompt,
+                JsonValue.array(),
+                RequestOptions(),
+                Optional(session_id) if session_id != "" else None,
+            )
+            var sink = RuntimeEventSink()
+            var result = _legacy_result(
+                self.provider.stream_message(request^, sink)
+            )
+            return result.message.content
+        except error:
+            return "Error: " + String(error)
+
     def answer_next_permission(mut self, answer: PermissionAnswer):
         self.permission_answers.append(answer)
 

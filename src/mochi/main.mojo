@@ -1,4 +1,4 @@
-from std.ffi import CStringSlice, c_int, c_long, c_pid_t, external_call
+from std.ffi import CStringSlice, c_int, c_long, c_pid_t, c_size_t, external_call
 from std.os import Process, getenv
 from std.os.path import exists
 from std.sys import argv
@@ -491,6 +491,10 @@ def _interactive(
                     print("Workflow mode: on")
                 else:
                     print("Workflow mode: off")
+            elif action.name == "cd":
+                _interactive_cd(runtime, session, action.text)
+            elif action.name == "btw":
+                _interactive_btw(runtime, session, action.text)
             elif action.name == "login":
                 _interactive_login(runtime)
             elif action.name == "model":
@@ -577,6 +581,57 @@ def _run_resume(
     except error:
         print("Session save failed:", error)
     _print_result(result, output_format)
+
+
+def _interactive_cd(
+    mut runtime: Runtime, mut session: Session, arguments: String
+):
+    var path = String(arguments.strip())
+    var home = getenv("HOME", "")
+    if path == "":
+        path = home
+    elif path == "~":
+        path = home
+    elif path.startswith("~/"):
+        path = home + "/" + String(path.removeprefix("~/"))
+    if path == "":
+        print("cd: home directory is not set")
+        return
+    var resolved = List[UInt8](length=4096, fill=0)
+    var status = external_call[
+        "mochi_change_directory", c_int, CStringSlice[ImmutAnyOrigin], Pointer[mut=True, UInt8, MutAnyOrigin], c_size_t
+    ](
+        rebind[CStringSlice[ImmutAnyOrigin]](path.as_c_string_slice()),
+        rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](
+            resolved.unsafe_ptr()
+        ),
+        c_size_t(len(resolved)),
+    )
+    if status != 0:
+        print("cd: unable to change directory (errno " + String(status) + ")")
+        return
+    var length = 0
+    while length < len(resolved) and resolved[length] != 0:
+        length += 1
+    var cwd = String(unsafe_from_utf8=Span(resolved)[0:length])
+    runtime.tools.cwd = cwd
+    session.cwd = cwd
+    print("cd", path)
+
+
+def _interactive_btw(
+    mut runtime: Runtime, session: Session, question: String
+):
+    var trimmed = String(question.strip())
+    if trimmed == "":
+        print("Usage: /btw <question>")
+        return
+    var result = runtime.ask_btw(trimmed, session.id)
+    if result.startswith("Error: "):
+        print(result)
+    else:
+        print("/btw")
+        print(result)
 
 
 def _interactive_help():
