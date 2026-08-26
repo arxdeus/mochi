@@ -122,6 +122,84 @@
       }
     },
     {
+      "id": "permissions.session_generalization",
+      "area": "permissions",
+      "owner": "mochi_agent",
+      "status": "parity",
+      "description": "A session approval for one bash command generalizes to the command family and is deduplicated.",
+      "upstream_refs": [
+        "maki-agent/src/permissions.rs:931-945"
+      ],
+      "mojo_refs": [
+        "src/mochi/permissions.mojo",
+        "tests/permissions_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run parity permissions.session_generalization",
+          "normalization": "Session rule scope and subsequent permission effect."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity permissions.session_generalization",
+          "mojo_command": "pixi run parity permissions.session_generalization",
+          "normalization": "Pinned upstream and Mojo command-family generalization tests pass."
+        }
+      }
+    },
+    {
+      "id": "storage.session.latest_cwd",
+      "area": "storage",
+      "owner": "mochi_storage",
+      "status": "parity",
+      "description": "Latest-session lookup selects the most recently saved session for the requested working directory.",
+      "upstream_refs": [
+        "maki-storage/src/sessions.rs:2592-2610"
+      ],
+      "mojo_refs": [
+        "src/mochi/session.mojo",
+        "tests/session_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run parity storage.session.latest_cwd",
+          "normalization": "Latest session identity, title, and CWD filter."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity storage.session.latest_cwd",
+          "mojo_command": "pixi run parity storage.session.latest_cwd",
+          "normalization": "Pinned upstream and Mojo latest-for-CWD tests pass."
+        }
+      }
+    },
+    {
+      "id": "provider.model.catalog_metadata",
+      "area": "providers",
+      "owner": "mochi_provider",
+      "status": "parity",
+      "description": "Catalog metadata exposes GPT-5.6 Sol tier, context, output limit, pricing, thinking, and vision capabilities.",
+      "upstream_refs": [
+        "maki-providers/src/providers/openai/mod.rs:58-72"
+      ],
+      "mojo_refs": [
+        "src/mochi/provider.mojo",
+        "tests/provider_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run parity provider.model.catalog_metadata",
+          "normalization": "Exact model metadata values."
+        },
+        "differential": {
+          "status": "parity",
+          "upstream_command": "pixi run parity provider.model.catalog_metadata",
+          "mojo_command": "pixi run parity provider.model.catalog_metadata",
+          "normalization": "Pinned upstream and Mojo GPT-5.6 Sol metadata tests pass."
+        }
+      }
+    },
+    {
       "id": "mcp.streamable_http.basic",
       "area": "mcp",
       "owner": "mochi_mcp",

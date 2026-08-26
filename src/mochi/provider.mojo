@@ -128,6 +128,9 @@ def builtin_provider_registry() raises -> ProviderRegistry:
 
 def builtin_model_catalog() -> List[ModelInfo]:
     return [
+        _model_info("gpt-5.6-sol", 372000, 128000, 5.0, 30.0, 6.25, 0.5, True, True, ModelTier.strong()),
+        _model_info("gpt-5.6-terra", 372000, 128000, 2.5, 15.0, 3.125, 0.25, True, True, ModelTier.medium()),
+        _model_info("gpt-5.6-luna", 372000, 128000, 1.0, 6.0, 1.25, 0.1, True, True, ModelTier.weak()),
         _model_info("gpt-5.3-codex", 400000, 128000, 1.75, 14.0, 0.0, 0.175, True, True, ModelTier.strong()),
         _model_info("gpt-5.2-codex", 400000, 128000, 1.75, 14.0, 0.0, 0.175, True, True, ModelTier.strong()),
         _model_info("gpt-4.1", 1047576, 32768, 2.0, 8.0, 0.0, 0.5, False, True, ModelTier.medium()),
