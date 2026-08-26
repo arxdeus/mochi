@@ -11,6 +11,8 @@ from mochi.json import JsonValue, parse_json
 from mochi.mcp import (
     MCP_PROTOCOL_VERSION,
     McpClient,
+    begin_mcp_oauth_with,
+    complete_mcp_oauth_with,
     McpOAuthState,
     McpSession,
     StdioTransport,
@@ -18,6 +20,7 @@ from mochi.mcp import (
     discover_mcp_auth_server_with,
     discover_mcp_resource_metadata_with,
     exchange_mcp_oauth_code_with,
+    generate_mcp_oauth_state,
     generate_mcp_pkce,
     mcp_auth_server_metadata_urls,
     mcp_endpoint_url_is_secure,
@@ -264,6 +267,48 @@ def test_mcp_oauth_injected_discovery() raises:
     insecure.enqueue(HttpResponse(404, "missing"))
     with assert_raises():
         _ = discover_mcp_auth_server_with(insecure, "https://auth.example/tenant")
+
+
+def test_mcp_oauth_orchestrated_flow() raises:
+    var transport = MockTransport()
+    transport.enqueue(
+        HttpResponse(
+            200,
+            '{"resource":"https://mcp.example/mcp","authorization_servers":["https://auth.example"],"scopes_supported":["read","write"]}',
+        )
+    )
+    transport.enqueue(
+        HttpResponse(
+            200,
+            '{"authorization_endpoint":"https://auth.example/authorize","token_endpoint":"https://auth.example/token","registration_endpoint":"https://auth.example/register","code_challenge_methods_supported":["S256"]}',
+        )
+    )
+    transport.enqueue(HttpResponse(201, '{"client_id":"dynamic-client"}'))
+    transport.enqueue(
+        HttpResponse(
+            200,
+            '{"access_token":"access","refresh_token":"refresh","expires_in":60}',
+        )
+    )
+    var flow = begin_mcp_oauth_with(
+        transport,
+        "https://mcp.example/mcp",
+        "http://127.0.0.1:8765/callback",
+    )
+    assert_equal(flow.client_id, "dynamic-client")
+    assert_equal(flow.token_endpoint, "https://auth.example/token")
+    assert_true("scope=read%20write" in flow.authorization_url)
+    assert_true("code_challenge_method=S256" in flow.authorization_url)
+    var callback = "code=authorization-code&state=" + flow.state
+    var tokens = complete_mcp_oauth_with(transport, flow, callback, 1000)
+    assert_equal(tokens.access, "access")
+    assert_equal(tokens.refresh, "refresh")
+    assert_equal(tokens.expires, 61000)
+    assert_equal(transport.requests[3].url, "https://auth.example/token")
+    var first_state = generate_mcp_oauth_state()
+    var second_state = generate_mcp_oauth_state()
+    assert_equal(first_state.byte_length(), 43)
+    assert_true(first_state != second_state)
 
 
 def test_mcp_oauth_pkce() raises:

@@ -68,6 +68,102 @@ def mcp_pkce_challenge(verifier: String) -> String:
 
 
 @fieldwise_init
+struct McpOAuthFlow(Copyable, Movable):
+    var server_url: String
+    var redirect_uri: String
+    var authorization_url: String
+    var state: String
+    var verifier: String
+    var token_endpoint: String
+    var client_id: String
+    var client_secret: String
+    var client_secret_expires_at: Int
+
+
+def begin_mcp_oauth_with[T: HttpTransport](
+    mut transport: T,
+    server_url: String,
+    redirect_uri: String,
+    var www_auth: Optional[WwwAuthenticateInfo] = None,
+    client_id: String = "",
+    client_secret: String = "",
+) raises -> McpOAuthFlow:
+    var resource = discover_mcp_resource_metadata_with(
+        transport, server_url, www_auth.copy()
+    )
+    var issuer = mcp_server_origin(server_url)
+    if len(resource.authorization_servers) > 0:
+        issuer = resource.authorization_servers[0]
+    var metadata = discover_mcp_auth_server_with(transport, issuer)
+    var registration = McpClientRegistration(client_id, client_secret, 0)
+    if registration.client_id == "":
+        if metadata.registration_endpoint == "":
+            raise Error("MCP OAuth server has no registration endpoint")
+        registration = register_mcp_oauth_client_with(
+            transport, metadata.registration_endpoint, redirect_uri
+        )
+    var pkce = generate_mcp_pkce()
+    var state = generate_mcp_oauth_state()
+    var scope = String("")
+    if www_auth and www_auth.value().scope != "":
+        scope = www_auth.value().scope
+    elif len(resource.scopes_supported) > 0:
+        for item in resource.scopes_supported:
+            if scope != "":
+                scope += " "
+            scope += item
+    return McpOAuthFlow(
+        server_url,
+        redirect_uri,
+        mcp_oauth_authorization_url(
+            metadata.authorization_endpoint,
+            registration.client_id,
+            redirect_uri,
+            state,
+            pkce.challenge,
+            scope,
+            server_url,
+        ),
+        state,
+        pkce.verifier,
+        metadata.token_endpoint,
+        registration.client_id,
+        registration.client_secret,
+        registration.client_secret_expires_at,
+    )
+
+
+def complete_mcp_oauth_with[T: HttpTransport](
+    mut transport: T, flow: McpOAuthFlow, callback: String, now_ms: Int
+) raises -> OAuthTokens:
+    var code = parse_mcp_oauth_callback(callback, flow.state)
+    return exchange_mcp_oauth_code_with(
+        transport,
+        flow.token_endpoint,
+        code,
+        flow.redirect_uri,
+        flow.verifier,
+        flow.client_id,
+        flow.client_secret,
+        flow.server_url,
+        now_ms,
+    )
+
+
+def generate_mcp_oauth_state() raises -> String:
+    var random = List[UInt8](length=32, fill=0)
+    var status = external_call[
+        "mochi_secure_random", c_int, Pointer[mut=True, UInt8, MutAnyOrigin], c_size_t
+    ](
+        rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](random.unsafe_ptr()),
+        c_size_t(len(random)),
+    )
+    if status != 0:
+        raise Error("MCP OAuth CSPRNG unavailable")
+    return _mcp_base64url(random)
+
+
+@fieldwise_init
 struct McpClientRegistration(Copyable, Movable):
     var client_id: String
     var client_secret: String
