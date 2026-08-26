@@ -21,6 +21,7 @@ from mochi.ui import (
     transcript_messages,
     search_result_lines,
     validate_ui_transcript_line,
+    decode_sgr_mouse,
 )
 
 
@@ -142,6 +143,34 @@ def test_picker_filter_no_matches_and_page_navigation() raises:
     _ = UiReducer.reduce(state, UiEvent.picker_filter("zzz"))
     assert_equal(len(state.picker_filtered), 0)
     assert_true("No matches" in UiReducer.view(state).lines[1])
+
+
+def test_sgr_mouse_decoding() raises:
+    var down = decode_sgr_mouse("0;6;3", 77)
+    assert_true(down)
+    assert_equal(down.value().tag, UiEvent.MOUSE_DOWN)
+    assert_equal(down.value().height, 2)
+    assert_equal(down.value().width, 5)
+
+    var drag = decode_sgr_mouse("32;10;4", 77)
+    assert_true(drag)
+    assert_equal(drag.value().tag, UiEvent.MOUSE_DRAG)
+    assert_equal(drag.value().height, 3)
+    assert_equal(drag.value().width, 9)
+
+    var up = decode_sgr_mouse("0;10;4", 109)
+    assert_true(up)
+    assert_equal(up.value().tag, UiEvent.MOUSE_UP)
+    assert_equal(up.value().height, 3)
+    assert_equal(up.value().width, 9)
+
+    assert_equal(decode_sgr_mouse("64;1;1", 77).value().offset, -3)
+    assert_equal(decode_sgr_mouse("65;1;1", 77).value().offset, 3)
+    assert_false(decode_sgr_mouse("0;0;1", 77))
+    assert_false(decode_sgr_mouse("x;1;1", 77))
+    assert_false(decode_sgr_mouse("0;1", 77))
+    assert_false(decode_sgr_mouse("0;1;1", 88))
+    assert_false(decode_sgr_mouse("2;1;1", 77))
 
 
 def test_doc_selection_projection_and_clamping() raises:

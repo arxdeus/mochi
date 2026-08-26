@@ -76,6 +76,7 @@ from mochi.ui import (
     command_help_lines,
     command_matches,
     search_result_lines,
+    decode_sgr_mouse,
 )
 from mochi.workspace import InputHistory, NoteStore, PreferenceStore, project_id
 
@@ -1192,12 +1193,12 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
     if raw_mode <= 0:
         print("> ", end="")
         return _read_line()
-    print("\x1b[?2004h", end="")
+    _set_terminal_input_modes(True)
     _render_editor(ui)
     while True:
         var byte = external_call["getchar", c_int]()
         if byte < 0 or byte == 4:
-            print("\x1b[?2004l", end="")
+            _set_terminal_input_modes(False)
             external_call["mochi_terminal_disable_raw", NoneType]()
             print()
             if ui.draft == "":
@@ -1227,7 +1228,9 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                     var search_key = external_call[
                         "mochi_terminal_read_byte", c_int, c_int
                     ](20)
-                    if search_key == 65:
+                    if search_key == 60:
+                        _read_sgr_mouse(ui)
+                    elif search_key == 65:
                         _ = UiReducer.reduce(ui, UiEvent.search_previous())
                     elif search_key == 66:
                         _ = UiReducer.reduce(ui, UiEvent.search_next())
@@ -1264,7 +1267,7 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                 _ = UiReducer.reduce(ui, UiEvent.continue_line())
                 _render_editor(ui)
                 continue
-            print("\x1b[?2004l", end="")
+            _set_terminal_input_modes(False)
             external_call["mochi_terminal_disable_raw", NoneType]()
             print()
             return Optional(ui.draft.copy())
@@ -1282,7 +1285,9 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                 var key = external_call[
                     "mochi_terminal_read_byte", c_int, c_int
                 ](20)
-                if key == 65:
+                if key == 60:
+                    _read_sgr_mouse(ui)
+                elif key == 65:
                     if ui.draft.startswith("/") and len(command_matches(ui.draft)) > 0:
                         _ = UiReducer.reduce(ui, UiEvent.command_previous())
                     else:
@@ -1305,6 +1310,26 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
         elif byte >= 32:
             _ = UiReducer.reduce(ui, UiEvent.insert(_read_utf8_character(Int(byte))))
         _render_editor(ui)
+
+
+def _set_terminal_input_modes(enabled: Bool):
+    external_call["mochi_terminal_set_input_modes", NoneType, c_int](
+        c_int(1 if enabled else 0)
+    )
+
+
+def _read_sgr_mouse(mut ui: UiState) raises:
+    var encoded = String("")
+    while True:
+        var byte = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+        if byte < 0:
+            return
+        if byte == 77 or byte == 109:
+            var event = decode_sgr_mouse(encoded, Int(byte))
+            if event:
+                _ = UiReducer.reduce(ui, event.value())
+            return
+        encoded += chr(Int(byte))
 
 
 def _read_bracketed_paste() raises -> String:

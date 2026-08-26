@@ -362,8 +362,21 @@ int mochi_cancellation_is_cancelled(void *handle) {
 #if defined(__unix__) || defined(__APPLE__)
 static struct termios mochi_terminal_original;
 static bool mochi_terminal_raw = false;
+static bool mochi_terminal_input_modes = false;
+
+void mochi_terminal_set_input_modes(int enabled) {
+    static const char enable[] = "\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+    static const char disable[] = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?2004l";
+    const char *sequence = enabled ? enable : disable;
+    size_t length = enabled ? sizeof(enable) - 1 : sizeof(disable) - 1;
+    (void)write(STDOUT_FILENO, sequence, length);
+    mochi_terminal_input_modes = enabled != 0;
+}
 
 void mochi_terminal_disable_raw(void) {
+    if (mochi_terminal_input_modes) {
+        mochi_terminal_set_input_modes(0);
+    }
     if (mochi_terminal_raw) {
         (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &mochi_terminal_original);
         mochi_terminal_raw = false;
@@ -550,6 +563,10 @@ int mochi_change_directory(
 
 int mochi_terminal_enable_raw(void) {
     return 0;
+}
+
+void mochi_terminal_set_input_modes(int enabled) {
+    (void)enabled;
 }
 
 void mochi_terminal_disable_raw(void) {

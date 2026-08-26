@@ -368,6 +368,42 @@ struct UiEvent(Copyable, Movable):
         return Self(Self.OVERLAY_CLOSE)
 
 
+def decode_sgr_mouse(encoded: String, final: Int) -> Optional[UiEvent]:
+    if final != 77 and final != 109:
+        return None
+    var fields = encoded.split(";")
+    if len(fields) != 3:
+        return None
+    var button = _parse_nonnegative_int(String(fields[0]))
+    var col = _parse_nonnegative_int(String(fields[1])) - 1
+    var row = _parse_nonnegative_int(String(fields[2])) - 1
+    if button < 0 or col < 0 or row < 0:
+        return None
+    if button == 64:
+        return Optional(UiEvent.scroll(-3))
+    if button == 65:
+        return Optional(UiEvent.scroll(3))
+    if final == 109:
+        return Optional(UiEvent.mouse_up(row, col))
+    if (button & 32) != 0:
+        return Optional(UiEvent.mouse_drag(row, col))
+    if (button & 3) == 0:
+        return Optional(UiEvent.mouse_down(row, col))
+    return None
+
+
+def _parse_nonnegative_int(value: String) -> Int:
+    if value == "":
+        return -1
+    var result = 0
+    for cp in value.codepoints():
+        var digit = Int(cp.to_u32()) - 48
+        if digit < 0 or digit > 9:
+            return -1
+        result = result * 10 + digit
+    return result
+
+
 struct UiAction(Copyable, Movable):
     comptime NONE = 0
     comptime SUBMIT = 1
