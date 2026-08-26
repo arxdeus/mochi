@@ -446,9 +446,12 @@
       "id": "contracts.extension.v1",
       "area": "extensions",
       "owner": "mochi_extension",
-      "status": "partial",
+      "status": "parity",
       "description": "Executable extension v1 capabilities and bidirectional envelopes have golden codecs and bounded session behavior.",
-      "upstream_refs": [],
+      "upstream_refs": [
+        "maki-lua/src/loader.rs",
+        "maki-agent/src/tools/registry.rs"
+      ],
       "mojo_refs": [
         "src/mochi/extension_contract.mojo",
         "tests/extension_contract_test.mojo"
@@ -459,10 +462,10 @@
           "normalization": "Exact deterministic contract assertions."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+          "status": "parity",
+          "upstream_command": "pixi run parity contracts.extension.v1",
+          "mojo_command": "pixi run parity contracts.extension.v1",
+          "normalization": "Pinned upstream bounded shutdown, reload, and route replacement pass with Mojo capability/envelope codecs, ordering, backpressure, cancellation, ownership, and UI negotiation."
         }
       }
     },
@@ -470,9 +473,12 @@
       "id": "contracts.ui.transcript.v1",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "partial",
+      "status": "parity",
       "description": "Terminal-independent reducer emits a versioned deterministic transcript.",
-      "upstream_refs": [],
+      "upstream_refs": [
+        "maki-ui/src/app/tests.rs",
+        "maki-ui/src/components/command.rs"
+      ],
       "mojo_refs": [
         "src/mochi/ui.mojo",
         "tests/ui_test.mojo"
@@ -483,10 +489,10 @@
           "normalization": "Exact deterministic contract assertions."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+          "status": "parity",
+          "upstream_command": "pixi run parity contracts.ui.transcript.v1",
+          "mojo_command": "pixi run parity contracts.ui.transcript.v1",
+          "normalization": "Pinned upstream reducer command routing/navigation pass with Mojo deterministic versioned event/action/view transcript and golden validation."
         }
       }
     },
