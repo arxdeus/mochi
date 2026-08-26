@@ -364,9 +364,12 @@
       "id": "contracts.provider.fake",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "partial",
+      "status": "parity",
       "description": "Provider request/event/cancellation contract compiles against a deterministic FIFO fake.",
-      "upstream_refs": [],
+      "upstream_refs": [
+        "maki-providers/src/types.rs",
+        "maki-agent/src/agent/run.rs"
+      ],
       "mojo_refs": [
         "src/mochi/provider_contract.mojo",
         "tests/provider_contract_test.mojo"
@@ -377,10 +380,10 @@
           "normalization": "Exact deterministic contract assertions."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Contract freeze check; upstream observable oracle to be added with feature integration."
+          "status": "parity",
+          "upstream_command": "pixi run parity contracts.provider.fake",
+          "mojo_command": "pixi run parity contracts.provider.fake",
+          "normalization": "Pinned upstream request-option clamping and deterministic queued provider turn tests pass with Mojo FIFO request capture, event ordering, typed errors, cancellation, model listing, and golden codecs."
         }
       }
     },
