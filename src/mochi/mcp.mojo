@@ -162,6 +162,51 @@ def parse_mcp_oauth_callback(input: String, expected_state: String) raises -> St
     return code^
 
 
+def exchange_mcp_oauth_code_with[T: HttpTransport](
+    mut transport: T,
+    token_endpoint: String,
+    code: String,
+    redirect_uri: String,
+    code_verifier: String,
+    client_id: String,
+    client_secret: String,
+    resource: String,
+    now_ms: Int,
+) raises -> OAuthTokens:
+    var response = transport.perform(
+        mcp_oauth_code_exchange_request(
+            token_endpoint,
+            code,
+            redirect_uri,
+            code_verifier,
+            client_id,
+            client_secret,
+            resource,
+        )
+    )
+    if response.status < 200 or response.status >= 300:
+        raise Error("MCP OAuth token exchange failed with status " + String(response.status))
+    return parse_mcp_oauth_tokens(response.body, now_ms)
+
+
+def parse_mcp_oauth_tokens(body: String, now_ms: Int) raises -> OAuthTokens:
+    var value = parse_json(body)
+    if not value.contains("access_token"):
+        raise Error("MCP OAuth token response has no access token")
+    var refresh = String("")
+    if value.contains("refresh_token"):
+        refresh = value.get("refresh_token").string_value
+    var expires_in = 3600
+    if value.contains("expires_in"):
+        expires_in = value.get("expires_in").int_value
+    return OAuthTokens(
+        value.get("access_token").string_value,
+        refresh,
+        now_ms + expires_in * 1000,
+        None,
+    )
+
+
 def mcp_oauth_code_exchange_request(
     token_endpoint: String,
     code: String,

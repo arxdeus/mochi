@@ -17,6 +17,7 @@ from mochi.mcp import (
     StreamableHttpTransport,
     discover_mcp_auth_server_with,
     discover_mcp_resource_metadata_with,
+    exchange_mcp_oauth_code_with,
     generate_mcp_pkce,
     mcp_auth_server_metadata_urls,
     mcp_endpoint_url_is_secure,
@@ -28,6 +29,7 @@ from mochi.mcp import (
     mcp_server_origin,
     mcp_well_known_url,
     parse_mcp_oauth_callback,
+    parse_mcp_oauth_tokens,
     parse_www_authenticate,
     register_mcp_oauth_client_with,
 )
@@ -346,6 +348,36 @@ def test_mcp_oauth_registration_and_code_exchange() raises:
     assert_true("code_verifier=verifier" in request.body)
     assert_true("client_secret=secret" in request.body)
     assert_true("resource=https%3A%2F%2Fmcp.example%2Fmcp" in request.body)
+
+
+def test_mcp_oauth_code_exchange_response() raises:
+    var parsed = parse_mcp_oauth_tokens(
+        '{"access_token":"access","refresh_token":"refresh","expires_in":60}',
+        1000,
+    )
+    assert_equal(parsed.access, "access")
+    assert_equal(parsed.refresh, "refresh")
+    assert_equal(parsed.expires, 61000)
+    var transport = MockTransport()
+    transport.enqueue(
+        HttpResponse(200, '{"access_token":"fresh","expires_in":120}')
+    )
+    var exchanged = exchange_mcp_oauth_code_with(
+        transport,
+        "https://auth.example/token",
+        "code",
+        "http://127.0.0.1/callback",
+        "verifier",
+        "client",
+        "",
+        "https://mcp.example/mcp",
+        2000,
+    )
+    assert_equal(exchanged.access, "fresh")
+    assert_equal(exchanged.expires, 122000)
+    assert_true("grant_type=authorization_code" in transport.requests[0].body)
+    with assert_raises():
+        _ = parse_mcp_oauth_tokens('{"refresh_token":"refresh"}', 0)
 
 
 def test_mcp_oauth_refresh_contract() raises:
