@@ -495,6 +495,8 @@ def _interactive(
                 _interactive_cd(runtime, session, action.text)
             elif action.name == "btw":
                 _interactive_btw(runtime, session, action.text)
+            elif action.name == "tasks":
+                _interactive_tasks(session)
             elif action.name == "login":
                 _interactive_login(runtime)
             elif action.name == "model":
@@ -581,6 +583,34 @@ def _run_resume(
     except error:
         print("Session save failed:", error)
     _print_result(result, output_format)
+
+
+def _interactive_tasks(session: Session):
+    print("Tasks:")
+    print("  Main")
+    if session.subagents.kind != JsonValue.ARRAY:
+        return
+    for item in session.subagents.array_value:
+        if item.kind != JsonValue.OBJECT:
+            continue
+        var name = String("task")
+        var id = String("")
+        var status = String("running")
+        try:
+            if item.contains("name"):
+                name = item.get("name").string_value
+            if item.contains("tool_use_id"):
+                id = item.get("tool_use_id").string_value
+            elif item.contains("id"):
+                id = item.get("id").string_value
+            if item.contains("finished") and item.get("finished").bool_value:
+                status = "done"
+        except:
+            pass
+        var detail = " [" + status + "]"
+        if id != "":
+            detail += " " + id
+        print("  " + name + detail)
 
 
 def _interactive_cd(
