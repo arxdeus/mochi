@@ -780,7 +780,7 @@
       "id": "storage.session.resume_continue",
       "area": "storage",
       "owner": "mochi_storage",
-      "status": "partial",
+      "status": "parity",
       "description": "Explicit session resume and latest-for-CWD continuation restore runtime history and persist subsequent turns.",
       "upstream_refs": [
         "src/cmd/tui.rs:191-210",
@@ -798,10 +798,10 @@
           "normalization": "CLI selection, restored ordered messages, model, usage, title, and CWD latest index."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Add a focused upstream resume oracle after production seam behavior stabilizes."
+          "status": "parity",
+          "upstream_command": "pixi run parity storage.session.resume_continue",
+          "mojo_command": "pixi run parity storage.session.resume_continue",
+          "normalization": "Pinned upstream full and incremental session round trips plus latest-for-CWD pass with Mojo CLI selection, ordered history restoration, resume-without-duplicate-user-message, and subsequent persistence."
         }
       }
     },
