@@ -2,7 +2,7 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, parse_json, serialize_json
-from mochi.mcp import McpClient, StdioTransport
+from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
 from mochi.permissions import (
     PermissionAnswer,
     PermissionEffect,
@@ -415,10 +415,16 @@ def test_remote_status_lines() raises:
     )
     var client = McpClient("fixture")
     runtime.attach_mcp_stdio("fixture", client^, StdioTransport())
+    var http = StreamableHttpTransport("https://mcp.example/mcp")
+    http.set_bearer_token("saved")
+    var http_client = McpClient("authenticated")
+    http_client.session.initialized = True
+    runtime.attach_mcp_http("authenticated", http_client^, http^)
     runtime.plugin_names.append("formatter")
     var lines = runtime.remote_status_lines()
     assert_equal(lines[0], "fixture · stdio · connecting")
-    assert_equal(lines[1], "formatter · executable extension · running")
+    assert_equal(lines[1], "authenticated · http · running · authenticated")
+    assert_equal(lines[2], "formatter · executable extension · running")
 
 
 def test_live_remote_mcp_and_plugin_dispatch() raises:

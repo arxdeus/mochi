@@ -111,6 +111,7 @@ struct Runtime:
     var mcp_http_names: List[String]
     var mcp_http_clients: List[McpClient]
     var mcp_http_transports: List[StreamableHttpTransport]
+    var mcp_http_authenticated: List[Bool]
     var plugin_names: List[String]
     var plugin_clients: List[PluginClient]
 
@@ -150,6 +151,7 @@ struct Runtime:
         self.mcp_http_names = List[String]()
         self.mcp_http_clients = List[McpClient]()
         self.mcp_http_transports = List[StreamableHttpTransport]()
+        self.mcp_http_authenticated = List[Bool]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
 
@@ -188,6 +190,7 @@ struct Runtime:
         self.mcp_http_names = List[String]()
         self.mcp_http_clients = List[McpClient]()
         self.mcp_http_transports = List[StreamableHttpTransport]()
+        self.mcp_http_authenticated = List[Bool]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
 
@@ -420,6 +423,7 @@ struct Runtime:
         var client: McpClient,
         var transport: StreamableHttpTransport,
     ):
+        self.mcp_http_authenticated.append(transport.bearer_token != "")
         self.mcp_http_names.append(name^)
         self.mcp_http_clients.append(client^)
         self.mcp_http_transports.append(transport^)
@@ -442,11 +446,11 @@ struct Runtime:
                 self.mcp_stdio_names[i] + " · stdio · " + status
             )
         for i in range(len(self.mcp_http_names)):
-            var status = (
-                "running"
-                if self.mcp_http_clients[i].session.initialized
-                else "connecting"
-            )
+            var status = "connecting"
+            if self.mcp_http_clients[i].session.initialized:
+                status = "running"
+                if self.mcp_http_authenticated[i]:
+                    status += " · authenticated"
             lines.append(
                 self.mcp_http_names[i] + " · http · " + status
             )
