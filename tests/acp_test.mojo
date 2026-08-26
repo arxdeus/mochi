@@ -160,6 +160,18 @@ def test_runtime_server_cancels_matching_active_prompt() raises:
     assert_false(server.cancel_active("other"))
     assert_true(server.cancel_active("active"))
     assert_true(token.is_cancelled())
+    var selected = JsonValue.object()
+    selected.set("optionId", JsonValue.string("allow_once"))
+    var outcome = JsonValue.object()
+    outcome.set("outcome", JsonValue.string("selected"))
+    outcome.set("option", selected^)
+    var response = AcpMessage.response(1000, JsonValue.object())
+    response.payload.set("outcome", outcome^)
+    server.handle_permission_response(response)
+    assert_equal(len(server.runtime.permission_answers), 1)
+    assert_true(
+        server.runtime.permission_answers[0] == PermissionAnswer.allow_once()
+    )
 
 
 def test_runtime_backed_load_replays_history() raises:

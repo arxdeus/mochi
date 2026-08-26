@@ -166,6 +166,7 @@ struct AcpRuntimeServer:
     var sessions: List[Session]
     var active_session_id: String
     var active_cancel: Optional[CancellationToken]
+    var next_request_id: Int
     var now_ms: Int
 
     def __init__(
@@ -180,6 +181,7 @@ struct AcpRuntimeServer:
         self.sessions = List[Session]()
         self.active_session_id = ""
         self.active_cancel = None
+        self.next_request_id = 1000
         self.now_ms = now_ms
 
     def handle(mut self, request: AcpMessage) raises -> List[AcpMessage]:
@@ -239,6 +241,16 @@ struct AcpRuntimeServer:
                 result.messages, result.usage, self.runtime.model, self.now_ms
             )
             self.store.save(self.sessions[index])
+            while True:
+                var pending = self.runtime.take_pending_permission()
+                if not pending:
+                    break
+                output.append(
+                    pending_permission_request(
+                        self.next_request_id, id, pending.value()
+                    )
+                )
+                self.next_request_id += 1
             output.append(
                 session_update(id, _agent_message_update(result.text))
             )
@@ -254,6 +266,9 @@ struct AcpRuntimeServer:
             return output^
         output.append(self.protocol.handle(request))
         return output^
+
+    def handle_permission_response(mut self, response: AcpMessage):
+        self.runtime.answer_next_permission(permission_answer(response))
 
     def cancel_active(mut self, session_id: String) -> Bool:
         if not self.active_cancel or self.active_session_id != session_id:
