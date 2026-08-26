@@ -835,7 +835,7 @@
       "id": "agent.system_prompt.instructions",
       "area": "agent",
       "owner": "mochi_agent",
-      "status": "partial",
+      "status": "parity",
       "description": "System prompt includes environment plus root-to-CWD project/local/global instruction files without persisting the synthetic system message.",
       "upstream_refs": [
         "maki-agent/src/agent/instructions.rs:47-175"
@@ -852,10 +852,10 @@
           "normalization": "Instruction discovery order, environment fields, and provider-only synthetic system message."
         },
         "differential": {
-          "status": "missing",
-          "upstream_command": "",
-          "mojo_command": "",
-          "normalization": "Exact upstream prompt template and slots remain pending."
+          "status": "parity",
+          "upstream_command": "pixi run parity agent.system_prompt.instructions",
+          "mojo_command": "pixi run parity agent.system_prompt.instructions",
+          "normalization": "Pinned upstream project/local/global and ancestor instruction discovery pass with Mojo root-to-CWD ordering, environment fields, synthetic provider-only prompt injection, and persistence exclusion."
         }
       }
     },

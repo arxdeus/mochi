@@ -28,6 +28,16 @@ run_mojo_test() {
 }
 
 case "${1:-all}" in
+    agent.system_prompt.instructions)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            agent::instructions::tests::load_instructions_merges_project_and_local -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            agent::instructions::tests::load_instructions_includes_global_from_home -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
+            agent::instructions::tests::load_instructions_includes_parent_directory_instructions -- --exact >/dev/null
+        run_mojo_test tests/prompt_test.mojo
+        run_mojo_test tests/runtime_test.mojo
+        ;;
     agent.provider_error.result)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-ui \
             app::tests::exit_on_done_flag_triggers_exit::error_exits_error -- --exact >/dev/null
@@ -330,7 +340,7 @@ case "${1:-all}" in
     all)
         mismatches=0
         failed=""
-        behaviors="agent.provider_error.result permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.openai.contract_adapter provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output storage.session.resume_continue cancellation.http.active cancellation.process.active contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="agent.provider_error.result agent.system_prompt.instructions permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.openai.contract_adapter provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output storage.session.resume_continue cancellation.http.active cancellation.process.active contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))
