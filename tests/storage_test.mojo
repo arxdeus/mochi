@@ -3,15 +3,20 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_raises, as
 from mochi.storage import (
     AuthRecord,
     MakiId,
+    McpAuthData,
     OAuthTokens,
     SessionRef,
     StorageError,
     StoragePaths,
     auth_record_from_json,
     auth_record_to_json,
+    delete_mcp_auth,
     delete_provider_credentials,
+    load_mcp_auth,
     load_provider_credentials,
+    mcp_auth_path,
     provider_credentials_path,
+    save_mcp_auth,
     save_provider_credentials,
     decode_base58,
     encode_base58,
@@ -138,6 +143,41 @@ def test_auth_record_upstream_json_codec() raises:
     assert_false(decoded.host)
     with assert_raises():
         _ = auth_record_from_json('{"host":"missing-key"}')
+
+
+def test_mcp_auth_persistence_and_validation() raises:
+    var paths = StoragePaths.from_roots(
+        "/tmp/mochi-mcp-auth-home",
+        "/tmp/mochi-mcp-auth-config",
+        "/tmp/mochi-mcp-auth-data",
+        "/tmp/mochi-mcp-auth-state",
+        "/tmp/mochi-mcp-auth-cache",
+    )
+    delete_mcp_auth(paths, "server")
+    var data = McpAuthData(
+        "https://mcp.example/mcp",
+        Optional(OAuthTokens("access", "refresh", 123456, None)),
+        "client",
+        Optional("secret"),
+        Optional(2000),
+        Optional("http://127.0.0.1:8765/callback"),
+        Optional("https://auth.example/token"),
+    )
+    save_mcp_auth(paths, "server", data)
+    assert_equal(
+        mcp_auth_path(paths, "server"),
+        "/tmp/mochi-mcp-auth-state/maki/auth/mcp-server.json",
+    )
+    var loaded = load_mcp_auth(
+        paths, "server", "https://mcp.example/mcp", 1000
+    )
+    assert_true(loaded)
+    assert_equal(loaded.value().tokens.value().access, "access")
+    assert_equal(loaded.value().token_endpoint.value(), "https://auth.example/token")
+    assert_false(load_mcp_auth(paths, "server", "https://other.example/mcp", 1000))
+    assert_false(load_mcp_auth(paths, "server", "https://mcp.example/mcp", 2000))
+    delete_mcp_auth(paths, "server")
+    assert_false(load_mcp_auth(paths, "server", "https://mcp.example/mcp"))
 
 
 def test_provider_credentials_persistence() raises:

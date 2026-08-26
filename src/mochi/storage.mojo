@@ -352,6 +352,58 @@ struct OAuthTokens(Copyable, Movable):
 
 
 @fieldwise_init
+struct McpAuthData(Copyable, Movable):
+    var server_url: String
+    var tokens: Optional[OAuthTokens]
+    var client_id: String
+    var client_secret: Optional[String]
+    var client_secret_expires_at: Optional[Int]
+    var redirect_uri: Optional[String]
+    var token_endpoint: Optional[String]
+
+    def to_json(self) raises -> JsonValue:
+        var value = JsonValue.object()
+        value.set("server_url", JsonValue.string(self.server_url))
+        if self.tokens:
+            value.set("tokens", self.tokens.value().to_json())
+        else:
+            value.set("tokens", JsonValue.null())
+        value.set("client_id", JsonValue.string(self.client_id))
+        _set_optional_string(value, "client_secret", self.client_secret)
+        if self.client_secret_expires_at:
+            value.set(
+                "client_secret_expires_at",
+                JsonValue.integer(self.client_secret_expires_at.value()),
+            )
+        _set_optional_string(value, "redirect_uri", self.redirect_uri)
+        _set_optional_string(value, "token_endpoint", self.token_endpoint)
+        return value^
+
+    @staticmethod
+    def from_json(value: JsonValue) raises -> Self:
+        if value.kind != JsonValue.OBJECT:
+            raise Error("MCP auth data must be a JSON object")
+        var tokens: Optional[OAuthTokens] = None
+        if value.contains("tokens") and not value.get("tokens").is_null():
+            tokens = Optional(OAuthTokens.from_json(value.get("tokens")))
+        var secret_expires: Optional[Int] = None
+        if (
+            value.contains("client_secret_expires_at")
+            and not value.get("client_secret_expires_at").is_null()
+        ):
+            secret_expires = Optional(_required_int(value, "client_secret_expires_at"))
+        return Self(
+            _required_string(value, "server_url"),
+            tokens^,
+            _required_string(value, "client_id"),
+            _optional_string(value, "client_secret"),
+            secret_expires,
+            _optional_string(value, "redirect_uri"),
+            _optional_string(value, "token_endpoint"),
+        )
+
+
+@fieldwise_init
 struct AuthRecord(Copyable, Movable):
     var api_key: String
     var host: Optional[String]
@@ -383,6 +435,46 @@ def oauth_tokens_from_json(text: String) raises -> OAuthTokens:
 
 def provider_credentials_path(paths: StoragePaths, provider: String) -> String:
     return paths.state + "/auth/" + provider + ".json"
+
+
+def mcp_auth_path(paths: StoragePaths, server_name: String) -> String:
+    return provider_credentials_path(paths, "mcp-" + server_name)
+
+
+def save_mcp_auth(
+    paths: StoragePaths, server_name: String, data: McpAuthData
+) raises:
+    var directory = paths.state + "/auth"
+    makedirs(directory, exist_ok=True)
+    _atomic_write_text(mcp_auth_path(paths, server_name), serialize_json(data.to_json()))
+
+
+def load_mcp_auth(
+    paths: StoragePaths,
+    server_name: String,
+    expected_url: String,
+    now_seconds: Int = 0,
+) raises -> Optional[McpAuthData]:
+    var path = mcp_auth_path(paths, server_name)
+    if not exists(path):
+        return None
+    var data = McpAuthData.from_json(parse_json(open(path, "r").read()))
+    if data.server_url != expected_url:
+        return None
+    if (
+        data.client_secret_expires_at
+        and now_seconds > 0
+        and now_seconds >= data.client_secret_expires_at.value()
+    ):
+        return None
+    return Optional(data^)
+
+
+def delete_mcp_auth(paths: StoragePaths, server_name: String):
+    try:
+        remove(mcp_auth_path(paths, server_name))
+    except:
+        pass
 
 
 def save_provider_credentials(
@@ -438,6 +530,19 @@ def auth_record_to_json(record: AuthRecord) raises -> String:
 
 def auth_record_from_json(text: String) raises -> AuthRecord:
     return AuthRecord.from_json(parse_json(text))
+
+
+def _set_optional_string(
+    mut value: JsonValue, key: String, optional: Optional[String]
+) raises:
+    if optional:
+        value.set(key, JsonValue.string(optional.value()))
+
+
+def _optional_string(value: JsonValue, key: String) raises -> Optional[String]:
+    if not value.contains(key) or value.get(key).is_null():
+        return None
+    return Optional(_required_string(value, key))
 
 
 def _required_string(value: JsonValue, key: String) raises -> String:
