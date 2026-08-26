@@ -38,6 +38,14 @@ def test_rollback_subcommand() raises:
     assert_true(config.rollback)
 
 
+def test_update_subcommand() raises:
+    var config = parse_args(["update", "/tmp/mochi-new", "0.2.0"])
+    assert_equal(config.update_file.value(), "/tmp/mochi-new")
+    assert_equal(config.update_version.value(), "0.2.0")
+    with assert_raises():
+        _ = parse_args(["update", "/tmp/mochi-new"])
+
+
 def test_acp_mode() raises:
     assert_true(parse_args(["--acp"]).acp)
 

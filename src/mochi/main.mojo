@@ -29,7 +29,7 @@ from mochi.mcp import (
     begin_mcp_oauth_with,
     complete_mcp_oauth_with,
 )
-from mochi.ops import restore_backup
+from mochi.ops import plan_update, replace_from_download, restore_backup
 from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager
 from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
 from mochi.prompt import build_system_prompt, load_instruction_text
@@ -94,6 +94,20 @@ def main() raises:
             startup_paths.state + "/mochi_backup", String(command_line[0])
         )
         print("Restored previous version.")
+        return
+    if config.update_file:
+        var latest = config.update_version.value()
+        var plan = plan_update(VERSION, latest, String(command_line[0]))
+        if not plan.update_available:
+            print("Already up to date (v" + VERSION + ")")
+            return
+        replace_from_download(
+            config.update_file.value(),
+            plan.executable,
+            startup_paths.state + "/mochi_backup",
+        )
+        print("Updated successfully to v" + latest + ".")
+        print("To restore: mochi rollback")
         return
     var layered = load_layered_config(
         startup_paths.config + "/config.json",

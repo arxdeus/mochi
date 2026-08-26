@@ -50,6 +50,8 @@ struct CliConfig(Copyable, Movable):
     var session_id: Optional[String]
     var acp: Bool
     var rollback: Bool
+    var update_file: Optional[String]
+    var update_version: Optional[String]
 
     def __init__(out self):
         self.model = DEFAULT_MODEL
@@ -71,6 +73,8 @@ struct CliConfig(Copyable, Movable):
         self.session_id = None
         self.acp = False
         self.rollback = False
+        self.update_file = None
+        self.update_version = None
 
     def normalize_provider_url(mut self):
         if self.provider_url != DEFAULT_PROVIDER_URL:
@@ -157,6 +161,15 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
         if index == 0 and argument == "rollback":
             config.rollback = True
             index += 1
+            continue
+        if index == 0 and argument == "update":
+            config.update_file = Optional(
+                _option_value(arguments, index, argument)
+            )
+            config.update_version = Optional(
+                _option_value(arguments, index + 1, argument)
+            )
+            index += 3
             continue
         if argument == "--help" or argument == "-h":
             config.show_help = True
@@ -340,12 +353,16 @@ def _three_string_properties(first: String, second: String, third: String) raise
 
 def help_text() -> String:
     return """Usage: mochi [OPTIONS] [PROMPT]
+       mochi update DOWNLOADED_FILE VERSION
+       mochi rollback
 
 Pure Mojo AI coding agent.
 
 Options:
   -h, --help                    Show this help
       --version                 Show version
+      update FILE VERSION       Install a downloaded release with backup
+      rollback                  Restore the previous executable
       --model MODEL             Model name (default: gpt-4.1-mini)
   -c, --continue                Resume the latest session for this directory
   -s, --session ID              Resume a specific session
