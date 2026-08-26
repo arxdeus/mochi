@@ -22,7 +22,7 @@ from mochi.config import load_layered_config
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, serialize_json
 from mochi.mcp import McpClient, StdioTransport, StreamableHttpTransport
-from mochi.permissions import PermissionEffect, PermissionManager
+from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager
 from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
 from mochi.prompt import build_system_prompt, load_instruction_text
 from mochi.provider import (
@@ -472,7 +472,37 @@ def _interactive(
                 print("Unknown command:", action.name)
             continue
         _run_prompt(runtime, session, store, action.text, output_format)
+        _interactive_permissions(runtime)
         _ = UiReducer.reduce(ui, UiEvent.complete())
+
+
+def _interactive_permissions(mut runtime: Runtime) raises:
+    while True:
+        var pending = runtime.take_pending_permission()
+        if not pending:
+            return
+        var permission = pending.value().copy()
+        print("Permission required for", permission.tool)
+        for scope in permission.scopes:
+            print("  ", scope)
+        print("[y] allow once, [a] allow for session, [n] deny: ", end="")
+        var answer = _read_line()
+        if not answer:
+            _ = runtime.resolve_permission(
+                permission, PermissionAnswer.deny()
+            )
+            return
+        var choice = String(answer.value().strip()).lower()
+        if choice == "a" or choice == "always":
+            _ = runtime.resolve_permission(
+                permission, PermissionAnswer.allow_session()
+            )
+        elif choice == "y" or choice == "yes":
+            _ = runtime.resolve_permission(
+                permission, PermissionAnswer.allow_once()
+            )
+        else:
+            _ = runtime.resolve_permission(permission, PermissionAnswer.deny())
 
 
 def _interactive_help():

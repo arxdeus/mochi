@@ -55,6 +55,7 @@ struct ToolDefinition(Copyable, Movable):
 struct PendingPermission(Copyable, Movable):
     var tool_call_id: String
     var tool: String
+    var arguments: JsonValue
     var scopes: List[String]
 
 
@@ -192,6 +193,28 @@ struct Runtime:
         if len(self.pending_permissions) == 0:
             return None
         return Optional(self.pending_permissions.pop(0))
+
+    def resolve_permission(
+        mut self, permission: PendingPermission, answer: PermissionAnswer
+    ) -> String:
+        self.permissions.apply_decision(
+            permission.tool, permission.scopes, answer
+        )
+        var content = String("Permission denied")
+        if answer.is_allow():
+            try:
+                content = self._execute_prepared(
+                    PreparedTool(
+                        permission.tool, permission.arguments.copy()
+                    )
+                )
+            except error:
+                content = "Error: " + String(error)
+        for i in range(len(self.messages) - 1, -1, -1):
+            if self.messages[i].tool_call_id == permission.tool_call_id:
+                self.messages[i].content = content
+                break
+        return content^
 
     def queue_input(mut self, input: String):
         self.queued_inputs.append(input)
@@ -406,9 +429,13 @@ struct Runtime:
             if decision.effect == PermissionEffect.prompt():
                 if len(self.permission_answers) == 0:
                     self.pending_permissions.append(
-                        PendingPermission(
-                            call.id, prepared.name, decision.scopes.copy()
-                        )
+                          PendingPermission(
+                              call.id,
+                              prepared.name,
+                              prepared.arguments.copy(),
+                              decision.scopes.copy(),
+                          )
+
                     )
                     content = "Permission prompt"
                     for scope in decision.scopes:

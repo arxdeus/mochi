@@ -62,7 +62,9 @@ def test_acp_permission_and_unknown_method() raises:
     var bridged = pending_permission_request(
         8,
         "session-1",
-        PendingPermission("tool-1", "bash", ["git status"]),
+        PendingPermission(
+            "tool-1", "bash", JsonValue.object(), ["git status"]
+        ),
     )
     assert_equal(
         bridged.payload.get("toolCall").get("toolCallId").string_value,

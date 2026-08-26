@@ -262,6 +262,13 @@ def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
     assert_equal(pending.value().tool_call_id, "pending")
     assert_equal(pending.value().tool, "bash")
     assert_equal(pending.value().scopes[0], "printf pending")
+    var resolved = prompted.resolve_permission(
+        pending.value(), PermissionAnswer.allow_once()
+    )
+    assert_true("pending" in resolved)
+    assert_true(
+        "pending" in prompted.messages[len(prompted.messages) - 1].content
+    )
 
     var runtime = Runtime(
         OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
