@@ -1,4 +1,4 @@
-from std.ffi import c_int, c_long, external_call
+from std.ffi import c_int, c_long, c_size_t, external_call
 from std.os import getenv, makedirs, remove
 from std.os.path import exists
 
@@ -148,19 +148,30 @@ struct MakiId(Copyable, Movable):
 
     @staticmethod
     def generate() raises -> Self:
-        var seconds: c_long = 0
-        _ = external_call["time", c_long](Pointer(to=seconds))
-        var milliseconds = UInt(Int(seconds) * 1000)
         var bytes = List[UInt8](length=16, fill=0)
+        var random_status = external_call[
+            "mochi_secure_random",
+            c_int,
+            Pointer[mut=True, UInt8, MutAnyOrigin],
+            c_size_t,
+        ](
+            rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](bytes.unsafe_ptr()),
+            c_size_t(len(bytes)),
+        )
+        if random_status != 0:
+            raise Error("UUIDv7 CSPRNG unavailable")
+
+        var tick = List[c_long](length=2, fill=0)
+        _read_realtime(tick)
+        var seconds = Int(tick[0])
+        var nanoseconds = Int(tick[1])
+        if seconds < 0 or nanoseconds < 0 or nanoseconds >= 1_000_000_000:
+            raise Error("UUIDv7 clock returned an invalid timestamp")
+        var milliseconds = UInt(seconds * 1000 + nanoseconds // 1_000_000)
         for reverse in range(6):
             bytes[5 - reverse] = UInt8(milliseconds & 255)
             milliseconds >>= 8
-        bytes[6] = UInt8(0x70 | (Int(seconds) & 0x0F))
-        bytes[7] = UInt8((Int(seconds) >> 4) & 255)
-        var state = UInt(external_call["getpid", c_int]()) ^ UInt(Int(seconds))
-        for i in range(8, 16):
-            state = state * 6364136223846793005 + 1442695040888963407
-            bytes[i] = UInt8((state >> 24) & 255)
+        bytes[6] = UInt8((bytes[6] & 0x0F) | 0x70)
         bytes[8] = UInt8((bytes[8] & 0x3F) | 0x80)
         return Self(bytes^)
 
@@ -183,6 +194,20 @@ struct MakiId(Copyable, Movable):
             if self.bytes[i] != other.bytes[i]:
                 return False
         return True
+
+
+def _read_realtime(mut parts: List[c_long]) raises:
+    var status = external_call[
+        "clock_gettime",
+        c_int,
+        c_int,
+        Pointer[mut=True, c_long, MutAnyOrigin],
+    ](
+        c_int(0),
+        rebind[Pointer[mut=True, c_long, MutAnyOrigin]](parts.unsafe_ptr()),
+    )
+    if status != 0:
+        raise Error("UUIDv7 realtime clock unavailable")
 
 
 def decode_base58(value: String) raises -> List[UInt8]:

@@ -2,13 +2,41 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-upstream="$root/.slim/clonedeps/repos/tontinton__maki"
-expected=4296034c0ec1a6cbf0b2474585011006c225df98
+default_upstream="$root/.slim/clonedeps/repos/tontinton__maki"
+upstream=${MAKI_UPSTREAM:-$default_upstream}
+expected=57d1f90003a6948897c6185442a136da85fe5971
 
-[ "$(git -C "$upstream" rev-parse HEAD)" = "$expected" ] || {
-    echo "pinned upstream revision mismatch" >&2
-    exit 1
+print_oracle_setup() {
+    requested_behavior=${1:-all}
+    cat >&2 <<EOF
+This harness requires a read-only Maki oracle at exactly:
+  $expected
+
+The configured path is:
+  $upstream
+
+Create a separate checkout (choose a new, empty destination) and retry:
+  git clone --no-checkout https://github.com/tontinton/maki.git /path/to/maki-$expected
+  git -C /path/to/maki-$expected checkout --detach $expected
+  MAKI_UPSTREAM=/path/to/maki-$expected pixi run parity $requested_behavior
+
+The harness never clones, fetches, checks out, resets, or otherwise modifies
+the configured Maki checkout.
+EOF
 }
+
+if ! actual=$(git -C "$upstream" rev-parse --verify HEAD 2>/dev/null); then
+    echo "Maki oracle is absent or is not a Git checkout." >&2
+    print_oracle_setup "${1:-all}"
+    exit 1
+fi
+
+if [ "$actual" != "$expected" ]; then
+    echo "Maki oracle revision mismatch: expected $expected, found $actual." >&2
+    echo "Existing checkout left untouched." >&2
+    print_oracle_setup "${1:-all}"
+    exit 1
+fi
 
 run_mojo_test() {
     test_file=$1
@@ -378,6 +406,8 @@ case "${1:-all}" in
         run_mojo_test tests/ops_test.mojo
         ;;
     all)
+        # Each behavior below runs upstream and Mochi assertions independently.
+        # There are currently no shared fixtures or direct output comparisons.
         mismatches=0
         failed=""
         behaviors="agent.provider_error.result agent.system_prompt.instructions acp.v1.session.lifecycle config.layered.merge storage.workspace.stores ops.logging.telemetry permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.openai.contract_adapter provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output storage.session.resume_continue cancellation.http.active cancellation.process.active contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
@@ -393,9 +423,9 @@ case "${1:-all}" in
             fi
         done
         if [ "$mismatches" -eq 0 ]; then
-            printf '{"status":"parity","behaviors":%s,"mismatches":0,"failed":[]}\n' "$count"
+            printf '{"status":"paired-tests-passed","method":"independent-test-suites","direct_comparisons":0,"behaviors":%s,"failures":0,"failed":[]}\n' "$count"
         else
-            printf '{"status":"mismatch","behaviors":%s,"mismatches":%s,"failed":[%s]}\n' "$count" "$mismatches" "$failed"
+            printf '{"status":"paired-tests-failed","method":"independent-test-suites","direct_comparisons":0,"behaviors":%s,"failures":%s,"failed":[%s]}\n' "$count" "$mismatches" "$failed"
             exit 1
         fi
         ;;

@@ -49,6 +49,11 @@ struct RemoteToolMetadata(Copyable, Movable):
     var parameters: JsonValue
 
 
+def mcp_wire_tool_name(endpoint: String, raw_name: String) -> String:
+    """Maki-compatible provider name for the qualified `endpoint.raw` tool."""
+    return endpoint + "__" + raw_name
+
+
 struct RemoteToolRouter(Copyable, Movable):
     """Tagged remote dispatch state with deterministic result queues.
 
@@ -59,6 +64,7 @@ struct RemoteToolRouter(Copyable, Movable):
     var protocols: List[String]
     var endpoints: List[String]
     var names: List[String]
+    var raw_names: List[String]
     var result_names: List[String]
     var results: List[ToolResult]
 
@@ -66,10 +72,13 @@ struct RemoteToolRouter(Copyable, Movable):
         self.protocols = List[String]()
         self.endpoints = List[String]()
         self.names = List[String]()
+        self.raw_names = List[String]()
         self.result_names = List[String]()
         self.results = List[ToolResult]()
 
-    def register(mut self, metadata: RemoteToolMetadata) raises:
+    def register(
+        mut self, metadata: RemoteToolMetadata, raw_name: String = ""
+    ) raises:
         if metadata.protocol != "mcp" and metadata.protocol != "plugin":
             raise Error("unsupported remote tool protocol: " + metadata.protocol)
         for name in self.names:
@@ -78,6 +87,7 @@ struct RemoteToolRouter(Copyable, Movable):
         self.protocols.append(metadata.protocol)
         self.endpoints.append(metadata.endpoint)
         self.names.append(metadata.name)
+        self.raw_names.append(raw_name if raw_name != "" else metadata.name)
 
     def route_index(self, name: String) -> Int:
         for i in range(len(self.names)):
@@ -96,12 +106,17 @@ struct RemoteToolRouter(Copyable, Movable):
         var index = self.route_index(name)
         return self.endpoints[index] if index >= 0 else ""
 
+    def raw_name_for(self, name: String) -> String:
+        var index = self.route_index(name)
+        return self.raw_names[index] if index >= 0 else ""
+
     def remove_endpoint(mut self, protocol: String, endpoint: String):
         for i in range(len(self.names) - 1, -1, -1):
             if self.protocols[i] == protocol and self.endpoints[i] == endpoint:
                 var name = self.names.pop(i)
                 _ = self.protocols.pop(i)
                 _ = self.endpoints.pop(i)
+                _ = self.raw_names.pop(i)
                 for j in range(len(self.result_names) - 1, -1, -1):
                     if self.result_names[j] == name:
                         _ = self.result_names.pop(j)

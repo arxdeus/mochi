@@ -1,29 +1,94 @@
 from std.os import makedirs, remove
+from std.os.path import exists
 from std.testing import TestSuite, assert_equal, assert_false, assert_raises, assert_true
 
-from mochi.json import JsonValue
-from mochi.workspace import InputHistory, NoteStore, PreferenceStore, project_id
+from mochi.json import JsonValue, parse_json
+from mochi.workspace import (
+    InputHistory,
+    MAX_ENTRIES,
+    NoteStore,
+    PreferenceStore,
+    project_id,
+)
 
 
 comptime ROOT = "/tmp/mochi-workspace-test"
 
 
-def test_input_history_dedup_and_bound() raises:
-    var path = ROOT + "/history"
+def clear_history(directory: String):
     try:
-        remove(path)
+        remove(directory + "/input_history.json")
     except:
         pass
-    var history = InputHistory(path, 2)
-    history.add("one")
+    try:
+        remove(directory + "/input_history.json.tmp")
+    except:
+        pass
+
+
+def test_input_history_json_roundtrip_trim_dedup_and_bound() raises:
+    var directory = ROOT + "/history-roundtrip"
+    clear_history(directory)
+    var history = InputHistory(directory, 3)
+    assert_equal(history.path, directory + "/input_history.json")
+    history.add("")
+    history.add(" \n\t ")
+    history.add("  one  ")
     history.add("one")
     history.add("two")
+    history.add("one")
     history.add("three")
-    assert_equal(len(history.entries), 2)
+    assert_equal(len(history.entries), 3)
     assert_equal(history.entries[0], "two")
-    var loaded = InputHistory(path, 2)
+    assert_equal(history.entries[1], "one")
+    assert_equal(history.entries[2], "three")
+    var encoded = open(history.path, "r").read()
+    assert_equal(encoded, '["two","one","three"]')
+    assert_equal(parse_json(encoded).kind, JsonValue.ARRAY)
+    assert_false(exists(history.path + ".tmp"))
+    var loaded = InputHistory(directory, 3)
     loaded.load()
-    assert_equal(loaded.entries[1], "three")
+    assert_equal(len(loaded.entries), 3)
+    assert_equal(loaded.entries[0], "two")
+    assert_equal(loaded.entries[2], "three")
+
+
+def test_input_history_default_cap_and_load_trim_to_cap() raises:
+    var directory = ROOT + "/history-cap"
+    clear_history(directory)
+    var history = InputHistory(directory)
+    assert_equal(history.max_entries, MAX_ENTRIES)
+    for index in range(150):
+        history.push("entry" + String(index))
+    assert_equal(len(history.entries), 100)
+    assert_equal(history.entries[0], "entry50")
+    assert_equal(history.entries[99], "entry149")
+    history.save()
+    var loaded = InputHistory(directory, 10)
+    loaded.load()
+    assert_equal(len(loaded.entries), 10)
+    assert_equal(loaded.entries[0], "entry140")
+    assert_equal(loaded.entries[9], "entry149")
+
+
+def test_input_history_missing_or_corrupt_is_empty() raises:
+    var directory = ROOT + "/history-bad-state"
+    clear_history(directory)
+    var history = InputHistory(directory)
+    history.push("stale")
+    history.load()
+    assert_equal(len(history.entries), 0)
+    makedirs(directory, exist_ok=True)
+    with open(history.path, "w") as file:
+        file.write("not json")
+    history.push("stale")
+    history.load()
+    assert_equal(len(history.entries), 0)
+    with open(history.path, "w") as file:
+        file.write('["valid",1]')
+    history.push("stale")
+    history.load()
+    assert_equal(len(history.entries), 0)
 
 
 def test_note_and_plan_store() raises:

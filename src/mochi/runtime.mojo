@@ -45,6 +45,7 @@ from mochi.tools import (
     RemoteToolRouter,
     ToolRegistry,
     ToolResult,
+    mcp_wire_tool_name,
 )
 from mochi.types import CancellationToken, Message, ToolCall, Usage
 
@@ -414,7 +415,10 @@ struct Runtime:
         for item in discovered.array_value:
             if item.kind != JsonValue.OBJECT or not item.contains("name"):
                 raise Error("remote tool metadata requires a name")
-            var name = item.get("name").string_value
+            var raw_name = item.get("name").string_value
+            var name = raw_name.copy()
+            if protocol == "mcp":
+                name = mcp_wire_tool_name(endpoint, raw_name)
             var description = String("")
             if item.contains("description"):
                 description = item.get("description").string_value
@@ -429,7 +433,7 @@ struct Runtime:
                 protocol, endpoint, name, description, parameters^
             )
             self.tools.register_remote(metadata)
-            self.remote.register(metadata)
+            self.remote.register(metadata, raw_name)
             self.add_tool(ToolDefinition(name, description, metadata.parameters.copy()))
 
     def enqueue_remote_result(
@@ -443,6 +447,9 @@ struct Runtime:
 
     def remote_endpoint(self, name: String) -> String:
         return self.remote.endpoint_for(name)
+
+    def remote_raw_name(self, name: String) -> String:
+        return self.remote.raw_name_for(name)
 
     def take_remote_result(mut self, name: String) -> Optional[ToolResult]:
         return self.remote.take_queued(name)
@@ -920,12 +927,13 @@ struct Runtime:
         var protocol = self.remote.protocol_for(prepared.name)
         var endpoint = self.remote.endpoint_for(prepared.name)
         if protocol == "mcp":
+            var raw_name = self.remote.raw_name_for(prepared.name)
             for i in range(len(self.mcp_stdio_names)):
                 if self.mcp_stdio_names[i] == endpoint and self.mcp_stdio_enabled[i]:
                     return serialize_json(
                         self.mcp_stdio_clients[i].call_tool(
                             self.mcp_stdio_transports[i],
-                            prepared.name,
+                            raw_name,
                             prepared.arguments.copy(),
                         )
                     )
@@ -934,7 +942,7 @@ struct Runtime:
                     return serialize_json(
                         self.mcp_http_clients[i].call_tool(
                             self.mcp_http_transports[i],
-                            prepared.name,
+                            raw_name,
                             prepared.arguments.copy(),
                         )
                     )

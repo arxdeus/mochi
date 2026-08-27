@@ -289,22 +289,28 @@ struct SessionStore(Copyable, Movable):
     def __init__(out self, var directory: String):
         self.directory = directory^
 
-    def path(self, session_id: String) -> String:
+    def path(self, session_id: String) raises -> String:
+        _validate_session_id(session_id)
         return self.directory + "/" + session_id + ".jsonl"
 
     def save(self, session: Session) raises:
+        var path = self.path(session.id)
         makedirs(self.directory, exist_ok=True)
         var body = String("")
         var records = session.records()
         for record in records:
             body += serialize_json(record) + "\n"
-        _atomic_write(self.path(session.id), body)
+        _atomic_write(path, body)
         var index = self._load_index()
         index.set(session.cwd, JsonValue.string(session.id))
         self._save_index(index)
 
     def load(self, session_id: String) raises -> Session:
-        return Session.load(self.path(session_id))
+        var session = Session.load(self.path(session_id))
+        _validate_session_id(session.id)
+        if session.id != session_id:
+            raise Error("session id does not match its filename")
+        return session^
 
     def list(self, cwd: Optional[String] = None) raises -> List[SessionSummary]:
         var summaries = List[SessionSummary]()
@@ -315,6 +321,11 @@ struct SessionStore(Copyable, Movable):
                 continue
             try:
                 var session = Session.load(self.directory + "/" + name)
+                _validate_session_id(session.id)
+                var file_id = String(name.removesuffix(".jsonl"))
+                _validate_session_id(file_id)
+                if session.id != file_id:
+                    continue
                 if cwd and session.cwd != cwd.value():
                     continue
                 summaries.append(SessionSummary(session.id, session.title, session.updated_at))
@@ -332,11 +343,13 @@ struct SessionStore(Copyable, Movable):
         var index = self._load_index()
         if index.contains(cwd):
             var indexed = index.get(cwd)
-            if indexed.kind == JsonValue.STRING and exists(self.path(indexed.string_value)):
+            if indexed.kind == JsonValue.STRING:
                 try:
-                    var loaded = self.load(indexed.string_value)
-                    if loaded.cwd == cwd:
-                        return loaded^
+                    var indexed_path = self.path(indexed.string_value)
+                    if exists(indexed_path):
+                        var loaded = self.load(indexed.string_value)
+                        if loaded.cwd == cwd:
+                            return loaded^
                 except:
                     pass
         var summaries = self.list(cwd)
@@ -362,6 +375,22 @@ struct SessionStore(Copyable, Movable):
     def _save_index(self, index: JsonValue) raises:
         makedirs(self.directory, exist_ok=True)
         _atomic_write(self.directory + "/" + CWD_INDEX_FILE, serialize_json(index))
+
+
+def _validate_session_id(session_id: String) raises:
+    if session_id == "" or session_id == "." or session_id == "..":
+        raise Error("invalid session id")
+    for byte in session_id.as_bytes():
+        var code = Int(byte)
+        var allowed = (
+            (code >= 48 and code <= 57)
+            or (code >= 65 and code <= 90)
+            or (code >= 97 and code <= 122)
+            or code == 45
+            or code == 95
+        )
+        if not allowed:
+            raise Error("invalid session id")
 
 
 def _title(text: String) -> String:

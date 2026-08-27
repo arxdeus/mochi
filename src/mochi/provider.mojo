@@ -729,21 +729,55 @@ struct ToolCallDelta(Copyable, Movable):
     var arguments: String
 
 
+comptime MAX_TOOL_CALLS_PER_MESSAGE = 512
+
+
 struct ToolCallAssembler(Copyable, Movable):
     var calls: List[ToolCall]
 
     def __init__(out self):
         self.calls = List[ToolCall]()
 
-    def add(mut self, delta: ToolCallDelta):
-        while len(self.calls) <= delta.index:
+    def _ensure_index(mut self, index: Int) -> Bool:
+        if index < 0 or index >= MAX_TOOL_CALLS_PER_MESSAGE:
+            return False
+        while len(self.calls) <= index:
             self.calls.append(ToolCall("", "", ""))
-        self.calls[delta.index].id += delta.id
-        self.calls[delta.index].name += delta.name
+        return True
+
+    def add(mut self, delta: ToolCallDelta) -> Bool:
+        """Merge one Chat Completions delta and report a new tool start."""
+        if not self._ensure_index(delta.index):
+            return False
+        var was_unnamed = self.calls[delta.index].name == ""
+        if delta.id != "":
+            self.calls[delta.index].id = delta.id
+        if delta.name != "":
+            self.calls[delta.index].name = delta.name
         self.calls[delta.index].arguments += delta.arguments
+        return was_unnamed and self.calls[delta.index].name != ""
+
+    def finish_call(mut self, delta: ToolCallDelta) -> Bool:
+        """Merge one Responses API output-item completion."""
+        if not self._ensure_index(delta.index):
+            return False
+        var was_unnamed = self.calls[delta.index].name == ""
+        if self.calls[delta.index].id == "" and delta.id != "":
+            self.calls[delta.index].id = delta.id
+        if self.calls[delta.index].name == "" and delta.name != "":
+            self.calls[delta.index].name = delta.name
+        if delta.arguments != "":
+            self.calls[delta.index].arguments = delta.arguments
+        return was_unnamed and self.calls[delta.index].name != ""
 
     def completed(self) -> List[ToolCall]:
-        return self.calls.copy()
+        var result = self.calls.copy()
+        for i in range(len(result)):
+            if result[i].id == "":
+                result[i].id = "maki_unnamed_" + String(i)
+            if result[i].name == "":
+                result[i].name = "maki_unknown_tool"
+        return result^
 
 
 struct OpenAIStreamParser(Copyable, Movable):
@@ -790,7 +824,13 @@ struct OpenAIStreamParser(Copyable, Movable):
                         _string_or(item, "name", ""),
                         "",
                     )
-                    self.tools.add(part)
+                    if self.tools.add(part):
+                        var call = self.tools.calls[part.index].copy()
+                        events.append(
+                            ProviderEvent.tool_call_delta(
+                                ToolCall(call.id, call.name, "")
+                            )
+                        )
                 continue
             if event_type == "response.function_call_arguments.delta":
                 var index = _int_or(root, "output_index", len(self.tools.calls) - 1)
@@ -802,28 +842,32 @@ struct OpenAIStreamParser(Copyable, Movable):
                             arguments = delta.string_value
                         elif delta.kind == JsonValue.OBJECT:
                             arguments = serialize_json(delta)
-                    self.tools.add(ToolCallDelta(index, "", "", arguments^))
+                    _ = self.tools.add(
+                        ToolCallDelta(index, "", "", arguments^)
+                    )
                 continue
             if event_type == "response.output_item.done":
                 var item = root.get("item")
                 if _string_or(item, "type", "") == "function_call":
                     var index = _int_or(root, "output_index", len(self.tools.calls) - 1)
-                    if index >= 0:
-                        while len(self.tools.calls) <= index:
-                            self.tools.calls.append(ToolCall("", "", ""))
-                        var arguments = _string_or(item, "arguments", "")
-                        if arguments == "" and item.contains("arguments"):
-                            var raw_arguments = item.get("arguments")
-                            if raw_arguments.kind == JsonValue.OBJECT:
-                                arguments = serialize_json(raw_arguments)
-                        var call_id = _string_or(item, "call_id", "")
-                        var name = _string_or(item, "name", "")
-                        if call_id != "":
-                            self.tools.calls[index].id = call_id
-                        if name != "":
-                            self.tools.calls[index].name = name
-                        if arguments != "":
-                            self.tools.calls[index].arguments = arguments^
+                    var arguments = _string_or(item, "arguments", "")
+                    if arguments == "" and item.contains("arguments"):
+                        var raw_arguments = item.get("arguments")
+                        if raw_arguments.kind == JsonValue.OBJECT:
+                            arguments = serialize_json(raw_arguments)
+                    var finished = ToolCallDelta(
+                        index,
+                        _string_or(item, "call_id", ""),
+                        _string_or(item, "name", ""),
+                        arguments^,
+                    )
+                    if self.tools.finish_call(finished):
+                        var call = self.tools.calls[finished.index].copy()
+                        events.append(
+                            ProviderEvent.tool_call_delta(
+                                ToolCall(call.id, call.name, "")
+                            )
+                        )
                 continue
             if event_type == "response.completed" or event_type == "response.incomplete":
                 var response = root.get("response")
@@ -888,12 +932,13 @@ struct OpenAIStreamParser(Copyable, Movable):
                                 _string_or(function, "name", ""),
                                 _string_or(function, "arguments", ""),
                             )
-                            self.tools.add(part)
-                            events.append(
-                                ProviderEvent.tool_call_delta(
-                                    ToolCall(part.id, part.name, part.arguments)
+                            if self.tools.add(part):
+                                var call = self.tools.calls[part.index].copy()
+                                events.append(
+                                    ProviderEvent.tool_call_delta(
+                                        ToolCall(call.id, call.name, "")
+                                    )
                                 )
-                            )
                 var reason = _string_or(choice, "finish_reason", "")
                 if reason != "":
                     self.stop_reason = reason
@@ -2311,13 +2356,21 @@ def _apply_openai_options(
 
 def _stream_response(result: ProviderResult) raises -> StreamResponse:
     var message = DomainMessage.assistant(result.message.content)
-    for call in result.message.tool_calls:
+    for i in range(len(result.message.tool_calls)):
+        var call = result.message.tool_calls[i].copy()
         var input = JsonValue.object()
         if call.arguments != "":
-            input = parse_json(call.arguments)
-            if input.kind != JsonValue.OBJECT:
-                raise Error("provider tool arguments must be an object")
-        message.add_block(ContentBlock.tool_use(call.id, call.name, input^))
+            try:
+                input = parse_json(call.arguments)
+            except:
+                input = JsonValue.object()
+        var call_id = call.id
+        if call_id == "":
+            call_id = "maki_unnamed_" + String(i)
+        var name = call.name
+        if name == "":
+            name = "maki_unknown_tool"
+        message.add_block(ContentBlock.tool_use(call_id^, name^, input^))
     var usage = TokenUsage(
         result.usage.input_tokens, result.usage.output_tokens, 0, 0
     )

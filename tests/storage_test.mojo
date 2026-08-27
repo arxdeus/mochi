@@ -95,6 +95,24 @@ def test_generated_maki_id_is_canonical_uuid_v7() raises:
     assert_true(MakiId.parse(generated.encode()) == generated)
 
 
+def test_generated_maki_ids_are_unique_uuid_v7_values() raises:
+    # The previous seconds/PID-derived generator returned the same value on
+    # consecutive calls, so a few hundred samples are enough for regression
+    # coverage without making the whole suite spend seconds in base58 codecs.
+    comptime SAMPLE_COUNT = 256
+    var seen = Dict[String, Bool](capacity=SAMPLE_COUNT)
+    for _ in range(SAMPLE_COUNT):
+        var generated = MakiId.generate()
+        var canonical = generated.canonical()
+        assert_equal(len(generated.bytes), 16)
+        assert_equal(Int(generated.bytes[6] >> 4), 7)
+        assert_equal(Int(generated.bytes[8] >> 6), 2)
+        assert_true(MakiId.parse(canonical) == generated)
+        assert_false(canonical in seen)
+        seen[canonical] = True
+    assert_equal(len(seen), SAMPLE_COUNT)
+
+
 def test_maki_id_rejects_invalid_values() raises:
     with assert_raises():
         _ = MakiId.parse("")
