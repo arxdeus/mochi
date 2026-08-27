@@ -538,6 +538,29 @@ struct UiState(Copyable, Movable):
     def clear_zones(mut self):
         self.zones.clear()
 
+    def register_terminal_zones(mut self, width: Int, height: Int):
+        self.clear_zones()
+        var area = UiRect(0, 0, max(1, width), max(1, height))
+        self.add_zone(area.copy(), Selection.INPUT)
+        if self.search_open or self.picker_name != "" or self.overlay_name != "":
+            self.add_zone(area^, Selection.OVERLAY)
+
+    def selected_input_text(self) -> String:
+        if not self.selection or not self.selection_pending_copy:
+            return ""
+        var selection = self.selection.value().copy()
+        if selection.zone != Selection.INPUT:
+            return ""
+        var bounds = selection.normalized()
+        var start = max(0, bounds[0].col - 2)
+        var end = max(0, bounds[1].col - 2)
+        return _codepoint_range(self.draft, start, end)
+
+    def clear_pending_copy(mut self):
+        self.selection = None
+        self.selection_pending_copy = False
+        self.selection_edge_scroll = 0
+
     def zone_at(self, row: Int, col: Int) -> Optional[SelectableZone]:
         for i in range(len(self.zones) - 1, -1, -1):
             if self.zones[i].area.contains(row, col):
@@ -1318,6 +1341,18 @@ def _codepoint_suffix(value: String, start: Int) -> String:
     var result = String("")
     var index = 0
     for part in value.codepoint_slices():
+        if index >= start:
+            result += String(part)
+        index += 1
+    return result^
+
+
+def _codepoint_range(value: String, start: Int, end_inclusive: Int) -> String:
+    var result = String("")
+    var index = 0
+    for part in value.codepoint_slices():
+        if index > end_inclusive:
+            break
         if index >= start:
             result += String(part)
         index += 1

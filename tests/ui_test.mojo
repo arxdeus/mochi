@@ -224,6 +224,37 @@ def test_mouse_selection_zones_drag_and_pending_copy() raises:
     assert_equal(state.selection.value().zone, Selection.OVERLAY)
 
 
+def test_terminal_zone_registration_and_input_extraction() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("aé中z"))
+    state.register_terminal_zones(80, 1)
+    assert_equal(len(state.zones), 1)
+    assert_equal(state.zones[0].zone, Selection.INPUT)
+    assert_equal(state.zones[0].area.width, 80)
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(0, 3))
+    _ = UiReducer.reduce(state, UiEvent.mouse_drag(0, 5))
+    _ = UiReducer.reduce(state, UiEvent.mouse_up(0, 5))
+    assert_equal(state.selected_input_text(), "é中z")
+    state.clear_pending_copy()
+    assert_false(state.selection)
+    assert_false(state.selection_pending_copy)
+
+    _ = UiReducer.reduce(state, UiEvent.search_open())
+    state.register_terminal_zones(40, 1)
+    assert_equal(len(state.zones), 2)
+    assert_equal(state.zone_at(0, 5).value().zone, Selection.OVERLAY)
+
+
+def test_reverse_input_selection_clamps_prompt_prefix() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("hello"))
+    state.register_terminal_zones(20, 1)
+    _ = UiReducer.reduce(state, UiEvent.mouse_down(0, 6))
+    _ = UiReducer.reduce(state, UiEvent.mouse_drag(0, 0))
+    _ = UiReducer.reduce(state, UiEvent.mouse_up(0, 0))
+    assert_equal(state.selected_input_text(), "hello")
+
+
 def test_modal_overlay_consumes_input_and_closes() raises:
     var state = UiState()
     state.add_zone(UiRect(0, 0, 80, 15), Selection.MESSAGES)

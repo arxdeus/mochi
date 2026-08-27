@@ -1328,8 +1328,36 @@ def _read_sgr_mouse(mut ui: UiState) raises:
             var event = decode_sgr_mouse(encoded, Int(byte))
             if event:
                 _ = UiReducer.reduce(ui, event.value())
+                if ui.selection_pending_copy:
+                    _copy_pending_input_selection(ui)
             return
         encoded += chr(Int(byte))
+
+
+def _copy_pending_input_selection(mut ui: UiState):
+    var text = ui.selected_input_text()
+    if text != "":
+        var c_text = text.as_c_string_slice()
+        var native = external_call[
+            "mochi_native_clipboard_write",
+            c_int,
+            CStringSlice[ImmutAnyOrigin],
+            c_size_t,
+        ](
+            rebind[CStringSlice[ImmutAnyOrigin]](c_text),
+            c_size_t(text.byte_length()),
+        )
+        if native != 0:
+            _ = external_call[
+                "mochi_osc52_clipboard_write",
+                c_int,
+                CStringSlice[ImmutAnyOrigin],
+                c_size_t,
+            ](
+                rebind[CStringSlice[ImmutAnyOrigin]](c_text),
+                c_size_t(text.byte_length()),
+            )
+    ui.clear_pending_copy()
 
 
 def _read_bracketed_paste() raises -> String:
@@ -1365,7 +1393,11 @@ def _read_utf8_character(first: Int) raises -> String:
     return String(unsafe_from_utf8=Span(bytes))
 
 
-def _render_editor(ui: UiState):
+def _render_editor(mut ui: UiState):
+    var columns = Int(external_call["mochi_terminal_columns", c_int]())
+    if columns <= 0:
+        columns = ui.viewport_width
+    ui.register_terminal_zones(columns, 1)
     if ui.search_open:
         var count = len(ui.search_matches)
         var selected = 0

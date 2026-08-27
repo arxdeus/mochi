@@ -15,6 +15,8 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -383,6 +385,102 @@ void mochi_terminal_disable_raw(void) {
     }
 }
 
+int mochi_terminal_columns(void) {
+    struct winsize size;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0) {
+        return 0;
+    }
+    return (int)size.ws_col;
+}
+
+static int mochi_write_all(int fd, const char *data, size_t length) {
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t count = write(fd, data + offset, length - offset);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            return errno == 0 ? -1 : errno;
+        }
+        offset += (size_t)count;
+    }
+    return 0;
+}
+
+int mochi_terminal_write(const char *data, size_t length) {
+    return mochi_write_all(STDOUT_FILENO, data, length);
+}
+
+int mochi_osc52_clipboard_write(const char *data, size_t length) {
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const char prefix[] = "\x1b]52;c;";
+    static const char suffix[] = "\x07";
+    if (mochi_write_all(STDOUT_FILENO, prefix, sizeof(prefix) - 1) != 0) {
+        return -1;
+    }
+    size_t offset = 0;
+    while (offset < length) {
+        unsigned int value = (unsigned char)data[offset] << 16;
+        size_t remaining = length - offset;
+        if (remaining > 1) {
+            value |= (unsigned char)data[offset + 1] << 8;
+        }
+        if (remaining > 2) {
+            value |= (unsigned char)data[offset + 2];
+        }
+        char encoded[4] = {
+            alphabet[(value >> 18) & 63],
+            alphabet[(value >> 12) & 63],
+            remaining > 1 ? alphabet[(value >> 6) & 63] : '=',
+            remaining > 2 ? alphabet[value & 63] : '=',
+        };
+        if (mochi_write_all(STDOUT_FILENO, encoded, sizeof(encoded)) != 0) {
+            return -1;
+        }
+        offset += remaining >= 3 ? 3 : remaining;
+    }
+    return mochi_write_all(STDOUT_FILENO, suffix, sizeof(suffix) - 1);
+}
+
+int mochi_native_clipboard_write(const char *data, size_t length) {
+#if defined(__APPLE__)
+    int descriptors[2];
+    if (pipe(descriptors) != 0) {
+        return errno == 0 ? -1 : errno;
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        int error = errno == 0 ? -1 : errno;
+        close(descriptors[0]);
+        close(descriptors[1]);
+        return error;
+    }
+    if (pid == 0) {
+        (void)dup2(descriptors[0], STDIN_FILENO);
+        close(descriptors[0]);
+        close(descriptors[1]);
+        execlp("pbcopy", "pbcopy", (char *)NULL);
+        _exit(127);
+    }
+    close(descriptors[0]);
+    int result = mochi_write_all(descriptors[1], data, length);
+    close(descriptors[1]);
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    }
+    if (result != 0) {
+        return result;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+#else
+    (void)data;
+    (void)length;
+    return -1;
+#endif
+}
+
 int mochi_terminal_read_byte(int timeout_milliseconds) {
     fd_set descriptors;
     FD_ZERO(&descriptors);
@@ -549,6 +647,28 @@ int mochi_http_fixture_start(void) {
 #else
 int mochi_terminal_read_byte(int timeout_milliseconds) {
     (void)timeout_milliseconds;
+    return -1;
+}
+
+int mochi_terminal_columns(void) {
+    return 0;
+}
+
+int mochi_terminal_write(const char *data, size_t length) {
+    (void)data;
+    (void)length;
+    return -1;
+}
+
+int mochi_native_clipboard_write(const char *data, size_t length) {
+    (void)data;
+    (void)length;
+    return -1;
+}
+
+int mochi_osc52_clipboard_write(const char *data, size_t length) {
+    (void)data;
+    (void)length;
     return -1;
 }
 
