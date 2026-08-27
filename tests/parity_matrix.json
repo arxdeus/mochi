@@ -1,25 +1,37 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "upstream": {
     "repository": "tontinton/maki",
-    "commit": "4296034c0ec1a6cbf0b2474585011006c225df98"
+    "commit": "57d1f90003a6948897c6185442a136da85fe5971"
   },
   "statuses": [
     "missing",
     "partial",
-    "parity",
+    "paired_independent",
     "blocked"
   ],
+  "status_definitions": {
+    "missing": "The upstream behavior has no Mochi implementation.",
+    "partial": "Mochi implements only part of the upstream behavior.",
+    "paired_independent": "Upstream and Mochi have separately executed assertions for a similar narrow behavior; this is not a shared-fixture or output-differential proof.",
+    "blocked": "Verification cannot proceed until an external prerequisite is available."
+  },
   "check_kinds": [
     "local",
-    "differential"
+    "paired_independent"
   ],
+  "verification_model": {
+    "oracle_revision_required": true,
+    "shared_fixtures": false,
+    "direct_output_comparisons": false,
+    "note": "The parity harness runs selected upstream Cargo tests and selected Mochi tests independently. A passing paired check establishes coverage, not whole-product parity."
+  },
   "behaviors": [
     {
       "id": "agent.provider_error.result",
       "area": "agent",
       "owner": "mochi_agent",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "A provider failure produces non-empty result text equal to the persisted assistant error message.",
       "upstream_refs": [
         "maki-agent/src/types.rs:553-629",
@@ -35,10 +47,9 @@
           "command": "pixi run sh -c 'mojo build -I src tests/runtime_test.mojo -o /tmp/mochi-runtime-test && /tmp/mochi-runtime-test'",
           "normalization": "Exact stop reason, error text, and persisted assistant message."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity agent.provider_error.result",
-          "mojo_command": "pixi run parity agent.provider_error.result",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity agent.provider_error.result",
           "normalization": "Pinned upstream error event and sanitized provider-error tests pass with Mojo's exact non-empty persisted result assertion."
         }
       }
@@ -47,7 +58,7 @@
       "id": "agent.task.structured_output",
       "area": "agent",
       "owner": "mochi_agent",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Isolated task agents validate structured JSON output, retry invalid or missing responses twice, and persist the full child transcript.",
       "upstream_refs": [
         "plugins/task/init.lua",
@@ -62,10 +73,9 @@
           "command": "pixi run test",
           "normalization": "Exact retry count, validated output, and persisted child transcript."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity agent.task.structured_output",
-          "mojo_command": "pixi run parity agent.task.structured_output",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity agent.task.structured_output",
           "normalization": "Pinned upstream task policy and Mojo runtime structured-output tests pass."
         }
       }
@@ -74,7 +84,7 @@
       "id": "provider.openai.chat.streaming",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Incremental OpenAI-compatible Chat Completions SSE text, usage, and tool-call assembly.",
       "upstream_refs": [
         "maki-providers/src/providers/openai_compat.rs"
@@ -88,10 +98,9 @@
           "command": "pixi run sh -c 'mojo build -I src tests/provider_test.mojo -o /tmp/mochi-provider-test && /tmp/mochi-provider-test'",
           "normalization": "ProviderResult text, tool calls, usage, stop reason."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity provider.openai.chat.streaming",
-          "mojo_command": "pixi run parity provider.openai.chat.streaming",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity provider.openai.chat.streaming",
           "normalization": "Pinned upstream and Mojo deterministic OpenAI SSE text/usage/tool parser tests must pass."
         }
       }
@@ -100,7 +109,7 @@
       "id": "storage.session.v2.truncated_tail",
       "area": "storage",
       "owner": "mochi_storage",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Read/write Maki v2 JSONL and recover a truncated final record.",
       "upstream_refs": [
         "maki-storage/src/sessions.rs"
@@ -114,10 +123,9 @@
           "command": "pixi run sh -c 'mojo build -I src tests/session_test.mojo -o /tmp/mochi-session-test && /tmp/mochi-session-test'",
           "normalization": "Decoded records and metadata."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity storage.session.v2.truncated_tail",
-          "mojo_command": "pixi run parity storage.session.v2.truncated_tail",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity storage.session.v2.truncated_tail",
           "normalization": "Both pinned upstream oracle and Mojo behavior test must pass; deterministic semantic assertion."
         }
       }
@@ -126,7 +134,7 @@
       "id": "permissions.deny_precedence",
       "area": "permissions",
       "owner": "mochi_agent",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Deny rules override allow and yolo decisions.",
       "upstream_refs": [
         "maki-agent/src/permissions.rs:452-590"
@@ -140,10 +148,9 @@
           "command": "pixi run sh -c 'mojo build -I src tests/permissions_test.mojo -o /tmp/mochi-permissions-test && /tmp/mochi-permissions-test'",
           "normalization": "Permission effect and matched scopes."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity permissions.deny_precedence",
-          "mojo_command": "pixi run parity permissions.deny_precedence",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity permissions.deny_precedence",
           "normalization": "Both pinned upstream oracle and Mojo behavior test must pass; deterministic semantic assertion."
         }
       }
@@ -152,7 +159,7 @@
       "id": "permissions.session_generalization",
       "area": "permissions",
       "owner": "mochi_agent",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "A session approval for one bash command generalizes to the command family and is deduplicated.",
       "upstream_refs": [
         "maki-agent/src/permissions.rs:931-945"
@@ -163,13 +170,12 @@
       ],
       "checks": {
         "local": {
-          "command": "pixi run parity permissions.session_generalization",
+          "command": "pixi run test",
           "normalization": "Session rule scope and subsequent permission effect."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity permissions.session_generalization",
-          "mojo_command": "pixi run parity permissions.session_generalization",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity permissions.session_generalization",
           "normalization": "Pinned upstream and Mojo command-family generalization tests pass."
         }
       }
@@ -178,7 +184,7 @@
       "id": "storage.session.latest_cwd",
       "area": "storage",
       "owner": "mochi_storage",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Latest-session lookup selects the most recently saved session for the requested working directory.",
       "upstream_refs": [
         "maki-storage/src/sessions.rs:2592-2610"
@@ -189,13 +195,12 @@
       ],
       "checks": {
         "local": {
-          "command": "pixi run parity storage.session.latest_cwd",
+          "command": "pixi run test",
           "normalization": "Latest session identity, title, and CWD filter."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity storage.session.latest_cwd",
-          "mojo_command": "pixi run parity storage.session.latest_cwd",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity storage.session.latest_cwd",
           "normalization": "Pinned upstream and Mojo latest-for-CWD tests pass."
         }
       }
@@ -204,7 +209,7 @@
       "id": "provider.model.catalog_metadata",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Catalog metadata exposes GPT-5.6 Sol tier, context, output limit, pricing, thinking, and vision capabilities.",
       "upstream_refs": [
         "maki-providers/src/providers/openai/mod.rs:58-72"
@@ -215,13 +220,12 @@
       ],
       "checks": {
         "local": {
-          "command": "pixi run parity provider.model.catalog_metadata",
+          "command": "pixi run test",
           "normalization": "Exact model metadata values."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity provider.model.catalog_metadata",
-          "mojo_command": "pixi run parity provider.model.catalog_metadata",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity provider.model.catalog_metadata",
           "normalization": "Pinned upstream and Mojo GPT-5.6 Sol metadata tests pass."
         }
       }
@@ -230,7 +234,7 @@
       "id": "provider.anthropic.messages.streaming",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Incremental Anthropic Messages SSE assembles text, thinking, tools, usage, and stop reasons across arbitrary chunks.",
       "upstream_refs": [
         "maki-providers/src/providers/anthropic/shared.rs:241-374",
@@ -242,13 +246,12 @@
       ],
       "checks": {
         "local": {
-          "command": "pixi run parity provider.anthropic.messages.streaming",
+          "command": "pixi run test",
           "normalization": "Text, tool input, thinking signature, usage, and stop reason."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity provider.anthropic.messages.streaming",
-          "mojo_command": "pixi run parity provider.anthropic.messages.streaming",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity provider.anthropic.messages.streaming",
           "normalization": "Pinned upstream and Mojo deterministic Anthropic SSE tests pass."
         }
       }
@@ -257,7 +260,7 @@
       "id": "provider.google.generate.streaming",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Incremental Gemini GenerateContent SSE assembles text, thinking, function calls, usage/cache counts, and stop reasons.",
       "upstream_refs": [
         "maki-providers/src/providers/google.rs:571-665",
@@ -269,13 +272,12 @@
       ],
       "checks": {
         "local": {
-          "command": "pixi run parity provider.google.generate.streaming",
+          "command": "pixi run test",
           "normalization": "Text, tool arguments/IDs, thinking signature, usage/cache tokens, and stop reason."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity provider.google.generate.streaming",
-          "mojo_command": "pixi run parity provider.google.generate.streaming",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity provider.google.generate.streaming",
           "normalization": "Pinned upstream and Mojo deterministic Gemini SSE tests pass."
         }
       }
@@ -284,7 +286,7 @@
       "id": "mcp.streamable_http.basic",
       "area": "mcp",
       "owner": "mochi_mcp",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "MCP initialize/list/call over stdio and Streamable HTTP with JSON/SSE.",
       "upstream_refs": [
         "maki-agent/src/mcp"
@@ -298,10 +300,9 @@
           "command": "pixi run sh -c 'mojo build -I src tests/mcp_test.mojo -o /tmp/mochi-mcp-test && /tmp/mochi-mcp-test'",
           "normalization": "JSON-RPC envelopes/results."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity mcp.streamable_http.basic",
-          "mojo_command": "pixi run parity mcp.streamable_http.basic",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity mcp.streamable_http.basic",
           "normalization": "Pinned upstream JSON-RPC codecs and negotiated HTTP protocol version pass with Mojo stdio, JSON/SSE HTTP, lifecycle, refresh, and high-level client tests."
         }
       }
@@ -310,7 +311,7 @@
       "id": "extension.executable.lifecycle",
       "area": "extensions",
       "owner": "mochi_extension",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Mojo executable extension handshake/register/invoke/shutdown lifecycle.",
       "upstream_refs": [
         "maki-lua/src/loader.rs",
@@ -325,10 +326,9 @@
           "command": "pixi run sh -c 'mojo build -I src tests/plugin_test.mojo -o /tmp/mochi-plugin-test && /tmp/mochi-plugin-test'",
           "normalization": "Protocol state and errors."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity extension.executable.lifecycle",
-          "mojo_command": "pixi run parity extension.executable.lifecycle",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity extension.executable.lifecycle",
           "normalization": "Pinned upstream load/register/shutdown/reload lifecycle tests pass with Mojo executable handshake, registration, invocation, cancellation, reconnect, stale-route replacement, commands, and prompt hints."
         }
       }
@@ -337,7 +337,7 @@
       "id": "contracts.domain.adt",
       "area": "core",
       "owner": "mochi_core",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Canonical provider-neutral content, message, usage, model, and error contracts compile and preserve tagged variants.",
       "upstream_refs": [
         "maki-providers/src/types.rs",
@@ -352,10 +352,9 @@
           "command": "pixi run test",
           "normalization": "Exact deterministic contract assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity contracts.domain.adt",
-          "mojo_command": "pixi run parity contracts.domain.adt",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity contracts.domain.adt",
           "normalization": "Pinned upstream image/content, backward-compatible message kind, and typed retryability tests pass with Mojo tagged ADT and golden-codec tests."
         }
       }
@@ -364,7 +363,7 @@
       "id": "contracts.provider.fake",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Provider request/event/cancellation contract compiles against a deterministic FIFO fake.",
       "upstream_refs": [
         "maki-providers/src/types.rs",
@@ -379,10 +378,9 @@
           "command": "pixi run test",
           "normalization": "Exact deterministic contract assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity contracts.provider.fake",
-          "mojo_command": "pixi run parity contracts.provider.fake",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity contracts.provider.fake",
           "normalization": "Pinned upstream request-option clamping and deterministic queued provider turn tests pass with Mojo FIFO request capture, event ordering, typed errors, cancellation, model listing, and golden codecs."
         }
       }
@@ -391,7 +389,7 @@
       "id": "contracts.invocation.fake",
       "area": "tools",
       "owner": "mochi_tools",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Unified invocation lifecycle, audience, cancellation, rich result, and bounded trace contract compiles against a deterministic fake.",
       "upstream_refs": [
         "maki-agent/src/tools/registry.rs",
@@ -406,10 +404,9 @@
           "command": "pixi run test",
           "normalization": "Exact deterministic contract assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity contracts.invocation.fake",
-          "mojo_command": "pixi run parity contracts.invocation.fake",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity contracts.invocation.fake",
           "normalization": "Pinned upstream audience filtering and rich tool-result adaptation pass with Mojo source/audience flags, FIFO dispatch, rejection, cancellation, bounded traces, and golden codecs."
         }
       }
@@ -418,7 +415,7 @@
       "id": "contracts.storage.codecs",
       "area": "storage",
       "owner": "mochi_storage",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Storage paths, IDs, session references, and auth codecs have deterministic golden checks.",
       "upstream_refs": [
         "maki-storage/src/id.rs",
@@ -434,10 +431,9 @@
           "command": "pixi run test",
           "normalization": "Exact deterministic contract assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity contracts.storage.codecs",
-          "mojo_command": "pixi run parity contracts.storage.codecs",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity contracts.storage.codecs",
           "normalization": "Pinned upstream base58 UUID, raw SessionRef spelling, and MCP auth persistence pass with Mojo XDG/legacy paths, IDs, refs, OAuth/auth codecs, and golden checks."
         }
       }
@@ -446,7 +442,7 @@
       "id": "contracts.extension.v1",
       "area": "extensions",
       "owner": "mochi_extension",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Executable extension v1 capabilities and bidirectional envelopes have golden codecs and bounded session behavior.",
       "upstream_refs": [
         "maki-lua/src/loader.rs",
@@ -461,10 +457,9 @@
           "command": "pixi run test",
           "normalization": "Exact deterministic contract assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity contracts.extension.v1",
-          "mojo_command": "pixi run parity contracts.extension.v1",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity contracts.extension.v1",
           "normalization": "Pinned upstream bounded shutdown, reload, and route replacement pass with Mojo capability/envelope codecs, ordering, backpressure, cancellation, ownership, and UI negotiation."
         }
       }
@@ -473,7 +468,7 @@
       "id": "contracts.ui.transcript.v1",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Terminal-independent reducer emits a versioned deterministic transcript.",
       "upstream_refs": [
         "maki-ui/src/app/tests.rs",
@@ -488,10 +483,9 @@
           "command": "pixi run test",
           "normalization": "Exact deterministic contract assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity contracts.ui.transcript.v1",
-          "mojo_command": "pixi run parity contracts.ui.transcript.v1",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity contracts.ui.transcript.v1",
           "normalization": "Pinned upstream reducer command routing/navigation pass with Mojo deterministic versioned event/action/view transcript and golden validation."
         }
       }
@@ -500,7 +494,7 @@
       "id": "ui.command.catalog",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "The interactive command catalog, descriptions, fuzzy matching, completion, and help output track upstream built-ins.",
       "upstream_refs": [
         "maki-ui/src/components/command.rs:20-117",
@@ -516,10 +510,9 @@
           "command": "pixi run test",
           "normalization": "Exact built-in order, descriptions, fuzzy result, and help-line assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity ui.command.catalog",
-          "mojo_command": "pixi run parity ui.command.catalog",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.command.catalog",
           "normalization": "Upstream catalog/filter/navigation/fuzzy-confirm/argument-count/noncommand fixtures and the Mojo UI suite must pass."
         }
       }
@@ -528,7 +521,7 @@
       "id": "ui.picker.filter_navigation",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Generic pickers support fuzzy filtering, no-match state, wrapped navigation, and clamped page movement.",
       "upstream_refs": [
         "maki-ui/src/components/list_picker.rs:104-225",
@@ -543,10 +536,9 @@
           "command": "pixi run test",
           "normalization": "Filtered item identities, selected original index, no-match rendering, wrap and page boundaries."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity ui.picker.filter_navigation",
-          "mojo_command": "pixi run parity ui.picker.filter_navigation",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.picker.filter_navigation",
           "normalization": "Pinned upstream list-picker filtering/navigation tests and Mojo reducer tests pass."
         }
       }
@@ -555,7 +547,7 @@
       "id": "ui.mouse.selection",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Mouse selection uses document-space positions, overlay-first zones, clamped drags, edge-scroll direction, and pending-copy lifecycle.",
       "upstream_refs": [
         "maki-ui/src/selection.rs",
@@ -571,10 +563,9 @@
           "command": "pixi run test",
           "normalization": "Exact selection projection, zone priority, drag clamping, edge scroll, and pending-copy assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity ui.mouse.selection",
-          "mojo_command": "pixi run parity ui.mouse.selection",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.mouse.selection",
           "normalization": "Pinned upstream mouse/selection tests and Mojo reducer tests pass."
         }
       }
@@ -583,7 +574,7 @@
         "id": "ui.terminal.sgr_mouse",
         "area": "ui",
         "owner": "mochi_ui",
-        "status": "parity",
+        "status": "paired_independent",
         "description": "Raw terminal input enables drag-capable SGR mouse reporting and decodes zero-based press, drag, release, and wheel events in editor and search modes.",
         "upstream_refs": [
           "maki-ui/src/terminal.rs",
@@ -600,10 +591,9 @@
             "command": "pixi run test",
             "normalization": "Exact SGR press, drag, release, wheel, malformed-input, and coordinate-conversion assertions."
           },
-          "differential": {
-            "status": "parity",
-            "upstream_command": "pixi run parity ui.terminal.sgr_mouse",
-            "mojo_command": "pixi run parity ui.terminal.sgr_mouse",
+          "paired_independent": {
+            "status": "paired_independent",
+            "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.terminal.sgr_mouse",
             "normalization": "Pinned upstream mouse lifecycle tests and Mojo SGR decoder tests pass."
           }
         }
@@ -612,7 +602,7 @@
         "id": "ui.overlay.modal_gating",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Modal overlays consume background input, gate mouse selection to overlay zones, and close without mutating the editor.",
       "upstream_refs": [
         "maki-ui/src/components/mod.rs:45-58",
@@ -629,10 +619,9 @@
           "command": "pixi run test",
           "normalization": "Exact modal input consumption, mouse zone gating, and close-state assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity ui.overlay.modal_gating",
-          "mojo_command": "pixi run parity ui.overlay.modal_gating",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.overlay.modal_gating",
           "normalization": "Pinned upstream modal gating tests and Mojo reducer tests pass."
         }
       }
@@ -641,7 +630,7 @@
       "id": "ui.search.escape_restore",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Closing transcript search with Escape restores the saved scroll offset and auto-scroll mode.",
       "upstream_refs": [
         "maki-ui/src/app/tests.rs:2976-2988",
@@ -657,10 +646,9 @@
           "command": "pixi run test",
           "normalization": "Exact reducer state assertions for manual and automatic scroll restoration."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity ui.search.escape_restore",
-          "mojo_command": "pixi run parity ui.search.escape_restore",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.search.escape_restore",
           "normalization": "Both upstream search escape cases and the Mojo reducer suite must pass."
         }
       }
@@ -669,7 +657,7 @@
       "id": "ui.search.navigation",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Transcript search routes arrow navigation, wraps matches, selects the active result, and closes safely without matches.",
       "upstream_refs": [
         "maki-ui/src/components/search_modal.rs:92-136",
@@ -686,10 +674,9 @@
           "command": "pixi run test",
           "normalization": "Exact reducer assertions and native terminal compilation."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity ui.search.navigation",
-          "mojo_command": "pixi run parity ui.search.navigation",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.search.navigation",
           "normalization": "Upstream navigation, selection, and no-match closure tests plus the Mojo UI suite must pass."
         }
       }
@@ -698,7 +685,7 @@
       "id": "ui.search.display",
       "area": "ui",
       "owner": "mochi_ui",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Transcript search indexes upstream-style role prefixes and previews the matched line from multiline messages.",
       "upstream_refs": [
         "maki-ui/src/components/search_modal.rs:288-304",
@@ -714,10 +701,9 @@
           "command": "pixi run test",
           "normalization": "Exact role-prefix matching and matched-line preview assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity ui.search.display",
-          "mojo_command": "pixi run parity ui.search.display",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.search.display",
           "normalization": "Upstream fuzzy ordering, matched-line, and role-prefix fixtures plus the Mojo UI suite must pass."
         }
       }
@@ -726,7 +712,7 @@
       "id": "cancellation.http.active",
       "area": "http",
       "owner": "mochi_http",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Cancellation aborts an active production Floki/curl transfer against a native local HTTP fixture.",
       "upstream_refs": [
         "maki-agent/src/cancel.rs",
@@ -741,10 +727,9 @@
           "command": "pixi run test",
           "normalization": "Exact deterministic contract assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity cancellation.http.active",
-          "mojo_command": "pixi run parity cancellation.http.active",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity cancellation.http.active",
           "normalization": "Pinned upstream concurrent and hierarchical cancellation pass with Mojo interruption of an active production Floki/curl transfer."
         }
       }
@@ -753,7 +738,7 @@
       "id": "cancellation.process.active",
       "area": "extensions",
       "owner": "mochi_extension",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Cancellation terminates and reaps an active owned child process.",
       "upstream_refs": [
         "maki-agent/src/cancel.rs",
@@ -768,10 +753,9 @@
           "command": "pixi run test",
           "normalization": "Exact deterministic contract assertions."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity cancellation.process.active",
-          "mojo_command": "pixi run parity cancellation.process.active",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity cancellation.process.active",
           "normalization": "Pinned upstream runtime shutdown and cancel-all behavior pass with Mojo termination and reaping of an active owned executable child."
         }
       }
@@ -780,7 +764,7 @@
       "id": "storage.session.resume_continue",
       "area": "storage",
       "owner": "mochi_storage",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Explicit session resume and latest-for-CWD continuation restore runtime history and persist subsequent turns.",
       "upstream_refs": [
         "src/cmd/tui.rs:191-210",
@@ -797,10 +781,9 @@
           "command": "pixi run test",
           "normalization": "CLI selection, restored ordered messages, model, usage, title, and CWD latest index."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity storage.session.resume_continue",
-          "mojo_command": "pixi run parity storage.session.resume_continue",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity storage.session.resume_continue",
           "normalization": "Pinned upstream full and incremental session round trips plus latest-for-CWD pass with Mojo CLI selection, ordered history restoration, resume-without-duplicate-user-message, and subsequent persistence."
         }
       }
@@ -809,7 +792,7 @@
       "id": "provider.openai.contract_adapter",
       "area": "providers",
       "owner": "mochi_provider",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "The live OpenAI-compatible parser and transport implement the frozen provider request/event/response contract through an adapter.",
       "upstream_refs": [
         "maki-providers/src/providers/openai_compat.rs"
@@ -823,10 +806,9 @@
           "command": "pixi run test",
           "normalization": "Wire request, ordered canonical events, final message/tool/usage/stop response, and pre-cancellation."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity provider.openai.contract_adapter",
-          "mojo_command": "pixi run parity provider.openai.contract_adapter",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity provider.openai.contract_adapter",
           "normalization": "Pinned upstream message/tool conversion and parallel streamed tool assembly pass with Mojo canonical request/event/response adapter, ordered incremental transport parsing, and pre-cancellation."
         }
       }
@@ -835,7 +817,7 @@
       "id": "agent.system_prompt.instructions",
       "area": "agent",
       "owner": "mochi_agent",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "System prompt includes environment plus root-to-CWD project/local/global instruction files without persisting the synthetic system message.",
       "upstream_refs": [
         "maki-agent/src/agent/instructions.rs:47-175"
@@ -851,10 +833,9 @@
           "command": "pixi run test",
           "normalization": "Instruction discovery order, environment fields, and provider-only synthetic system message."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity agent.system_prompt.instructions",
-          "mojo_command": "pixi run parity agent.system_prompt.instructions",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity agent.system_prompt.instructions",
           "normalization": "Pinned upstream project/local/global and ancestor instruction discovery pass with Mojo root-to-CWD ordering, environment fields, synthetic provider-only prompt injection, and persistence exclusion."
         }
       }
@@ -863,7 +844,7 @@
       "id": "acp.v1.session.lifecycle",
       "area": "acp",
       "owner": "mochi_acp",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "ACP v1 NDJSON JSON-RPC initializes and models session new/load/prompt/cancel, updates, and permission requests.",
       "upstream_refs": [
         "maki-acp/src/server.rs"
@@ -877,10 +858,9 @@
           "command": "pixi run test",
           "normalization": "Exact JSON-RPC envelopes, protocol version, lifecycle errors, updates, and permission requests."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity acp.v1.session.lifecycle",
-          "mojo_command": "pixi run parity acp.v1.session.lifecycle",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity acp.v1.session.lifecycle",
           "normalization": "Pinned upstream request correlation, permission cancellation, history load, and ordered replay pass with Mojo runtime-backed initialize/new/load/prompt/cancel, updates, permissions, and session persistence."
         }
       }
@@ -889,7 +869,7 @@
       "id": "config.layered.merge",
       "area": "config",
       "owner": "mochi_config",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Global and project declarative configurations recursively merge with project precedence and typed validation.",
       "upstream_refs": [
         "maki-config/src/lib.rs"
@@ -903,10 +883,9 @@
           "command": "pixi run test",
           "normalization": "Recursive object merge and typed field validation."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity config.layered.merge",
-          "mojo_command": "pixi run parity config.layered.merge",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity config.layered.merge",
           "normalization": "Pinned upstream field-level, global/project permission, and plugin-key overlay behavior pass with Mojo recursive declarative merge and typed validation."
         }
       }
@@ -915,7 +894,7 @@
       "id": "storage.workspace.stores",
       "area": "storage",
       "owner": "mochi_storage",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Bounded input history, project-scoped Markdown note/plan storage, preferences, and deterministic project IDs persist without Python or Lua.",
       "upstream_refs": [
         "maki-storage",
@@ -930,10 +909,9 @@
           "command": "pixi run test",
           "normalization": "History dedup/bounds, safe note names, preference JSON, deterministic project scope."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity storage.workspace.stores",
-          "mojo_command": "pixi run parity storage.workspace.stores",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity storage.workspace.stores",
           "normalization": "Pinned upstream bounded/deduplicated history, plan location, and preference persistence pass with Mojo project-scoped note/plan stores, safe names, JSON preferences, and deterministic project IDs."
         }
       }
@@ -942,7 +920,7 @@
       "id": "ops.logging.telemetry",
       "area": "operations",
       "owner": "mochi_ops",
-      "status": "parity",
+      "status": "paired_independent",
       "description": "Structured JSONL logging rotates bounded backups and telemetry events have deterministic codecs.",
       "upstream_refs": [
         "maki-otel"
@@ -956,13 +934,380 @@
           "command": "pixi run test",
           "normalization": "JSONL fields, rotation, telemetry codec."
         },
-        "differential": {
-          "status": "parity",
-          "upstream_command": "pixi run parity ops.logging.telemetry",
-          "mojo_command": "pixi run parity ops.logging.telemetry",
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ops.logging.telemetry",
           "normalization": "Pinned upstream telemetry buffering, shutdown flush, batching, and defaults pass with Mojo bounded rotating structured JSONL and deterministic telemetry event codecs."
         }
       }
+    },
+    {
+      "id": "ui.command.request_modes",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "paired_independent",
+      "description": "Selected thinking, fast, and workflow request-mode transitions have corresponding upstream and Mochi assertions.",
+      "upstream_refs": [
+        "maki-providers/src/types.rs:ThinkingConfig",
+        "maki-ui/src/app/tests.rs:thinking_toggle_cycles_off_adaptive",
+        "maki-ui/src/app/tests.rs:fast_toggle_on_off_on_opus",
+        "maki-ui/src/app/tests.rs:workflow_toggle_flows_into_agent_input"
+      ],
+      "mojo_refs": [
+        "src/mochi/provider_contract.mojo:ThinkingConfig",
+        "src/mochi/runtime.mojo:Runtime.set_thinking",
+        "tests/provider_contract_test.mojo",
+        "tests/runtime_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Thinking configuration parsing plus selected fast/workflow runtime transitions."
+        },
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.command.request_modes",
+          "normalization": "Runs Maki thinking/fast/workflow assertions and Mochi provider-contract/runtime assertions independently; no event transcript is compared."
+        }
+      }
+    },
+    {
+      "id": "ui.input.history",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "paired_independent",
+      "description": "Input history navigation preserves the draft and clamps at both ends in corresponding upstream and Mochi assertions.",
+      "upstream_refs": [
+        "maki-ui/src/components/input.rs:InputBox::history_up",
+        "maki-ui/src/components/input.rs:InputBox::history_down",
+        "maki-ui/src/components/input.rs:tests::history"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo:UiEvent.history_up",
+        "src/mochi/ui.mojo:UiEvent.history_down",
+        "src/mochi/ui.mojo:UiReducer.reduce",
+        "tests/ui_test.mojo:test_history_navigation_preserves_draft_and_bounds"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "History index, restored draft, and boundary behavior."
+        },
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.input.history",
+          "normalization": "Runs each implementation's history-navigation assertion independently; terminal events are not replayed through a shared oracle."
+        }
+      }
+    },
+    {
+      "id": "ui.input.word_aware_paste",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "paired_independent",
+      "description": "Selected word-boundary paste spacing has corresponding upstream and Mochi assertions.",
+      "upstream_refs": [
+        "maki-ui/src/components/input.rs:InputBox::handle_paste_with_spaces",
+        "maki-ui/src/components/input.rs:tests::paste_with_spaces_empty_line"
+      ],
+      "mojo_refs": [
+        "src/mochi/ui.mojo:UiEvent.paste_spaced",
+        "src/mochi/ui.mojo:UiReducer.reduce",
+        "tests/ui_test.mojo:test_paste_adds_spaces_at_word_boundaries"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Resulting draft around selected paste boundaries."
+        },
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ui.input.word_aware_paste",
+          "normalization": "Runs one Maki empty-line paste assertion and Mochi word-boundary reducer assertions independently; it is not a shared paste corpus."
+        }
+      }
+    },
+    {
+      "id": "mcp.oauth.discovery_pkce",
+      "area": "mcp",
+      "owner": "mochi_mcp",
+      "status": "paired_independent",
+      "description": "Selected OAuth discovery URL and PKCE primitives have corresponding upstream and Mochi assertions.",
+      "upstream_refs": [
+        "maki-agent/src/mcp/oauth/discovery.rs:tests::server_origin_extracts_origin",
+        "maki-agent/src/mcp/oauth/discovery.rs:tests::resource_metadata_url_candidates",
+        "maki-agent/src/mcp/oauth/pkce.rs:tests::rfc7636_verifier_length_and_uniqueness",
+        "maki-storage/src/auth.rs:tests::mcp_auth_round_trip"
+      ],
+      "mojo_refs": [
+        "src/mochi/mcp.mojo:mcp_well_known_url",
+        "src/mochi/mcp.mojo:generate_mcp_pkce",
+        "src/mochi/mcp.mojo:mcp_pkce_challenge",
+        "tests/mcp_test.mojo:test_mcp_oauth_discovery_primitives",
+        "tests/mcp_test.mojo:test_mcp_oauth_pkce",
+        "tests/storage_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Well-known URL candidates, verifier/challenge properties, and stored auth codec."
+        },
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity mcp.oauth.discovery_pkce",
+          "normalization": "Runs selected discovery, PKCE, and storage assertions independently; it does not compare a complete OAuth flow transcript."
+        }
+      }
+    },
+    {
+      "id": "ops.version.newer",
+      "area": "operations",
+      "owner": "mochi_ops",
+      "status": "paired_independent",
+      "description": "Selected newer-version decisions have corresponding upstream and Mochi assertions.",
+      "upstream_refs": [
+        "maki-storage/src/version.rs:is_newer",
+        "maki-storage/src/version.rs:tests::is_newer_cases"
+      ],
+      "mojo_refs": [
+        "src/mochi/ops.mojo:is_newer_version",
+        "tests/ops_test.mojo"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run test",
+          "normalization": "Boolean newer-version decisions for selected stable and invalid inputs."
+        },
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity ops.version.newer",
+          "normalization": "Runs each implementation's selected version cases independently; no shared version corpus is compared."
+        }
+      }
+    },
+    {
+      "id": "extensions.lua.plugin_compatibility",
+      "area": "extensions",
+      "owner": "mochi_extensions",
+      "status": "missing",
+      "description": "Run Maki Luau plugins, including the bundled plugin set, without rewriting them for another host protocol.",
+      "gap": "Maki embeds a sandboxed Luau runtime and exposes the maki API; Mochi only launches external executables speaking mochi.plugin JSON-RPC.",
+      "upstream_refs": [
+        "maki-lua/src/loader.rs:PluginHost::load_builtins",
+        "maki-lua/src/runtime.rs:LuaRuntime",
+        "maki-lua/src/api/mod.rs:create_maki_global",
+        "plugins/"
+      ],
+      "mojo_refs": [
+        "src/mochi/plugin.mojo:PluginClient",
+        "src/mochi/plugin.mojo:PluginProtocol",
+        "src/mochi/extension_contract.mojo:ExtensionSession",
+        "src/mochi/cli.mojo:CliConfig.plugins"
+      ],
+      "parity_criteria": [
+        "Load unchanged Maki global, project, package, and bundled Luau plugins.",
+        "Match the maki API surface, sandbox, grants, reload, cancellation, async, tool, command, keymap, and UI callbacks.",
+        "Pass upstream plugin-host and bundled-plugin behavior fixtures through the Mochi runtime."
+      ],
+      "verification": "No executable parity check exists; status is based on source inspection at the pinned revisions."
+    },
+    {
+      "id": "config.lua.layered_runtime",
+      "area": "config",
+      "owner": "mochi_config",
+      "status": "missing",
+      "description": "Evaluate Maki's global and project init.lua configuration and maki.setup tables with the same layering, validation, reload, and fallback behavior.",
+      "gap": "Mochi loads declarative JSON objects through AppConfig; it does not execute init.lua or implement maki.setup, package declarations, plugin options, or last-good Lua reload fallback.",
+      "upstream_refs": [
+        "maki-lua/src/loader.rs:PluginHost::load_init_files",
+        "maki-lua/src/api/util/setup.rs:create_setup_fn",
+        "maki-config/src/lib.rs:RawConfig::merge",
+        "src/cmd/tui.rs:load_config"
+      ],
+      "mojo_refs": [
+        "src/mochi/config.mojo:AppConfig",
+        "src/mochi/config.mojo:load_layered_config",
+        "src/mochi/main.mojo:main"
+      ],
+      "parity_criteria": [
+        "Execute the same global then project init.lua scopes and accept the same maki.setup schema.",
+        "Produce equivalent merged config, plugin/package options, permission inputs, diagnostics, and reload fallback.",
+        "Honor Maki's --no-plugins recovery semantics while retaining bundled tools."
+      ],
+      "verification": "No executable parity check exists; config.layered.merge covers only Mochi's declarative merge, not Lua configuration."
+    },
+    {
+      "id": "tools.builtin.full_catalog",
+      "area": "tools",
+      "owner": "mochi_tools",
+      "status": "partial",
+      "description": "Expose the complete Maki built-in tool catalog with matching schemas, defaults, output limits, permissions, and execution semantics.",
+      "gap": "Maki documents 21 built-in tools (20 enabled by default and insert_lines opt-in); Mochi standard_tool_definitions registers seven: read, write, edit, list, bash, code_execution, and task.",
+      "upstream_refs": [
+        "maki-config/src/lib.rs:DEFAULT_BUILTINS",
+        "plugins/edit/init.lua:register_tool_if",
+        "site/docs/content/tools/_index.md"
+      ],
+      "mojo_refs": [
+        "src/mochi/cli.mojo:standard_tool_definitions",
+        "src/mochi/tools.mojo:ToolRegistry.prepare",
+        "src/mochi/tools.mojo:ToolRegistry.execute"
+      ],
+      "parity_criteria": [
+        "Provide all 21 documented tool names with byte-compatible input schemas and default enablement.",
+        "Match Maki output, truncation, annotations, permission scopes, cancellation, and side effects for each tool.",
+        "Cover batch concurrency and the Maki code_execution interpreter policy, not only similarly named commands."
+      ],
+      "verification": "No full-catalog check exists; existing invocation and runtime tests exercise only Mochi's seven-tool subset."
+    },
+    {
+      "id": "sdk.stream_json.bidirectional",
+      "area": "cli_sdk",
+      "owner": "mochi_cli",
+      "status": "partial",
+      "description": "Implement Maki's Claude-Code-compatible, bidirectional stream-json SDK protocol.",
+      "gap": "Maki accepts --input-format stream-json and continuously exchanges system, user, assistant, result, stream-event, and control messages; Mochi accepts one prompt and emits one result object for both json and stream-json output formats.",
+      "upstream_refs": [
+        "src/cli.rs:Cli.input_format",
+        "src/sdk_mode.rs:SdkWriter",
+        "src/sdk_mode.rs:run"
+      ],
+      "mojo_refs": [
+        "src/mochi/cli.mojo:parse_args",
+        "src/mochi/cli.mojo:read_stdin",
+        "src/mochi/main.mojo:_print_result"
+      ],
+      "parity_criteria": [
+        "Accept the same stream-json input/control message shapes and process multiple turns on one process.",
+        "Emit the same ordered system, assistant, tool, stream-event, control-response, and result envelopes with compatible identifiers.",
+        "Compare normalized transcripts from shared protocol fixtures in both implementations."
+      ],
+      "verification": "No bidirectional SDK oracle exists; --output-format stream-json currently shares Mochi's one-shot JSON result path."
+    },
+    {
+      "id": "ui.live.concurrent_sessions",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "partial",
+      "description": "Match Maki's live full-screen TUI and multi-session concurrency, including background progress and focus switching.",
+      "gap": "Maki supervises one App and agent runtime per live session and drains background events while only the focused session renders; Mochi's line-oriented _interactive loop owns one Session and performs prompt runs synchronously.",
+      "upstream_refs": [
+        "maki-ui/src/event_loop.rs:EventLoop",
+        "maki-ui/src/event_loop.rs:SessionRuntime",
+        "maki-ui/src/app/session.rs:App::checkpoint",
+        "plugins/sessions/init.lua"
+      ],
+      "mojo_refs": [
+        "src/mochi/main.mojo:_interactive",
+        "src/mochi/session.mojo:Session",
+        "src/mochi/ui.mojo:UiState"
+      ],
+      "parity_criteria": [
+        "Keep multiple agent sessions live concurrently and drain events, queues, tools, cancellation, and persistence while backgrounded.",
+        "Match new, focus, list, rename, delete, notifications, status, and per-session permission isolation.",
+        "Exercise the real terminal event loop with deterministic multi-session schedules."
+      ],
+      "verification": "No live terminal or concurrency oracle exists; current UI tests cover reducer-level behaviors only."
+    },
+    {
+      "id": "provider.matrix.images",
+      "area": "providers",
+      "owner": "mochi_provider",
+      "status": "partial",
+      "description": "Match Maki's provider matrix, native protocol adapters, model metadata, authentication, request options, and image inputs.",
+      "gap": "Maki has 15 ProviderKind variants plus dynamic/custom routing and vision adaptation. Mochi has native OpenAI/Anthropic/Gemini/Copilot paths and OpenAI-compatible aliases, but no demonstrated matrix equivalence; _legacy_messages rejects images and the Anthropic/Gemini body builders skip image blocks.",
+      "upstream_refs": [
+        "maki-providers/src/provider.rs:ProviderKind",
+        "maki-providers/src/providers/",
+        "maki-providers/src/types.rs:adapt_images_for_model",
+        "maki-providers/src/types.rs:ContentBlock::Image"
+      ],
+      "mojo_refs": [
+        "src/mochi/cli.mojo:OPENAI_COMPATIBLE_PROVIDERS",
+        "src/mochi/provider.mojo:builtin_provider_registry",
+        "src/mochi/provider.mojo:_anthropic_body",
+        "src/mochi/provider.mojo:_gemini_body",
+        "src/mochi/provider.mojo:_legacy_messages",
+        "src/mochi/domain.mojo:ContentBlock.image"
+      ],
+      "parity_criteria": [
+        "Cover every Maki provider kind and custom/dynamic route with equivalent endpoint, auth, headers, retry, timeout, streaming, and option semantics.",
+        "Match model catalogs, tier selection, context/output limits, pricing, thinking, fast mode, and vision capability handling.",
+        "Round-trip image inputs through every supported native protocol and apply the same text-only fallback."
+      ],
+      "verification": "Existing paired checks cover selected parser and contract fixtures, not the provider matrix or image transport."
+    },
+    {
+      "id": "storage.session.incremental_durability",
+      "area": "storage",
+      "owner": "mochi_storage",
+      "status": "partial",
+      "description": "Persist live sessions with Maki's coalesced O(delta) JSONL appends, cursor validation, rollback, retry, and shutdown draining.",
+      "gap": "Maki StorageWriter maintains SessionLog cursors and appends deltas off the UI thread; Mochi SessionStore.save serializes every record and atomically rewrites the whole JSONL file on each save.",
+      "upstream_refs": [
+        "maki-storage/src/sessions.rs:SessionLog",
+        "maki-storage/src/sessions.rs:SessionLog::append",
+        "maki-ui/src/storage_writer.rs:StorageWriter",
+        "maki-ui/src/storage_writer.rs:Writer::write"
+      ],
+      "mojo_refs": [
+        "src/mochi/session.mojo:SessionStore.save",
+        "src/mochi/session.mojo:_atomic_write"
+      ],
+      "parity_criteria": [
+        "Append only new messages, tool outputs, subagent messages, and changed metadata while cursors remain valid.",
+        "Detect divergence or external truncation, roll back torn appends, rewrite safely, retry failures, and drain queued writes at shutdown.",
+        "Demonstrate crash recovery and bounded write amplification under shared mutation traces."
+      ],
+      "verification": "Existing session checks cover codec and truncated-tail reads, not incremental writer durability or write amplification."
+    },
+    {
+      "id": "permissions.shell_ast.scopes",
+      "area": "permissions",
+      "owner": "mochi_tools",
+      "status": "missing",
+      "description": "Derive bash permission scopes from a parsed shell AST and fail closed for complex or invalid commands.",
+      "gap": "Maki's bash plugin uses a tree-sitter Bash parser to collect simple command segments and force prompts for complex/error trees; Mochi ToolRegistry.prepare treats the entire command string as one scope and generalizes it by splitting on spaces.",
+      "upstream_refs": [
+        "plugins/bash/init.lua:permission_scopes",
+        "maki-lua/src/api/tool.rs:LuaToolInvocation::permission_scopes",
+        "maki-agent/src/agent/tool_dispatch.rs:enforce_permission"
+      ],
+      "mojo_refs": [
+        "src/mochi/tools.mojo:ToolRegistry.prepare",
+        "src/mochi/permissions.mojo:PermissionManager.check",
+        "src/mochi/permissions.mojo:_generalize_allow_scope"
+      ],
+      "parity_criteria": [
+        "Parse shell syntax into the same permission segments for simple pipelines and command lists.",
+        "Force a prompt on substitutions, redirects, complex constructs, parse errors, or unavailable parsers exactly where Maki does.",
+        "Compare scopes and decisions over a shared adversarial shell corpus."
+      ],
+      "verification": "No shell-AST check exists; deny precedence and session generalization tests do not cover scope extraction."
+    },
+    {
+      "id": "ui.cursor.ime.anchor",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "partial",
+      "description": "Place the real terminal cursor on the rendered input cell so display-width wrapping and IME preedit anchoring match current Maki.",
+      "gap": "Current Maki tracks the exact wrapped cursor cell, including wide characters, and calls Frame::set_cursor_position for macOS IME anchoring. Mochi _render_editor moves left by a codepoint count on a single printed line and does not calculate wrapped display-cell coordinates.",
+      "upstream_refs": [
+        "maki-ui/src/components/input.rs:InputBox::view",
+        "maki-ui/src/components/input.rs:wrap_line",
+        "maki-ui/src/components/input.rs:overlay_cursor",
+        "maki-ui/src/text_buffer.rs:TextBuffer"
+      ],
+      "mojo_refs": [
+        "src/mochi/main.mojo:_render_editor",
+        "src/mochi/ui.mojo:UiState"
+      ],
+      "parity_criteria": [
+        "Compute cursor row and column in terminal display cells across wrapping, wide Unicode, combining text, and viewport changes.",
+        "Park the real terminal cursor on the visible cursor cell so macOS and other IMEs anchor preedit text correctly.",
+        "Verify cursor coordinates in a pseudo-terminal against shared width/wrap fixtures."
+      ],
+      "verification": "No cursor-position or IME check exists; current UI reducer tests do not observe the terminal cursor."
     }
   ]
 }

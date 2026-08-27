@@ -1,11 +1,19 @@
 from std.os import listdir, makedirs, remove, rmdir
-from std.testing import TestSuite, assert_equal, assert_true
+from std.os.path import exists
+from std.testing import (
+    TestSuite,
+    assert_equal,
+    assert_false,
+    assert_raises,
+    assert_true,
+)
 from mochi.json import JsonValue, parse_json
 from mochi.session import Session, SessionStore, message_from_json, message_to_json
 from mochi.types import Message, ToolCall, Usage
 
 
 comptime TEST_DIR = "/tmp/mochi-session-test"
+comptime OUTSIDE_FILE = "/tmp/mochi-session-escape.jsonl"
 
 
 def clean() raises:
@@ -49,6 +57,56 @@ def test_maki_v2_roundtrip() raises:
     var first = parse_json(String(open(store.path(session.id), "r").read().split("\n")[0]))
     assert_equal(first.get("t").string_value, "header")
     assert_equal(first.get("v").int_value, 2)
+
+
+def test_session_store_rejects_unsafe_ids_without_path_escape() raises:
+    clean()
+    try:
+        remove(OUTSIDE_FILE)
+    except:
+        pass
+    var store = SessionStore(TEST_DIR)
+    assert_equal(store.path("resume"), TEST_DIR + "/resume.jsonl")
+    assert_equal(store.path("acp-runtime"), TEST_DIR + "/acp-runtime.jsonl")
+    var unsafe_ids: List[String] = [
+        "",
+        ".",
+        "..",
+        "../mochi-session-escape",
+        "..\\mochi-session-escape",
+        "nested/session",
+        "nested\\session",
+        "nul" + chr(0) + "byte",
+        "line\nbreak",
+        "tab\tbreak",
+        "delete" + chr(127) + "control",
+    ]
+    for session_id in unsafe_ids:
+        with assert_raises():
+            _ = store.path(session_id)
+        with assert_raises():
+            _ = store.load(session_id)
+        var session = Session(session_id, "model", "/project", 1)
+        with assert_raises():
+            store.save(session)
+    assert_false(exists(OUTSIDE_FILE))
+
+
+def test_session_store_rejects_unsafe_id_in_saved_header() raises:
+    clean()
+    var store = SessionStore(TEST_DIR)
+    with open(TEST_DIR + "/safe.jsonl", "w") as file:
+        file.write(
+            '{"t":"header","v":2,"id":"../escape","model":"m","cwd":"/project","created_at":1}\n'
+        )
+    with assert_raises():
+        _ = store.load("safe")
+
+    with open(TEST_DIR + "/mismatched.jsonl", "w") as file:
+        file.write(
+            '{"t":"header","v":2,"id":"different","model":"m","cwd":"/project","created_at":1}\n'
+        )
+    assert_equal(len(store.list()), 0)
 
 
 def test_task_names_and_messages() raises:

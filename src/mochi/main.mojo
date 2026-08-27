@@ -260,7 +260,7 @@ def main() raises:
                 config.output_format,
             )
         else:
-            var history = InputHistory(paths.state + "/input_history")
+            var history = InputHistory(paths.state)
             history.load()
             var memories = NoteStore(
                 paths.state

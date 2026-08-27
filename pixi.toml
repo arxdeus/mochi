@@ -1,7 +1,7 @@
 [workspace]
 name = "mochi"
 version = "0.1.0"
-description = "Pure Mojo port of the Maki coding agent"
+description = "Mojo-based port of the Maki coding agent"
 channels = ["conda-forge", "https://conda.modular.com/max"]
 platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
 preview = ["pixi-build"]

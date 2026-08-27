@@ -356,7 +356,7 @@ def help_text() -> String:
        mochi update DOWNLOADED_FILE VERSION
        mochi rollback
 
-Pure Mojo AI coding agent.
+Mojo-based AI coding agent.
 
 Options:
   -h, --help                    Show this help

@@ -24,7 +24,7 @@ from mochi.provider_contract import (
     RequestOptions,
     ThinkingConfig,
 )
-from mochi.types import CancellationToken, ProviderEvent
+from mochi.types import CancellationToken, ProviderEvent, ToolCall
 from mochi.provider import (
     AnthropicProviderAdapterWithTransport,
     AnthropicProviderSpec,
@@ -38,6 +38,7 @@ from mochi.provider import (
     OpenAIProviderAdapterWithTransport,
     OpenAIOAuthCredentials,
     OpenAIStreamParser,
+    ProviderResult,
     ProviderRegistry,
     ProviderSpec,
     RetryState,
@@ -59,6 +60,7 @@ from mochi.provider import (
     form_encode,
     openai_device_login_with,
     refresh_openai_oauth_with,
+    _stream_response,
 )
 
 
@@ -304,11 +306,11 @@ def test_openai_sse_and_partial_tool_assembly() raises:
     var parser = OpenAIStreamParser()
     var chunk1 = (
         "data:"
-        ' {"choices":[{"delta":{"content":"hel","tool_calls":[{"index":0,"id":"call_","function":{"name":"wea","arguments":"{\\"city\\":"}}]}}]}\n\n'
+        ' {"choices":[{"delta":{"content":"hel","tool_calls":[{"index":0,"id":"call_1","function":{"name":"weather","arguments":"{\\"city\\":"}}]}}]}\n\n'
     )
     var chunk2 = (
         "data:"
-        ' {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"1","function":{"name":"ther","arguments":"\\"Paris\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}\n\ndata:'
+        ' {"choices":[{"delta":{"content":"lo","tool_calls":[{"index":0,"id":"call_final","function":{"name":"forecast","arguments":"\\"Paris\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}\n\ndata:'
         " [DONE]\n\n"
     )
     var events = parser.feed(chunk1)
@@ -316,10 +318,15 @@ def test_openai_sse_and_partial_tool_assembly() raises:
     for event in more:
         events.append(event.copy())
     assert_true(len(events) >= 5)
+    var tool_starts = 0
+    for event in events:
+        if event.kind == "tool_call_delta":
+            tool_starts += 1
+    assert_equal(tool_starts, 1)
     var calls = parser.tools.completed()
     assert_equal(len(calls), 1)
-    assert_equal(calls[0].id, "call_1")
-    assert_equal(calls[0].name, "weather")
+    assert_equal(calls[0].id, "call_final")
+    assert_equal(calls[0].name, "forecast")
     assert_equal(calls[0].arguments, '{"city":"Paris"}')
     assert_equal(parser.usage.input_tokens, 7)
     assert_equal(parser.usage.output_tokens, 3)
@@ -389,14 +396,49 @@ def test_http_response_headers_and_request_methods() raises:
 
 def test_tool_calls_can_arrive_out_of_order() raises:
     var assembler = ToolCallAssembler()
-    assembler.add(ToolCallDelta(1, "b", "second", "{}"))
-    assembler.add(ToolCallDelta(0, "a", "fir", "{"))
-    assembler.add(ToolCallDelta(0, "", "st", "}"))
+    _ = assembler.add(ToolCallDelta(1, "b", "second", "{}"))
+    _ = assembler.add(ToolCallDelta(0, "a", "first", "{"))
+    _ = assembler.add(ToolCallDelta(0, "a2", "", "}"))
     var calls = assembler.completed()
     assert_equal(len(calls), 2)
     assert_equal(calls[0].name, "first")
+    assert_equal(calls[0].id, "a2")
     assert_equal(calls[0].arguments, "{}")
     assert_equal(calls[1].id, "b")
+
+
+def test_tool_call_indices_are_bounded_without_allocation() raises:
+    var assembler = ToolCallAssembler()
+    assert_false(assembler.add(ToolCallDelta(-1, "negative", "read", "{}")))
+    assert_false(assembler.add(ToolCallDelta(512, "limit", "read", "{}")))
+    assert_false(
+        assembler.add(ToolCallDelta(1000000, "huge", "read", "{}"))
+    )
+    assert_equal(len(assembler.calls), 0)
+
+    var parser = OpenAIStreamParser()
+    _ = parser.feed(
+        'data: {"type":"response.output_item.done","output_index":512,"item":{"type":"function_call","call_id":"oversize","name":"read","arguments":"{}"}}\n\n'
+    )
+    assert_equal(len(parser.tools.calls), 0)
+
+
+def test_tool_call_placeholders_and_malformed_arguments() raises:
+    var assembler = ToolCallAssembler()
+    _ = assembler.add(ToolCallDelta(0, "", "", "{broken"))
+    var completed = assembler.completed()
+    assert_equal(completed[0].id, "maki_unnamed_0")
+    assert_equal(completed[0].name, "maki_unknown_tool")
+
+    var legacy = ProviderResult()
+    legacy.message.add_tool_call(ToolCall("", "", "{broken"))
+    var response = _stream_response(legacy)
+    var tool = response.message.content[1].copy()
+    assert_true(tool.is_tool_use())
+    assert_equal(tool.id, "maki_unnamed_0")
+    assert_equal(tool.name, "maki_unknown_tool")
+    assert_equal(tool.input.kind, JsonValue.OBJECT)
+    assert_equal(len(tool.input.object_keys), 0)
 
 
 def test_retry_and_key_rotation() raises:

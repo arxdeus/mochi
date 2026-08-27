@@ -1,7 +1,12 @@
+from std.ffi import c_int, external_call, get_errno
 from std.os import listdir, makedirs, remove
 from std.os.path import exists
 
 from mochi.json import JsonValue, parse_json
+
+
+comptime HISTORY_FILE = "input_history.json"
+comptime MAX_ENTRIES = 100
 
 
 struct InputHistory(Copyable, Movable):
@@ -9,37 +14,54 @@ struct InputHistory(Copyable, Movable):
     var entries: List[String]
     var max_entries: Int
 
-    def __init__(out self, path: String, max_entries: Int = 1000):
-        self.path = path
+    def __init__(out self, directory: String, max_entries: Int = MAX_ENTRIES):
+        self.path = directory + "/" + HISTORY_FILE
         self.entries = List[String]()
-        self.max_entries = max_entries
+        self.max_entries = max_entries if max_entries > 0 else 0
 
-    def load(mut self) raises:
+    def load(mut self):
         self.entries.clear()
         if not exists(self.path):
             return
-        for line in open(self.path, "r").read().split("\n"):
-            var value = String(line)
-            if value != "":
-                self.entries.append(value^)
-        self._trim()
+        try:
+            var value = parse_json(open(self.path, "r").read())
+            if value.kind != JsonValue.ARRAY:
+                return
+            for entry in value.array_value:
+                if entry.kind != JsonValue.STRING:
+                    self.entries.clear()
+                    return
+            for entry in value.array_value:
+                _ = self._push_inner(entry.string_value)
+        except:
+            self.entries.clear()
+
+    def push(mut self, value: String):
+        _ = self._push(value)
 
     def add(mut self, value: String) raises:
-        if value == "":
-            return
-        if len(self.entries) > 0 and self.entries[len(self.entries) - 1] == value:
-            return
-        self.entries.append(value)
-        self._trim()
-        self.save()
+        if self._push(value):
+            self.save()
 
     def save(self) raises:
         _ensure_parent(self.path)
-        var body = String("")
+        var value = JsonValue.array()
         for entry in self.entries:
-            body += entry + "\n"
-        with open(self.path, "w") as file:
-            file.write(body)
+            value.append(JsonValue.string(entry))
+        _atomic_write(self.path, value.serialize())
+
+    def _push(mut self, value: String) -> Bool:
+        var trimmed = String(value.strip())
+        if trimmed == "":
+            return False
+        return self._push_inner(trimmed)
+
+    def _push_inner(mut self, value: String) -> Bool:
+        if len(self.entries) > 0 and self.entries[len(self.entries) - 1] == value:
+            return False
+        self.entries.append(value)
+        self._trim()
+        return True
 
     def _trim(mut self):
         while len(self.entries) > self.max_entries:
@@ -134,6 +156,27 @@ def _ensure_parent(path: String) raises:
             if parent != "":
                 makedirs(parent, exist_ok=True)
             return
+
+
+def _atomic_write(path: String, content: String) raises:
+    var temporary = path + ".tmp"
+    try:
+        with open(temporary, "w") as file:
+            file.write(content)
+        var destination = String(path)
+        var temporary_c = temporary.as_c_string_slice()
+        var destination_c = destination.as_c_string_slice()
+        var status = external_call["rename", c_int](
+            temporary_c.unsafe_ptr(), destination_c.unsafe_ptr()
+        )
+        if status != 0:
+            raise Error("atomic rename failed: " + String(get_errno()))
+    except error:
+        try:
+            remove(temporary)
+        except:
+            pass
+        raise error
 
 
 def _sort(mut values: List[String]):

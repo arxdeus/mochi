@@ -395,7 +395,7 @@ def test_remote_mcp_plugin_registration_and_dispatch() raises:
     var tools = body.get("tools")
     assert_equal(
         tools.array_value[0].get("function").get("name").string_value,
-        "remote_search",
+        "search-server__remote_search",
     )
     assert_equal(
         tools.array_value[0].get("function").get("parameters").get("type").string_value,
@@ -407,13 +407,13 @@ def test_remote_mcp_plugin_registration_and_dispatch() raises:
     )
 
     runtime.enqueue_remote_result(
-        "remote_search", ToolResult.success('{"content":"found"}')
+        "search-server__remote_search", ToolResult.success('{"content":"found"}')
     )
     runtime.enqueue_remote_result(
         "remote_format", ToolResult.success('{"content":"formatted"}')
     )
     runtime.dispatch(
-        ToolCall("remote-1", "remote_search", '{"query":"mojo"}'),
+        ToolCall("remote-1", "search-server__remote_search", '{"query":"mojo"}'),
         CancellationToken(),
     )
     assert_equal(runtime.messages[len(runtime.messages) - 1].content, '{"content":"found"}')
@@ -506,8 +506,8 @@ def test_runtime_reconnects_http_mcp_and_replaces_tools() raises:
     var client = McpClient("server")
     runtime.attach_mcp_http("server", client^, transport^)
     assert_equal(runtime.reconnect_mcp_http("server"), 1)
-    assert_equal(runtime.remote_endpoint("old_tool"), "")
-    assert_equal(runtime.remote_endpoint("new_tool"), "server")
+    assert_equal(runtime.remote_endpoint("server__old_tool"), "")
+    assert_equal(runtime.remote_endpoint("server__new_tool"), "server")
     assert_equal(runtime.mcp_http_errors[0], "")
 
 
@@ -529,7 +529,7 @@ def test_live_remote_mcp_and_plugin_dispatch() raises:
         "search-server", McpClient("search-server"), mcp_transport^
     )
     runtime.dispatch(
-        ToolCall("mcp-call", "remote_search", '{"query":"mojo"}'),
+        ToolCall("mcp-call", "search-server__remote_search", '{"query":"mojo"}'),
         CancellationToken(),
     )
     assert_true('"text":"found"' in runtime.messages[len(runtime.messages) - 1].content)
@@ -558,6 +558,55 @@ def test_live_remote_mcp_and_plugin_dispatch() raises:
         '{"content":"formatted"}',
     )
     runtime.shutdown_remotes()
+
+
+def test_mcp_tools_are_namespaced_and_dispatched_by_raw_name() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var discovered = parse_json('[{"name":"search"}]')
+    runtime.add_remote_tools("mcp", "alpha", discovered.copy())
+    runtime.add_remote_tools("mcp", "beta", discovered^)
+
+    assert_equal(len(runtime.definitions), 2)
+    assert_equal(runtime.definitions[0].name, "alpha__search")
+    assert_equal(runtime.definitions[1].name, "beta__search")
+    assert_equal(runtime.remote_endpoint("alpha__search"), "alpha")
+    assert_equal(runtime.remote_endpoint("beta__search"), "beta")
+    assert_equal(runtime.remote_raw_name("alpha__search"), "search")
+    assert_equal(runtime.remote_raw_name("beta__search"), "search")
+
+    var alpha_transport = StdioTransport()
+    alpha_transport.enqueue_fixture_response(
+        '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"alpha"}]}}'
+    )
+    runtime.attach_mcp_stdio("alpha", McpClient("alpha"), alpha_transport^)
+    var beta_transport = StdioTransport()
+    beta_transport.enqueue_fixture_response(
+        '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"beta"}]}}'
+    )
+    runtime.attach_mcp_stdio("beta", McpClient("beta"), beta_transport^)
+
+    runtime.dispatch(
+        ToolCall("alpha-call", "alpha__search", '{"query":"one"}'),
+        CancellationToken(),
+    )
+    assert_true('"text":"alpha"' in runtime.messages[len(runtime.messages) - 1].content)
+    runtime.dispatch(
+        ToolCall("beta-call", "beta__search", '{"query":"two"}'),
+        CancellationToken(),
+    )
+    assert_true('"text":"beta"' in runtime.messages[len(runtime.messages) - 1].content)
+
+    var alpha_request = parse_json(runtime.mcp_stdio_transports[0].fixture_writes[0])
+    var beta_request = parse_json(runtime.mcp_stdio_transports[1].fixture_writes[0])
+    assert_equal(alpha_request.get("method").string_value, "tools/call")
+    assert_equal(beta_request.get("method").string_value, "tools/call")
+    assert_equal(alpha_request.get("params").get("name").string_value, "search")
+    assert_equal(beta_request.get("params").get("name").string_value, "search")
 
 
 def test_runtime_task_runs_isolated_child_and_persists_transcript() raises:
