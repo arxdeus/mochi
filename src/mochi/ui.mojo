@@ -999,8 +999,19 @@ struct UiReducer:
                         command_text.byte_length(),
                     ).strip()
                 )
+            if is_builtin_command(command_name):
+                state.command_selected = 0
+                var builtin_source = command_name.copy()
+                var builtin_name = String(
+                    builtin_source.removeprefix("/")
+                ).lower()
+                return UiAction.command(builtin_name^, command_arguments^)
             for extension in state.extension_commands:
-                if extension.lower() == command_name.lower():
+                var display_name = extension.copy()
+                if display_name.startswith("/"):
+                    var slash_name = display_name.copy()
+                    display_name = String(slash_name.removeprefix("/"))
+                if display_name.lower() == command_name.lower():
                     state.command_selected = 0
                     return UiAction.command(extension, command_arguments^)
             var matches = command_matches(text.copy())

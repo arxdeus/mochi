@@ -250,6 +250,80 @@ struct InvocationResult(Copyable, Movable):
     def from_tool_result(result: ToolResult) -> Self:
         return Self(result.ok, result.content)
 
+    @staticmethod
+    def from_json(value: JsonValue) raises -> Self:
+        """Decode the JSON-safe subset of Maki's plugin tool result contract."""
+        if value.kind == JsonValue.STRING:
+            return Self.success(value.string_value)
+        if value.kind != JsonValue.OBJECT:
+            raise Error("invocation result must be a string or object")
+
+        var content: String
+        if value.contains("llm_output"):
+            content = _result_string(value, "llm_output")
+        elif value.contains("content"):
+            content = _result_string(value, "content")
+        else:
+            raise Error("invocation result requires llm_output or content")
+
+        var ok = True
+        if value.contains("is_error"):
+            ok = not _result_bool(value, "is_error")
+        elif value.contains("ok"):
+            # `ok` belongs to Mochi's internal result codec.  A Maki
+            # `is_error` value is authoritative when both are present.
+            ok = _result_bool(value, "ok")
+        var result = Self(ok, content^)
+        if value.contains("status"):
+            result.status = _result_int(value, "status")
+        if value.contains("output_kind"):
+            result.output_kind = _result_string(value, "output_kind")
+        elif value.contains("format"):
+            result.output_kind = _result_string(value, "format")
+        if value.contains("structured"):
+            result.structured = value.get("structured")
+        if value.contains("annotation"):
+            result.annotation = Optional(_result_string(value, "annotation"))
+        if value.contains("instructions"):
+            var instructions = value.get("instructions")
+            if instructions.kind == JsonValue.ARRAY:
+                var valid = JsonValue.array()
+                for block in instructions.array_value:
+                    if (
+                        block.kind == JsonValue.OBJECT
+                        and block.contains("path")
+                        and block.get("path").kind == JsonValue.STRING
+                        and block.contains("content")
+                        and block.get("content").kind == JsonValue.STRING
+                    ):
+                        valid.append(block.copy())
+                result.instructions = valid^
+        if value.contains("state"):
+            result.state = value.get("state")
+        if value.contains("written_path"):
+            result.written_path = Optional(
+                _result_string(value, "written_path")
+            )
+        if value.contains("image"):
+            var image = value.get("image")
+            if image.kind != JsonValue.OBJECT:
+                raise Error(
+                    "invocation result image must contain media_type and data"
+                )
+            var media_type = _result_string(image, "media_type")
+            if (
+                media_type != "image/png"
+                and media_type != "image/jpeg"
+                and media_type != "image/gif"
+                and media_type != "image/webp"
+            ):
+                raise Error("unsupported invocation result image media_type")
+            var data = _result_string(image, "data")
+            if not _valid_base64(data):
+                raise Error("invocation result image data is not valid base64")
+            result.image = image^
+        return result^
+
     def to_tool_result(self) -> ToolResult:
         return ToolResult(self.ok, self.content)
 
@@ -477,3 +551,49 @@ def invocation_result_to_json(result: InvocationResult) raises -> JsonValue:
     if result.written_path:
         value.set("written_path", JsonValue.string(result.written_path.value()))
     return value^
+
+
+def _result_string(value: JsonValue, key: String) raises -> String:
+    var field = value.get(key)
+    if field.kind != JsonValue.STRING:
+        raise Error("invocation result field must be a string: " + key)
+    return field.string_value
+
+
+def _result_bool(value: JsonValue, key: String) raises -> Bool:
+    var field = value.get(key)
+    if field.kind != JsonValue.BOOL:
+        raise Error("invocation result field must be a boolean: " + key)
+    return field.bool_value
+
+
+def _result_int(value: JsonValue, key: String) raises -> Int:
+    var field = value.get(key)
+    if field.kind != JsonValue.INT:
+        raise Error("invocation result field must be an integer: " + key)
+    return field.int_value
+
+
+def _valid_base64(value: String) -> Bool:
+    if value == "" or value.byte_length() % 4 != 0:
+        return False
+    var padding = 0
+    for index in range(value.byte_length()):
+        var byte = UInt8(ord(value[byte=index]))
+        if byte == 61:
+            padding += 1
+            if index < value.byte_length() - 2 or padding > 2:
+                return False
+            continue
+        if padding > 0:
+            return False
+        var valid = (
+            (byte >= 65 and byte <= 90)
+            or (byte >= 97 and byte <= 122)
+            or (byte >= 48 and byte <= 57)
+            or byte == 43
+            or byte == 47
+        )
+        if not valid:
+            return False
+    return True

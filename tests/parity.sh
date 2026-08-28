@@ -4,7 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 default_upstream="$root/.slim/clonedeps/repos/tontinton__maki"
 upstream=${MAKI_UPSTREAM:-$default_upstream}
-expected=57d1f90003a6948897c6185442a136da85fe5971
+expected=01d60931f2de41f319d171a74982f35185cd227d
 
 print_oracle_setup() {
     requested_behavior=${1:-all}
@@ -53,6 +53,10 @@ run_mojo_test() {
     "$bin" >/dev/null
     rm -f "$obj" "$bin"
     trap - EXIT INT TERM
+}
+
+run_plugin_e2e() {
+    sh "$root/tests/plugin_e2e.sh"
 }
 
 case "${1:-all}" in
@@ -374,7 +378,14 @@ case "${1:-all}" in
             --test plugin_host register_echo_tool -- --exact >/dev/null
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-lua \
             --test plugin_host reload_replaces_commands -- --exact >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-lua \
+            --test plugin_host \
+            incompatible_package_is_skipped_and_its_sibling_still_loads \
+            -- --nocapture >/dev/null
         run_mojo_test tests/plugin_test.mojo
+        run_mojo_test tests/plugin_sdk_test.mojo
+        run_mojo_test tests/plugin_source_test.mojo
+        run_plugin_e2e
         run_mojo_test tests/runtime_test.mojo
         ;;
     mcp.streamable_http.basic)

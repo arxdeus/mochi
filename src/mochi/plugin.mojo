@@ -5,7 +5,7 @@ line over standard input/output.  This module deliberately does not load shared
 libraries or depend on Python.
 """
 
-from std.ffi import CStringSlice, c_int, c_pid_t, external_call
+from std.ffi import CStringSlice, c_int, c_long, c_pid_t, c_size_t, external_call
 from std.sys._libc import close, exit, pipe
 
 from mochi.json import JsonValue, parse_json, serialize_json
@@ -14,6 +14,8 @@ from mochi.json import JsonValue, parse_json, serialize_json
 comptime PLUGIN_PROTOCOL = "mochi.plugin"
 comptime PLUGIN_PROTOCOL_VERSION = 1
 comptime JSONRPC_VERSION = "2.0"
+comptime PLUGIN_MAX_LINE_BYTES = 8 * 1024 * 1024
+comptime PLUGIN_REQUEST_TIMEOUT_SECONDS = 60
 
 comptime METHOD_HANDSHAKE = "plugin/handshake"
 comptime METHOD_REGISTER = "plugin/register"
@@ -51,11 +53,12 @@ struct PluginRegistration(Copyable, Movable):
         self.keymaps = JsonValue.array()
 
     def to_json(self) raises -> JsonValue:
+        self.validate()
         var value = JsonValue.object()
         value.set("name", JsonValue.string(self.name))
         value.set("version", JsonValue.string(self.version))
         value.set("tools", self.tools.copy())
-        value.set("commands", self.commands.copy())
+        value.set("commands", _normalized_commands(self.commands))
         value.set("events", self.events.copy())
         value.set("prompt_hints", self.prompt_hints.copy())
         value.set("keymaps", self.keymaps.copy())
@@ -68,11 +71,46 @@ struct PluginRegistration(Copyable, Movable):
             _required_string(value, "name"), _required_string(value, "version")
         )
         result.tools = _required_array(value, "tools")
-        result.commands = _required_array(value, "commands")
+        result.commands = _normalized_commands(_required_array(value, "commands"))
         result.events = _required_array(value, "events")
         result.prompt_hints = _required_array(value, "prompt_hints")
         result.keymaps = _required_array(value, "keymaps")
+        result.validate()
         return result^
+
+    def validate(self) raises:
+        if self.name == "":
+            raise Error("plugin registration name must not be empty")
+        if self.version == "":
+            raise Error("plugin registration version must not be empty")
+        for item in self.tools.array_value:
+            if item.kind != JsonValue.OBJECT:
+                raise Error("plugin tool registration must be an object")
+            var name = _required_string(item, "name")
+            _validate_tool_name(name)
+            var description = _required_string(item, "description")
+            if description == "":
+                raise Error("plugin tool description must not be empty: " + name)
+            var schema = JsonValue.null()
+            if item.contains("inputSchema"):
+                schema = item.get("inputSchema")
+            elif item.contains("parameters"):
+                schema = item.get("parameters")
+            elif item.contains("schema"):
+                # Maki's register_tool contract calls this field `schema`.
+                schema = item.get("schema")
+            if schema.kind != JsonValue.OBJECT:
+                raise Error("plugin tool schema must be an object: " + name)
+        for item in self.commands.array_value:
+            var name: String
+            if item.kind == JsonValue.STRING:
+                name = item.string_value
+            elif item.kind == JsonValue.OBJECT:
+                name = _required_string(item, "name")
+            else:
+                raise Error("plugin command registration must be a string or object")
+            if name == "":
+                raise Error("plugin command name must not be empty")
 
 
 struct PluginExecutable(Copyable, Movable):
@@ -102,7 +140,8 @@ struct PluginTransport(Movable):
     var pid: c_pid_t
     var write_fd: Int32
     var read_fd: Int32
-    var read_buffer: String
+    var read_buffer: List[UInt8]
+    var request_timeout_seconds: Int
     var fixture_responses: List[String]
     var fixture_writes: List[String]
 
@@ -110,7 +149,8 @@ struct PluginTransport(Movable):
         self.pid = -1
         self.write_fd = -1
         self.read_fd = -1
-        self.read_buffer = ""
+        self.read_buffer = List[UInt8]()
+        self.request_timeout_seconds = PLUGIN_REQUEST_TIMEOUT_SECONDS
         self.fixture_responses = List[String]()
         self.fixture_writes = List[String]()
 
@@ -138,6 +178,8 @@ struct PluginTransport(Movable):
             _ = close(output_fds[1])
             raise Error("unable to fork plugin process")
         if pid == 0:
+            if external_call["setpgid", c_int](c_int(0), c_int(0)) != 0:
+                exit(c_int(126))
             _ = external_call["dup2", c_int](input_fds[0], c_int(0))
             _ = external_call["dup2", c_int](output_fds[1], c_int(1))
             _ = close(input_fds[0])
@@ -155,6 +197,7 @@ struct PluginTransport(Movable):
                 command[0].as_c_string_slice(), argv.unsafe_ptr()
             )
             exit(c_int(127))
+        _ = external_call["setpgid", c_int](c_int(pid), c_int(pid))
         _ = close(input_fds[0])
         _ = close(output_fds[1])
         var result = Self()
@@ -170,30 +213,86 @@ struct PluginTransport(Movable):
         var framed = line
         if not framed.endswith("\n"):
             framed += "\n"
+        if framed.byte_length() > PLUGIN_MAX_LINE_BYTES + 1:
+            raise Error("plugin JSON-RPC line exceeds transport limit")
         self.fixture_writes.append(framed)
         if len(self.fixture_responses) != 0:
             return self.fixture_responses.pop(0)
         if self.write_fd < 0 or self.read_fd < 0:
             raise Error("plugin transport is not connected")
-        var writer = FileDescriptor(Int(self.write_fd))
-        writer.write_bytes(framed.as_bytes())
-        return self.read_line()
+        if self.request_timeout_seconds <= 0:
+            raise Error("plugin request deadline must be positive")
+        var deadline = external_call[
+            "mochi_deadline_after_millis", c_long, c_long
+        ](
+            c_long(self.request_timeout_seconds * 1000)
+        )
+        if deadline < 0:
+            raise Error("unable to create plugin request deadline")
+        var write_status = external_call[
+            "mochi_fd_write_all_until",
+            c_int,
+            c_int,
+            CStringSlice[ImmutAnyOrigin],
+            c_size_t,
+            c_long,
+        ](
+            c_int(self.write_fd),
+            rebind[CStringSlice[ImmutAnyOrigin]](
+                framed.as_c_string_slice()
+            ),
+            c_size_t(framed.byte_length()),
+            deadline,
+        )
+        if write_status == -2:
+            raise Error("plugin request deadline exceeded")
+        if write_status != 0:
+            raise Error("unable to write plugin request")
+        return self.read_line(deadline)
 
-    def read_line(mut self) raises -> String:
+    def read_line(mut self, deadline: c_long) raises -> String:
         if self.read_fd < 0:
             raise Error("plugin transport is not connected")
-        var reader = FileDescriptor(Int(self.read_fd))
         while True:
-            var buffer = Array[Byte, 1](fill=0)
-            var count = reader.read_bytes(buffer)
-            if count <= 0:
+            for newline in range(len(self.read_buffer)):
+                if self.read_buffer[newline] != UInt8(10):
+                    continue
+                if newline > PLUGIN_MAX_LINE_BYTES:
+                    raise Error("plugin JSON-RPC line exceeds transport limit")
+                var line = List[UInt8]()
+                var remainder = List[UInt8]()
+                for index in range(newline):
+                    line.append(self.read_buffer[index])
+                for index in range(newline + 1, len(self.read_buffer)):
+                    remainder.append(self.read_buffer[index])
+                self.read_buffer = remainder^
+                return String(from_utf8=Span(line))
+            if len(self.read_buffer) > PLUGIN_MAX_LINE_BYTES:
+                raise Error("plugin JSON-RPC line exceeds transport limit")
+            var buffer = List[UInt8](length=4096, fill=0)
+            var count = external_call[
+                "mochi_fd_read_some_until",
+                c_int,
+                c_int,
+                Pointer[mut=True, UInt8, MutAnyOrigin],
+                c_size_t,
+                c_long,
+            ](
+                c_int(self.read_fd),
+                rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](
+                    buffer.unsafe_ptr()
+                ),
+                c_size_t(len(buffer)),
+                deadline,
+            )
+            if count == -2:
+                raise Error("plugin request deadline exceeded")
+            if count < 0:
+                raise Error("unable to read plugin response")
+            if count == 0:
                 raise Error("plugin process closed stdout")
-            var byte = buffer[0]
-            if byte == 10:
-                var result = self.read_buffer.copy()
-                self.read_buffer = ""
-                return result^
-            self.read_buffer += String(byte)
+            for index in range(count):
+                self.read_buffer.append(buffer[index])
 
     def cancel(mut self):
         self._cleanup()
@@ -206,10 +305,17 @@ struct PluginTransport(Movable):
             _ = close(c_int(self.read_fd))
             self.read_fd = -1
         if self.pid > 0:
-            _ = external_call["kill", c_int](self.pid, c_int(9))
             var status = List[c_int](length=1, fill=0)
-            _ = external_call["waitpid", c_pid_t](
-                self.pid, status.unsafe_ptr(), c_int(0)
+            _ = external_call[
+                "mochi_kill_process_group_and_wait",
+                c_int,
+                c_int,
+                Pointer[mut=True, c_int, MutAnyOrigin],
+            ](
+                c_int(self.pid),
+                rebind[Pointer[mut=True, c_int, MutAnyOrigin]](
+                    status.unsafe_ptr()
+                ),
             )
             self.pid = -1
 
@@ -393,7 +499,9 @@ struct PluginProtocol(Copyable, Movable):
 
     def accept_invoke(mut self, line: String) raises -> JsonValue:
         self._require_state(Self.INVOKE_PENDING, "invoke response")
-        var result = self._accept_result(line)
+        # A handler error is an application-level failure, not a broken
+        # transport.  Keep the negotiated process usable for later calls.
+        var result = self._accept_result(line, recover_state=Self.READY)
         self.state = Self.READY
         return result^
 
@@ -416,14 +524,16 @@ struct PluginProtocol(Copyable, Movable):
         self.pending_id = id
         return RpcMessage.request(id, method, params^)
 
-    def _accept_result(mut self, line: String) raises -> JsonValue:
+    def _accept_result(
+        mut self, line: String, recover_state: Int = -1
+    ) raises -> JsonValue:
         var message = RpcMessage.parse(line)
         if message.id != self.pending_id:
             self.state = Self.FAILED
             raise Error("JSON-RPC response id mismatch")
         self.pending_id = 0
         if message.kind == RpcMessage.ERROR:
-            self.state = Self.FAILED
+            self.state = recover_state if recover_state >= 0 else Self.FAILED
             raise Error(
                 "plugin error " + String(message.error.code) + ": " + message.error.message
             )
@@ -477,12 +587,20 @@ struct PluginClient(Movable):
         self.protocol = PluginProtocol()
         self.connect(host_name)
 
+    def replacement(self, host_name: String = "mochi") raises -> Self:
+        """Start and validate a shadow process without disturbing this client."""
+        if not self.executable:
+            raise Error("plugin client has no executable launch metadata")
+        return Self.launch(self.executable.value().copy(), host_name)
+
     def reload(mut self, host_name: String = "mochi") raises:
         if self.executable:
+            # The replacement must finish handshake and registration before the
+            # live process is touched.  A compile/exec/protocol failure therefore
+            # leaves the last known-good generation callable.
+            var candidate = self.replacement(host_name)
             self.cancel()
-            self.transport = PluginTransport.spawn(self.executable.value().copy())
-            self.protocol = PluginProtocol()
-            self.connect(host_name)
+            self = candidate^
             return
         self.reconnect(host_name)
 
@@ -495,7 +613,8 @@ struct PluginClient(Movable):
             )
             return self.protocol.accept_invoke(response)
         except err:
-            self.cancel()
+            if not self.protocol.is_ready():
+                self.cancel()
             raise err
 
     def shutdown(mut self) raises:
@@ -565,3 +684,39 @@ def _required_array(value: JsonValue, key: String) raises -> JsonValue:
     if field.kind != JsonValue.ARRAY:
         raise Error("JSON field must be an array: " + key)
     return field^
+
+
+def _validate_tool_name(value: String) raises:
+    if value == "" or value.byte_length() > 64:
+        raise Error("plugin tool name must contain 1 to 64 ASCII characters")
+    for index in range(value.byte_length()):
+        var byte = UInt8(ord(value[byte=index]))
+        var alpha = (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122)
+        var valid = alpha or byte == 95
+        if index > 0:
+            valid = valid or (byte >= 48 and byte <= 57)
+        if not valid:
+            raise Error("invalid plugin tool name: " + value)
+
+
+def _normalized_commands(value: JsonValue) raises -> JsonValue:
+    if value.kind != JsonValue.ARRAY:
+        raise Error("plugin commands registration must be an array")
+    var commands = JsonValue.array()
+    for item in value.array_value:
+        var name: String
+        if item.kind == JsonValue.STRING:
+            name = item.string_value
+            if name != "" and not name.startswith("/"):
+                name = "/" + name
+            commands.append(JsonValue.string(name))
+        elif item.kind == JsonValue.OBJECT:
+            name = _required_string(item, "name")
+            if name != "" and not name.startswith("/"):
+                name = "/" + name
+            var normalized = item.copy()
+            normalized.set("name", JsonValue.string(name))
+            commands.append(normalized^)
+        else:
+            raise Error("plugin command registration must be a string or object")
+    return commands^

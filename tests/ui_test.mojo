@@ -90,12 +90,35 @@ def test_command_transition() raises:
 
 def test_extension_command_routes_with_arguments() raises:
     var state = UiState()
-    state.set_extension_commands(["hello"])
+    state.set_extension_commands(["/hello"])
     _ = UiReducer.reduce(state, UiEvent.edit("/hello one two"))
     var action = UiReducer.reduce(state, UiEvent.submit())
     assert_true(action.is_command())
-    assert_equal(action.name, "hello")
+    assert_equal(action.name, "/hello")
     assert_equal(action.text, "one two")
+
+    var collision = UiState()
+    collision.set_extension_commands(["/reload"])
+    _ = UiReducer.reduce(collision, UiEvent.edit("/reload"))
+    var builtin = UiReducer.reduce(collision, UiEvent.submit())
+    assert_true(builtin.is_command())
+    assert_equal(builtin.name, "reload")
+
+    _ = UiReducer.reduce(collision, UiEvent.edit("/reload anything"))
+    var builtin_with_extra_argument = UiReducer.reduce(
+        collision, UiEvent.submit()
+    )
+    assert_true(builtin_with_extra_argument.is_command())
+    assert_equal(builtin_with_extra_argument.name, "reload")
+    assert_equal(builtin_with_extra_argument.text, "anything")
+
+    _ = UiReducer.reduce(collision, UiEvent.edit("//reload anything"))
+    var double_slash_builtin = UiReducer.reduce(
+        collision, UiEvent.submit()
+    )
+    assert_true(double_slash_builtin.is_command())
+    assert_equal(double_slash_builtin.name, "reload")
+    assert_equal(double_slash_builtin.text, "anything")
 
 
 def test_toggleable_picker_navigation_and_actions() raises:

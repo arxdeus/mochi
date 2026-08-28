@@ -2,7 +2,7 @@
   "schema_version": 2,
   "upstream": {
     "repository": "tontinton/maki",
-    "commit": "57d1f90003a6948897c6185442a136da85fe5971"
+    "commit": "01d60931f2de41f319d171a74982f35185cd227d"
   },
   "statuses": [
     "missing",
@@ -312,24 +312,30 @@
       "area": "extensions",
       "owner": "mochi_extension",
       "status": "paired_independent",
-      "description": "Mojo executable extension handshake/register/invoke/shutdown lifecycle.",
+      "description": "Mojo source or executable extension build/handshake/register/invoke/shutdown lifecycle.",
       "upstream_refs": [
         "maki-lua/src/loader.rs",
         "maki-lua/src/api"
       ],
       "mojo_refs": [
         "src/mochi/plugin.mojo",
-        "tests/plugin_test.mojo"
+        "src/mochi/plugin_source.mojo",
+        "src/mochi/plugin_sdk.mojo",
+        "tests/plugin_test.mojo",
+        "tests/plugin_source_test.mojo",
+        "tests/plugin_sdk_test.mojo",
+        "tests/plugin_sdk_e2e.mojo",
+        "tests/plugin_source_e2e.mojo"
       ],
       "checks": {
         "local": {
-          "command": "pixi run sh -c 'mojo build -I src tests/plugin_test.mojo -o /tmp/mochi-plugin-test && /tmp/mochi-plugin-test'",
-          "normalization": "Protocol state and errors."
+          "command": "pixi run parity extension.executable.lifecycle",
+          "normalization": "Protocol state/errors plus source manifest, version-floor, content-addressed cache, atomic build, and real subprocess UTF-8 assertions."
         },
         "paired_independent": {
           "status": "paired_independent",
           "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity extension.executable.lifecycle",
-          "normalization": "Pinned upstream load/register/shutdown/reload lifecycle tests pass with Mojo executable handshake, registration, invocation, cancellation, reconnect, stale-route replacement, commands, and prompt hints."
+          "normalization": "Pinned upstream load/register/shutdown/reload/version-floor tests pass alongside Mojo executable handshake, registration, invocation, deadlines, cancellation, reconnect, shadow replacement logic, commands, and prompt hints."
         }
       }
     },
@@ -1086,12 +1092,46 @@
       }
     },
     {
+      "id": "extensions.mojo.process_runtime",
+      "area": "extensions",
+      "owner": "mochi_extensions",
+      "status": "partial",
+      "description": "Trusted native Mojo source plugins compile through a content-addressed cache and run behind a strict process protocol with shadow-generation reload.",
+      "gap": "The live protocol is still serial v1: it lacks bidirectional host calls, per-call cancellation, concurrent request IDs, dynamic callbacks, OS sandboxing, and most of the Maki plugin API.",
+      "upstream_refs": [
+        "maki-lua/src/loader.rs:PluginHost",
+        "maki-lua/src/plugin_permissions.rs:check_plugin_compatibility",
+        "maki-lua/tests/plugin_host.rs:incompatible_package_is_skipped_and_its_sibling_still_loads"
+      ],
+      "mojo_refs": [
+        "src/mochi/plugin.mojo:PluginClient",
+        "src/mochi/plugin_source.mojo",
+        "src/mochi/plugin_sdk.mojo",
+        "src/mochi/runtime.mojo:Runtime.reload_plugins",
+        "tests/plugin_source_test.mojo",
+        "tests/plugin_sdk_e2e.mojo",
+        "tests/plugin_source_e2e.mojo"
+      ],
+      "parity_criteria": [
+        "Negotiate a bounded bidirectional protocol with cancellation, deadlines, concurrent IDs, and generation tagging.",
+        "Expose the complete engine-neutral Maki registration, context, host-call, rich-result, event, keymap, prompt, slot, and UI-handle surface through the Mojo SDK.",
+        "Contain native processes so fs_read, fs_write, net, run, and env grants cannot be bypassed through direct system calls."
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run parity extension.executable.lifecycle",
+          "normalization": "Exact registration, command, Maki-shaped tool result, Unicode NDJSON, cache miss/hit, version floor, failed-build cleanup, shutdown, source rebuild candidates, and unit-tested shadow replacement logic."
+        }
+      },
+      "verification": "Unit and real compiled-subprocess checks cover this initial tranche; the listed protocol/API/security gaps remain unimplemented."
+    },
+    {
       "id": "extensions.lua.plugin_compatibility",
       "area": "extensions",
       "owner": "mochi_extensions",
       "status": "missing",
       "description": "Run Maki Luau plugins, including the bundled plugin set, without rewriting them for another host protocol.",
-      "gap": "Maki embeds a sandboxed Luau runtime and exposes the maki API; Mochi only launches external executables speaking mochi.plugin JSON-RPC.",
+      "gap": "Mochi now builds trusted Mojo sources and launches executables through mochi.plugin JSON-RPC, but it does not execute unchanged Luau, reproduce Luau semantics, expose the complete maki API, or provide Maki's sandbox guarantees.",
       "upstream_refs": [
         "maki-lua/src/loader.rs:PluginHost::load_builtins",
         "maki-lua/src/runtime.rs:LuaRuntime",
@@ -1101,6 +1141,8 @@
       "mojo_refs": [
         "src/mochi/plugin.mojo:PluginClient",
         "src/mochi/plugin.mojo:PluginProtocol",
+        "src/mochi/plugin_source.mojo",
+        "src/mochi/plugin_sdk.mojo",
         "src/mochi/extension_contract.mojo:ExtensionSession",
         "src/mochi/cli.mojo:CliConfig.plugins"
       ],

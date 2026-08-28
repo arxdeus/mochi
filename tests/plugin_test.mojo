@@ -1,5 +1,6 @@
 from mochi.json import JsonValue, parse_json
 from mochi.plugin import (
+    ERROR_INVOKE,
     ERROR_INVALID_PARAMS,
     METHOD_HANDSHAKE,
     METHOD_INVOKE,
@@ -18,6 +19,7 @@ from mochi.plugin import (
     registration_result,
     shutdown_result,
 )
+from std.ffi import external_call
 from std.testing import TestSuite, assert_equal, assert_false, assert_raises, assert_true
 
 
@@ -40,8 +42,12 @@ def test_handshake_registration_invoke_shutdown_state_flow() raises:
     var register = RpcMessage.parse(protocol.registration_request())
     assert_equal(register.method, METHOD_REGISTER)
     var metadata = PluginRegistration("example", "1.2.3")
-    metadata.tools.append(parse_json("{\"name\":\"search\",\"description\":\"Search\"}"))
-    metadata.commands.append(parse_json("{\"name\":\"hello\"}"))
+    metadata.tools.append(
+        parse_json(
+            "{\"name\":\"search\",\"description\":\"Search\",\"schema\":{}}"
+        )
+    )
+    metadata.commands.append(parse_json("{\"name\":\"/hello\"}"))
     metadata.events.append(JsonValue.string("session.started"))
     metadata.prompt_hints.append(JsonValue.string("Be concise"))
     metadata.keymaps.append(parse_json("{\"key\":\"ctrl+k\",\"command\":\"hello\"}"))
@@ -169,6 +175,47 @@ def test_client_reload_reconnects_fixture_registration() raises:
     assert_equal(client.protocol.registration.value().name, "second")
 
 
+def test_failed_shadow_reload_preserves_live_client() raises:
+    var transport = PluginTransport()
+    transport.enqueue_fixture_response(handshake_result(1, "live"))
+    transport.enqueue_fixture_response(
+        registration_result(2, PluginRegistration("live", "1.0.0"))
+    )
+    transport.enqueue_fixture_response(
+        invoke_result(3, parse_json('{"content":"still live"}'))
+    )
+    var client = PluginClient(transport^)
+    client.connect()
+    client.executable = Optional(PluginExecutable("/bin/false"))
+    with assert_raises():
+        client.reload()
+    assert_true(client.is_ready())
+    assert_equal(client.protocol.registration.value().name, "live")
+    var result = client.invoke("tool", "echo", JsonValue.object())
+    assert_equal(result.get("content").string_value, "still live")
+
+
+def test_invoke_error_is_recoverable_for_the_same_process() raises:
+    var transport = PluginTransport()
+    transport.enqueue_fixture_response(handshake_result(1, "recoverable"))
+    transport.enqueue_fixture_response(
+        registration_result(2, PluginRegistration("recoverable", "1.0.0"))
+    )
+    transport.enqueue_fixture_response(
+        error_result(3, ERROR_INVOKE, "scripted failure")
+    )
+    transport.enqueue_fixture_response(
+        invoke_result(4, parse_json('{"content":"recovered"}'))
+    )
+    var client = PluginClient(transport^)
+    client.connect()
+    with assert_raises():
+        _ = client.invoke("tool", "fail_once", JsonValue.object())
+    assert_true(client.is_ready())
+    var recovered = client.invoke("tool", "echo", JsonValue.object())
+    assert_equal(recovered.get("content").string_value, "recovered")
+
+
 def test_transport_cancel_terminates_owned_child() raises:
     var executable = PluginExecutable("/bin/sh")
     executable.add_argument("-c")
@@ -179,6 +226,31 @@ def test_transport_cancel_terminates_owned_child() raises:
     assert_equal(Int(transport.pid), -1)
     assert_equal(Int(transport.write_fd), -1)
     assert_equal(Int(transport.read_fd), -1)
+
+
+def test_silent_process_is_killed_at_request_deadline() raises:
+    var executable = PluginExecutable("/bin/sh")
+    executable.add_argument("-c")
+    executable.add_argument("sleep 5")
+    var transport = PluginTransport.spawn(executable)
+    transport.request_timeout_seconds = 1
+    var client = PluginClient(transport^)
+    with assert_raises():
+        client.connect()
+    assert_false(client.is_ready())
+    assert_equal(Int(client.transport.pid), -1)
+
+
+def test_closed_plugin_stdin_raises_without_sigpipe_terminating_host() raises:
+    var executable = PluginExecutable("/bin/sh")
+    executable.add_argument("-c")
+    executable.add_argument("exec 0<&-; sleep 2")
+    var transport = PluginTransport.spawn(executable)
+    _ = external_call["sleep", UInt32](UInt32(1))
+    with assert_raises():
+        _ = transport.send_line("{}")
+    transport.cancel()
+    assert_equal(Int(transport.pid), -1)
 
 
 def test_transport_codec_rejects_unconnected_send() raises:
@@ -205,6 +277,31 @@ def test_malformed_messages_and_registration() raises:
     var register = RpcMessage.parse(protocol.registration_request())
     with assert_raises():
         protocol.accept_registration(invoke_result(register.id, JsonValue.object()))
+
+    protocol = PluginProtocol()
+    handshake = RpcMessage.parse(protocol.handshake())
+    protocol.accept_handshake(handshake_result(handshake.id))
+    register = RpcMessage.parse(protocol.registration_request())
+    var invalid = PluginRegistration("bad", "1.0.0")
+    invalid.tools.append(
+        parse_json(
+            '{"name":"not-valid","description":"bad","inputSchema":{}}'
+        )
+    )
+    with assert_raises():
+        protocol.accept_registration(registration_result(register.id, invalid))
+
+    invalid = PluginRegistration("bad", "1.0.0")
+    invalid.commands.append(parse_json('{"name":""}'))
+    with assert_raises():
+        _ = invalid.to_json()
+
+    var normalized = PluginRegistration("normalized", "1.0.0")
+    normalized.commands.append(parse_json('{"name":"hello"}'))
+    assert_equal(
+        normalized.to_json().get("commands").array_value[0].get("name").string_value,
+        "/hello",
+    )
 
 
 def main() raises:

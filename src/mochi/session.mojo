@@ -246,6 +246,8 @@ def message_to_json(message: Message) raises -> JsonValue:
         value.set("name", JsonValue.string(message.name))
     if message.tool_call_id != "":
         value.set("tool_call_id", JsonValue.string(message.tool_call_id))
+    if message.is_error:
+        value.set("is_error", JsonValue.boolean(True))
     if len(message.tool_calls) > 0:
         var calls = JsonValue.array()
         for call in message.tool_calls:
@@ -268,6 +270,10 @@ def message_from_json(value: JsonValue) raises -> Message:
         message.name = _required_string(value, "name")
     if value.contains("tool_call_id") and not value.get("tool_call_id").is_null():
         message.tool_call_id = _required_string(value, "tool_call_id")
+    if value.contains("is_error"):
+        if value.get("is_error").kind != JsonValue.BOOL:
+            raise Error("session message is_error must be a boolean")
+        message.is_error = value.get("is_error").bool_value
     if value.contains("tool_calls"):
         var calls = value.get("tool_calls")
         if calls.kind != JsonValue.ARRAY:

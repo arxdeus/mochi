@@ -10,6 +10,7 @@ from mochi.storage import OAuthTokens
 
 
 comptime MCP_PROTOCOL_VERSION = "2025-06-18"
+comptime MCP_MAX_LINE_BYTES = 8 * 1024 * 1024
 
 
 @fieldwise_init
@@ -1012,7 +1013,7 @@ struct StdioTransport(Movable):
     var pid: c_pid_t
     var write_fd: Int32
     var read_fd: Int32
-    var read_buffer: String
+    var read_buffer: List[UInt8]
     var fixture_responses: List[String]
     var fixture_writes: List[String]
 
@@ -1022,7 +1023,7 @@ struct StdioTransport(Movable):
         self.pid = -1
         self.write_fd = -1
         self.read_fd = -1
-        self.read_buffer = ""
+        self.read_buffer = List[UInt8]()
         self.fixture_responses = List[String]()
         self.fixture_writes = List[String]()
 
@@ -1074,6 +1075,8 @@ struct StdioTransport(Movable):
 
     def send(mut self, message: JsonValue) raises -> JsonValue:
         var line = serialize_json(message) + "\n"
+        if line.byte_length() > MCP_MAX_LINE_BYTES + 1:
+            raise Error("MCP JSON-RPC line exceeds transport limit")
         self.fixture_writes.append(line)
         if len(self.fixture_responses) != 0:
             return parse_json(self.fixture_responses.pop(0))
@@ -1089,13 +1092,18 @@ struct StdioTransport(Movable):
                 raise Error("MCP stdio server closed")
             var byte = buffer[0]
             if byte == 10:
-                var response = parse_json(self.read_buffer)
-                self.read_buffer = ""
+                var line = String(from_utf8=Span(self.read_buffer))
+                self.read_buffer.clear()
+                var response = parse_json(line)
                 return response^
-            self.read_buffer += String(byte)
+            if len(self.read_buffer) >= MCP_MAX_LINE_BYTES:
+                raise Error("MCP JSON-RPC line exceeds transport limit")
+            self.read_buffer.append(UInt8(byte))
 
     def notify(mut self, message: JsonValue) raises:
         var line = serialize_json(message) + "\n"
+        if line.byte_length() > MCP_MAX_LINE_BYTES + 1:
+            raise Error("MCP JSON-RPC line exceeds transport limit")
         self.fixture_writes.append(line)
         if self.write_fd < 0:
             return

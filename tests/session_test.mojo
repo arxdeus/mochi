@@ -184,9 +184,11 @@ def test_runtime_message_codec_and_lifecycle_update() raises:
     var result = Message("tool", "done")
     result.name = "read"
     result.tool_call_id = "call-1"
+    result.is_error = True
     decoded = message_from_json(message_to_json(result))
     assert_equal(decoded.name, "read")
     assert_equal(decoded.tool_call_id, "call-1")
+    assert_true(decoded.is_error)
 
     var session = Session("resume", "old", "/project", 1)
     var messages: List[Message] = [

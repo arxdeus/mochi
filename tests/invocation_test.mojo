@@ -18,7 +18,7 @@ from mochi.invocation import (
     invocation_definition_to_json,
     invocation_result_to_json,
 )
-from mochi.json import JsonValue
+from mochi.json import JsonValue, parse_json
 from mochi.tools import ToolResult
 from mochi.types import CancellationToken
 
@@ -172,6 +172,42 @@ def test_invocation_golden_codecs() raises:
         invocation_result_to_json(InvocationResult.cancelled()).serialize(),
         '{"ok":false,"status":3,"content":"cancelled","output_kind":"plain","structured":null,"instructions":[],"state":null,"image":null}',
     )
+
+
+def test_maki_compatible_plugin_result_decode() raises:
+    var decoded = InvocationResult.from_json(
+        parse_json(
+            '{"llm_output":"failed safely","is_error":true,"ok":true,"format":"markdown","annotation":"warning","instructions":[{"path":"AGENTS.md","content":"retry"},"ignored"],"state":{"attempt":2},"written_path":"out.txt","image":{"media_type":"image/png","data":"aGVsbG8="}}'
+        )
+    )
+    assert_false(decoded.ok)
+    assert_equal(decoded.content, "failed safely")
+    assert_equal(decoded.output_kind, "markdown")
+    assert_equal(decoded.annotation.value(), "warning")
+    assert_equal(
+        decoded.instructions.array_value[0].get("content").string_value,
+        "retry",
+    )
+    assert_equal(decoded.state.get("attempt").int_value, 2)
+    assert_equal(decoded.written_path.value(), "out.txt")
+    assert_equal(decoded.image.get("media_type").string_value, "image/png")
+    assert_true(InvocationResult.from_json(JsonValue.string("plain")).ok)
+    with assert_raises():
+        _ = InvocationResult.from_json(parse_json('{"is_error":false}'))
+    assert_equal(
+        len(
+            InvocationResult.from_json(
+                parse_json('{"llm_output":"x","instructions":"bad"}')
+            ).instructions.array_value
+        ),
+        0,
+    )
+    with assert_raises():
+        _ = InvocationResult.from_json(
+            parse_json(
+                '{"llm_output":"x","image":{"media_type":"image/png","data":"bad"}}'
+            )
+        )
 
 
 def main() raises:

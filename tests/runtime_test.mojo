@@ -1,4 +1,4 @@
-from std.testing import TestSuite, assert_equal, assert_false, assert_true
+from std.testing import TestSuite, assert_equal, assert_false, assert_raises, assert_true
 
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, parse_json, serialize_json
@@ -11,6 +11,7 @@ from mochi.permissions import (
 )
 from mochi.plugin import (
     PluginClient,
+    PluginExecutable,
     PluginRegistration,
     PluginTransport,
     RpcMessage,
@@ -537,10 +538,19 @@ def test_live_remote_mcp_and_plugin_dispatch() raises:
     var plugin_transport = PluginTransport()
     plugin_transport.enqueue_fixture_response(handshake_result(1, "formatter"))
     var registration = PluginRegistration("formatter", "1.0.0")
-    registration.tools.append(parse_json('{"name":"remote_format"}'))
+    registration.tools.append(
+        parse_json(
+            '{"name":"remote_format","description":"Format text","inputSchema":{}}'
+        )
+    )
     plugin_transport.enqueue_fixture_response(registration_result(2, registration))
     plugin_transport.enqueue_fixture_response(
-        invoke_result(3, parse_json('{"content":"formatted"}'))
+        invoke_result(
+            3,
+            parse_json(
+                '{"llm_output":"formatted","is_error":true,"annotation":"fixture"}'
+            ),
+        )
     )
     plugin_transport.enqueue_fixture_response(shutdown_result(4))
     var plugin = PluginClient(plugin_transport^)
@@ -555,8 +565,9 @@ def test_live_remote_mcp_and_plugin_dispatch() raises:
     )
     assert_equal(
         runtime.messages[len(runtime.messages) - 1].content,
-        '{"content":"formatted"}',
+        "formatted",
     )
+    assert_true(runtime.messages[len(runtime.messages) - 1].is_error)
     runtime.shutdown_remotes()
 
 
@@ -722,7 +733,7 @@ def test_runtime_plugin_commands_and_prompt_hints() raises:
     var transport = PluginTransport()
     transport.enqueue_fixture_response(handshake_result(1, "extension"))
     var registration = PluginRegistration("extension", "1.0.0")
-    registration.commands.append(parse_json('{"name":"hello"}'))
+    registration.commands.append(parse_json('{"name":"/hello"}'))
     registration.prompt_hints.append(JsonValue.string("Extension guidance"))
     transport.enqueue_fixture_response(registration_result(2, registration))
     transport.enqueue_fixture_response(
@@ -731,10 +742,10 @@ def test_runtime_plugin_commands_and_prompt_hints() raises:
     var client = PluginClient(transport^)
     client.connect()
     runtime.attach_plugin("extension", client^)
-    assert_equal(runtime.plugin_command_names()[0], "hello")
+    assert_equal(runtime.plugin_command_names()[0], "/hello")
     runtime.apply_plugin_prompt_hints()
     assert_true("Extension guidance" in runtime.system_prompt)
-    var output = parse_json(runtime.invoke_plugin_command("hello", "one two"))
+    var output = parse_json(runtime.invoke_plugin_command("/hello", "one two"))
     assert_equal(output.get("content").string_value, "command ran")
     var request = RpcMessage.parse(runtime.plugin_clients[0].transport.fixture_writes[2])
     assert_equal(request.payload.get("kind").string_value, "command")
@@ -742,6 +753,46 @@ def test_runtime_plugin_commands_and_prompt_hints() raises:
         request.payload.get("arguments").get("arguments").string_value,
         "one two",
     )
+
+
+def test_runtime_rejects_duplicate_plugin_owner_names() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var first_transport = PluginTransport()
+    first_transport.enqueue_fixture_response(handshake_result(1, "same"))
+    var first_registration = PluginRegistration("same", "1.0.0")
+    first_registration.tools.append(
+        parse_json('{"name":"first_tool","description":"first","schema":{}}')
+    )
+    first_transport.enqueue_fixture_response(
+        registration_result(2, first_registration)
+    )
+    var first_client = PluginClient(first_transport^)
+    first_client.connect()
+    _ = runtime.install_plugin(first_client^)
+
+    var second_transport = PluginTransport()
+    second_transport.enqueue_fixture_response(handshake_result(1, "same"))
+    var second_registration = PluginRegistration("same", "2.0.0")
+    second_registration.tools.append(
+        parse_json('{"name":"second_tool","description":"second","schema":{}}')
+    )
+    second_transport.enqueue_fixture_response(
+        registration_result(2, second_registration)
+    )
+    var second_client = PluginClient(second_transport^)
+    second_client.connect()
+    with assert_raises():
+        _ = runtime.install_plugin(second_client^)
+
+    assert_equal(len(runtime.plugin_names), 1)
+    assert_equal(runtime.plugin_names[0], "same")
+    assert_true(runtime.remote.is_remote("first_tool"))
+    assert_false(runtime.remote.is_remote("second_tool"))
 
 
 def test_runtime_reload_replaces_plugin_routes() raises:
@@ -757,22 +808,58 @@ def test_runtime_reload_replaces_plugin_routes() raises:
     first.tools.append(
         parse_json('{"name":"old_tool","description":"old","inputSchema":{}}')
     )
+    first.prompt_hints.append(JsonValue.string("old guidance"))
     transport.enqueue_fixture_response(registration_result(2, first))
     transport.enqueue_fixture_response(handshake_result(1, "second"))
     var second = PluginRegistration("second", "2.0.0")
     second.tools.append(
         parse_json('{"name":"new_tool","description":"new","inputSchema":{}}')
     )
+    second.prompt_hints.append(JsonValue.string("new guidance"))
     transport.enqueue_fixture_response(registration_result(2, second))
     var client = PluginClient(transport^)
     client.connect()
     runtime.add_remote_tools("plugin", "first", first.tools.copy())
     runtime.attach_plugin("first", client^)
+    runtime.system_prompt = "base"
+    runtime.apply_plugin_prompt_hints()
     assert_true(runtime.remote.is_remote("old_tool"))
+    assert_true("old guidance" in runtime.system_prompt)
     assert_equal(runtime.reload_plugins(), 1)
     assert_false(runtime.remote.is_remote("old_tool"))
     assert_true(runtime.remote.is_remote("new_tool"))
     assert_equal(runtime.plugin_names[0], "second")
+    assert_false("old guidance" in runtime.system_prompt)
+    assert_true("new guidance" in runtime.system_prompt)
+
+
+def test_runtime_failed_shadow_reload_keeps_routes_and_generation() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var transport = PluginTransport()
+    transport.enqueue_fixture_response(handshake_result(1, "live"))
+    var registration = PluginRegistration("live", "1.0.0")
+    registration.tools.append(
+        parse_json('{"name":"live_tool","description":"live","inputSchema":{}}')
+    )
+    transport.enqueue_fixture_response(registration_result(2, registration))
+    var client = PluginClient(transport^)
+    client.connect()
+    client.executable = Optional(PluginExecutable("/bin/false"))
+    runtime.add_remote_tools("plugin", "live", registration.tools.copy())
+    runtime.attach_plugin("live", client^)
+
+    with assert_raises():
+        _ = runtime.reload_plugins()
+
+    assert_equal(runtime.plugin_names[0], "live")
+    assert_true(runtime.plugin_clients[0].is_ready())
+    assert_true(runtime.remote.is_remote("live_tool"))
+    assert_equal(runtime.remote_endpoint("live_tool"), "live")
 
 
 def test_provider_error_is_visible_in_result() raises:

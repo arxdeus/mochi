@@ -10,21 +10,308 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 #endif
+
+enum {
+    MOCHI_DEADLINE_ERROR = -1,
+    MOCHI_DEADLINE_TIMEOUT = -2,
+};
+
+int64_t mochi_deadline_after_millis(int64_t timeout_milliseconds) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (timeout_milliseconds <= 0) {
+        return -1;
+    }
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return -1;
+    }
+    int64_t milliseconds =
+        (int64_t)now.tv_sec * 1000 + (int64_t)now.tv_nsec / 1000000;
+    if (timeout_milliseconds > INT64_MAX - milliseconds) {
+        return INT64_MAX;
+    }
+    return milliseconds + timeout_milliseconds;
+#else
+    (void)timeout_milliseconds;
+    return -1;
+#endif
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+static int64_t mochi_monotonic_millis(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return -1;
+    }
+    return (int64_t)now.tv_sec * 1000 + (int64_t)now.tv_nsec / 1000000;
+}
+
+static int mochi_poll_until(int fd, short events, int64_t deadline) {
+    for (;;) {
+        int64_t now = mochi_monotonic_millis();
+        if (now < 0) {
+            return MOCHI_DEADLINE_ERROR;
+        }
+        if (now >= deadline) {
+            return MOCHI_DEADLINE_TIMEOUT;
+        }
+        int64_t remaining = deadline - now;
+        int timeout = remaining > INT_MAX ? INT_MAX : (int)remaining;
+        struct pollfd descriptor = {
+            .fd = fd,
+            .events = events,
+            .revents = 0,
+        };
+        int ready = poll(&descriptor, 1, timeout);
+        if (ready < 0 && errno == EINTR) {
+            continue;
+        }
+        if (ready < 0) {
+            return MOCHI_DEADLINE_ERROR;
+        }
+        if (ready == 0) {
+            return MOCHI_DEADLINE_TIMEOUT;
+        }
+        if ((descriptor.revents & POLLNVAL) != 0) {
+            return MOCHI_DEADLINE_ERROR;
+        }
+        if ((descriptor.revents & (events | POLLHUP)) != 0) {
+            return 0;
+        }
+        if ((descriptor.revents & POLLERR) != 0) {
+            return MOCHI_DEADLINE_ERROR;
+        }
+    }
+}
+
+static int mochi_make_nonblocking(int fd) {
+    int flags;
+    do {
+        flags = fcntl(fd, F_GETFL);
+    } while (flags < 0 && errno == EINTR);
+    if (flags < 0) {
+        return -1;
+    }
+    if ((flags & O_NONBLOCK) != 0) {
+        return 0;
+    }
+    int result;
+    do {
+        result = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    } while (result < 0 && errno == EINTR);
+    return result;
+}
+
+static ssize_t mochi_write_without_sigpipe(
+    int fd, const void *data, size_t length
+) {
+    sigset_t blocked;
+    sigset_t previous;
+    sigset_t pending;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGPIPE);
+    int mask_error = pthread_sigmask(SIG_BLOCK, &blocked, &previous);
+    if (mask_error != 0) {
+        errno = mask_error;
+        return -1;
+    }
+    bool pipe_was_pending =
+        sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1;
+    ssize_t written = write(fd, data, length);
+    int write_error = errno;
+    bool pipe_is_pending =
+        sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1;
+    if (
+        written < 0 && write_error == EPIPE && !pipe_was_pending &&
+        pipe_is_pending
+    ) {
+#if defined(__APPLE__)
+        int caught_signal = 0;
+        (void)sigwait(&blocked, &caught_signal);
+#else
+        struct timespec no_wait = {.tv_sec = 0, .tv_nsec = 0};
+        while (sigtimedwait(&blocked, NULL, &no_wait) < 0 && errno == EINTR) {
+        }
+#endif
+    }
+    int restore_error = pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    if (written >= 0 && restore_error != 0) {
+        errno = restore_error;
+        return -1;
+    }
+    errno = write_error;
+    return written;
+}
+#endif
+
+int mochi_fd_write_all_until(
+    int fd, const void *data, size_t length, int64_t deadline
+) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (fd < 0 || data == NULL || deadline < 0 || mochi_make_nonblocking(fd) != 0) {
+        return MOCHI_DEADLINE_ERROR;
+    }
+    size_t offset = 0;
+    while (offset < length) {
+        int ready = mochi_poll_until(fd, POLLOUT, deadline);
+        if (ready != 0) {
+            return ready;
+        }
+        ssize_t written = mochi_write_without_sigpipe(
+            fd, (const unsigned char *)data + offset, length - offset
+        );
+        if (written < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
+            continue;
+        }
+        if (written <= 0) {
+            return MOCHI_DEADLINE_ERROR;
+        }
+        offset += (size_t)written;
+    }
+    return 0;
+#else
+    (void)fd;
+    (void)data;
+    (void)length;
+    (void)deadline;
+    return MOCHI_DEADLINE_ERROR;
+#endif
+}
+
+int mochi_fd_read_some_until(
+    int fd, void *data, size_t capacity, int64_t deadline
+) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (fd < 0 || data == NULL || capacity == 0 || deadline < 0 ||
+        mochi_make_nonblocking(fd) != 0) {
+        return MOCHI_DEADLINE_ERROR;
+    }
+    for (;;) {
+        int ready = mochi_poll_until(fd, POLLIN, deadline);
+        if (ready != 0) {
+            return ready;
+        }
+        ssize_t count = read(fd, data, capacity);
+        if (count < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
+            continue;
+        }
+        if (count < 0 || count > INT_MAX) {
+            return MOCHI_DEADLINE_ERROR;
+        }
+        return (int)count;
+    }
+#else
+    (void)fd;
+    (void)data;
+    (void)capacity;
+    (void)deadline;
+    return MOCHI_DEADLINE_ERROR;
+#endif
+}
+
+int mochi_kill_process_group_and_wait(int pid_value, int *status) {
+#if defined(__unix__) || defined(__APPLE__)
+    pid_t pid = (pid_t)pid_value;
+    if (pid <= 0) {
+        return -1;
+    }
+    (void)kill(-pid, SIGKILL);
+    (void)kill(pid, SIGKILL);
+    int local_status = 0;
+    pid_t waited;
+    do {
+        waited = waitpid(pid, &local_status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited < 0 && errno != ECHILD) {
+        return -1;
+    }
+    if (status != NULL) {
+        *status = local_status;
+    }
+    return 0;
+#else
+    (void)pid_value;
+    (void)status;
+    return -1;
+#endif
+}
+
+int mochi_wait_process_until(int pid_value, int64_t deadline, int *status) {
+#if defined(__unix__) || defined(__APPLE__)
+    pid_t pid = (pid_t)pid_value;
+    if (pid <= 0 || deadline < 0) {
+        return -1;
+    }
+    for (;;) {
+        int local_status = 0;
+        pid_t waited = waitpid(pid, &local_status, WNOHANG);
+        if (waited == pid) {
+            if (status != NULL) {
+                *status = local_status;
+            }
+            return 0;
+        }
+        if (waited < 0 && errno == EINTR) {
+            continue;
+        }
+        if (waited < 0) {
+            (void)mochi_kill_process_group_and_wait(pid_value, status);
+            return -1;
+        }
+        int64_t now = mochi_monotonic_millis();
+        if (now < 0) {
+            (void)mochi_kill_process_group_and_wait(pid_value, status);
+            return -1;
+        }
+        if (now >= deadline) {
+            do {
+                waited = waitpid(pid, &local_status, WNOHANG);
+            } while (waited < 0 && errno == EINTR);
+            if (waited == pid) {
+                if (status != NULL) {
+                    *status = local_status;
+                }
+                return 0;
+            }
+            (void)mochi_kill_process_group_and_wait(pid_value, status);
+            return 1;
+        }
+        int64_t remaining = deadline - now;
+        struct timespec pause = {
+            .tv_sec = 0,
+            .tv_nsec = (long)(remaining < 10 ? remaining : 10) * 1000000L,
+        };
+        if (nanosleep(&pause, NULL) != 0 && errno != EINTR) {
+            (void)mochi_kill_process_group_and_wait(pid_value, status);
+            return -1;
+        }
+    }
+#else
+    (void)pid_value;
+    (void)deadline;
+    (void)status;
+    return -1;
+#endif
+}
 
 int mochi_copy_file(const char *source, const char *destination) {
 #if defined(__unix__) || defined(__APPLE__)
@@ -80,6 +367,139 @@ int mochi_copy_file(const char *source, const char *destination) {
 #else
     (void)source;
     (void)destination;
+    return -1;
+#endif
+}
+
+int mochi_open_readonly(const char *path) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (path == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    return open(path, O_RDONLY);
+#else
+    (void)path;
+    return -1;
+#endif
+}
+
+int mochi_same_file(const char *left, const char *right) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (left == NULL || right == NULL) {
+        return -EINVAL;
+    }
+    struct stat left_metadata;
+    struct stat right_metadata;
+    if (stat(left, &left_metadata) != 0) {
+        return -(errno == 0 ? EIO : errno);
+    }
+    if (stat(right, &right_metadata) != 0) {
+        if (errno == ENOENT) {
+            return 0;
+        }
+        return -(errno == 0 ? EIO : errno);
+    }
+    return left_metadata.st_dev == right_metadata.st_dev &&
+           left_metadata.st_ino == right_metadata.st_ino;
+#else
+    (void)left;
+    (void)right;
+    return -1;
+#endif
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+static int mochi_remove_stage_tree(const char *path) {
+    struct stat metadata;
+    if (lstat(path, &metadata) != 0) {
+        return errno == ENOENT ? 0 : (errno == 0 ? -1 : errno);
+    }
+    if (!S_ISDIR(metadata.st_mode)) {
+        if (unlink(path) == 0 || errno == ENOENT) {
+            return 0;
+        }
+        return errno == 0 ? -1 : errno;
+    }
+
+    /* Snapshot directories are frozen before compilation. Restore only the
+       owner permissions needed to enumerate and unlink their contents. */
+    if (chmod(path, 0700) != 0) {
+        return errno == 0 ? -1 : errno;
+    }
+    DIR *directory = opendir(path);
+    if (directory == NULL) {
+        return errno == 0 ? -1 : errno;
+    }
+    int result = 0;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(directory);
+        if (entry == NULL) {
+            if (errno != 0 && result == 0) {
+                result = errno;
+            }
+            break;
+        }
+        if (strcmp(entry->d_name, ".") == 0 ||
+            strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        size_t path_length = strlen(path);
+        size_t name_length = strlen(entry->d_name);
+        if (path_length > SIZE_MAX - name_length - 2) {
+            result = EOVERFLOW;
+            break;
+        }
+        size_t child_length = path_length + name_length + 2;
+        char *child = (char *)malloc(child_length);
+        if (child == NULL) {
+            result = ENOMEM;
+            break;
+        }
+        int written = snprintf(
+            child, child_length, "%s/%s", path, entry->d_name
+        );
+        if (written < 0 || (size_t)written >= child_length) {
+            free(child);
+            result = EOVERFLOW;
+            break;
+        }
+        int child_result = mochi_remove_stage_tree(child);
+        free(child);
+        if (child_result != 0) {
+            result = child_result;
+            break;
+        }
+    }
+    if (closedir(directory) != 0 && result == 0) {
+        result = errno == 0 ? -1 : errno;
+    }
+    if (result != 0) {
+        return result;
+    }
+    if (rmdir(path) == 0 || errno == ENOENT) {
+        return 0;
+    }
+    return errno == 0 ? -1 : errno;
+}
+#endif
+
+int mochi_remove_plugin_stage(const char *path) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (path == NULL || path[0] == '\0') {
+        return EINVAL;
+    }
+    const char *basename = strrchr(path, '/');
+    basename = basename == NULL ? path : basename + 1;
+    static const char prefix[] = ".mochi-plugin-stage-";
+    if (strncmp(basename, prefix, sizeof(prefix) - 1) != 0 ||
+        basename[sizeof(prefix) - 1] == '\0') {
+        return EINVAL;
+    }
+    return mochi_remove_stage_tree(path);
+#else
+    (void)path;
     return -1;
 #endif
 }
@@ -375,7 +795,8 @@ void mochi_terminal_set_input_modes(int enabled) {
     static const char disable[] = "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?2004l";
     const char *sequence = enabled ? enable : disable;
     size_t length = enabled ? sizeof(enable) - 1 : sizeof(disable) - 1;
-    (void)write(STDOUT_FILENO, sequence, length);
+    ssize_t ignored = write(STDOUT_FILENO, sequence, length);
+    (void)ignored;
     mochi_terminal_input_modes = enabled != 0;
 }
 

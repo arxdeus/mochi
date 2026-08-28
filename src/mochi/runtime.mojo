@@ -16,6 +16,7 @@ from mochi.domain import (
     ThinkingSupport,
 )
 from mochi.json import JsonValue, parse_json, serialize_json
+from mochi.invocation import InvocationResult
 from mochi.session import Session, message_to_json
 from mochi.mcp import McpClient, McpOAuthState, StdioTransport, StreamableHttpTransport
 from mochi.permissions import (
@@ -38,7 +39,12 @@ from mochi.provider_contract import (
     RequestOptions,
     ThinkingConfig,
 )
-from mochi.plugin import PluginClient
+from mochi.plugin import PluginClient, PluginRegistration
+from mochi.plugin_source import (
+    PluginBuildOptions,
+    PluginSourceMetadata,
+    rebuild_source_plugin,
+)
 from mochi.tools import (
     PreparedTool,
     RemoteToolMetadata,
@@ -120,6 +126,9 @@ struct Runtime:
     var mcp_http_errors: List[String]
     var plugin_names: List[String]
     var plugin_clients: List[PluginClient]
+    var plugin_sources: List[Optional[PluginSourceMetadata]]
+    var plugin_build_options: List[Optional[PluginBuildOptions]]
+    var plugin_prompt_suffix: String
     var subagent_ids: List[String]
     var subagent_names: List[String]
     var subagent_models: List[String]
@@ -167,6 +176,9 @@ struct Runtime:
         self.mcp_http_errors = List[String]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
+        self.plugin_sources = List[Optional[PluginSourceMetadata]]()
+        self.plugin_build_options = List[Optional[PluginBuildOptions]]()
+        self.plugin_prompt_suffix = ""
         self.subagent_ids = List[String]()
         self.subagent_names = List[String]()
         self.subagent_models = List[String]()
@@ -213,6 +225,9 @@ struct Runtime:
         self.mcp_http_errors = List[String]()
         self.plugin_names = List[String]()
         self.plugin_clients = List[PluginClient]()
+        self.plugin_sources = List[Optional[PluginSourceMetadata]]()
+        self.plugin_build_options = List[Optional[PluginBuildOptions]]()
+        self.plugin_prompt_suffix = ""
         self.subagent_ids = List[String]()
         self.subagent_names = List[String]()
         self.subagent_models = List[String]()
@@ -220,6 +235,7 @@ struct Runtime:
 
     def set_system_prompt(mut self, prompt: String):
         self.system_prompt = prompt
+        self.plugin_prompt_suffix = ""
 
     def restore_modes(mut self, meta: JsonValue):
         if meta.kind != JsonValue.OBJECT:
@@ -348,21 +364,25 @@ struct Runtime:
             permission.tool, permission.scopes, answer
         )
         var content = String("Permission denied")
+        var is_error = True
         if answer.is_allow():
             try:
                 var permission_cancel = CancellationToken()
-                content = self._execute_prepared(
+                var result = self._execute_prepared(
                     PreparedTool(
                         permission.tool, permission.arguments.copy()
                     ),
                     permission.tool_call_id,
                     permission_cancel^,
                 )
+                content = result.content
+                is_error = not result.ok
             except error:
                 content = "Error: " + String(error)
         for i in range(len(self.messages) - 1, -1, -1):
             if self.messages[i].tool_call_id == permission.tool_call_id:
                 self.messages[i].content = content
+                self.messages[i].is_error = is_error
                 break
         return content^
 
@@ -427,6 +447,8 @@ struct Runtime:
                 parameters = item.get("inputSchema")
             elif item.contains("parameters"):
                 parameters = item.get("parameters")
+            elif item.contains("schema"):
+                parameters = item.get("schema")
             if parameters.kind != JsonValue.OBJECT:
                 raise Error("remote tool schema must be an object: " + name)
             var metadata = RemoteToolMetadata(
@@ -458,6 +480,7 @@ struct Runtime:
         var message = Message("tool", result.content)
         message.tool_call_id = call.id
         message.name = call.name
+        message.is_error = not result.ok
         self.messages.append(message^)
 
     def attach_mcp_stdio(
@@ -485,10 +508,62 @@ struct Runtime:
         self.mcp_http_errors.append("")
 
     def attach_plugin(
-        mut self, var name: String, var client: PluginClient
+        mut self,
+        var name: String,
+        var client: PluginClient,
+        var source: Optional[PluginSourceMetadata] = None,
+        var build_options: Optional[PluginBuildOptions] = None,
     ):
         self.plugin_names.append(name^)
         self.plugin_clients.append(client^)
+        self.plugin_sources.append(source^)
+        self.plugin_build_options.append(build_options^)
+
+    def install_plugin(
+        mut self,
+        var client: PluginClient,
+        var source: Optional[PluginSourceMetadata] = None,
+        var build_options: Optional[PluginBuildOptions] = None,
+    ) raises -> PluginRegistration:
+        """Validate and atomically attach one negotiated plugin owner."""
+        if not client.protocol.registration:
+            client.cancel()
+            raise Error("plugin did not register")
+        var registration = client.protocol.registration.value().copy()
+        try:
+            if source:
+                source.value().validate_registration(
+                    registration.name, registration.version
+                )
+            for existing in self.plugin_names:
+                if existing == registration.name:
+                    raise Error(
+                        "duplicate plugin registration name: "
+                        + registration.name
+                    )
+        except error:
+            client.cancel()
+            raise error
+        var old_remote = self.remote.copy()
+        var old_tools = self.tools.copy()
+        var old_definitions = self.definitions.copy()
+        try:
+            self.add_remote_tools(
+                "plugin", registration.name, registration.tools.copy()
+            )
+        except error:
+            self.remote = old_remote^
+            self.tools = old_tools^
+            self.definitions = old_definitions^
+            client.cancel()
+            raise error
+        self.attach_plugin(
+            registration.name,
+            client^,
+            source^,
+            build_options^,
+        )
+        return registration^
 
     def plugin_command_names(self) raises -> List[String]:
         var result = List[String]()
@@ -538,20 +613,108 @@ struct Runtime:
         return result^
 
     def apply_plugin_prompt_hints(mut self):
+        if self.plugin_prompt_suffix != "" and self.system_prompt.endswith(
+            self.plugin_prompt_suffix
+        ):
+            var prompt = self.system_prompt.copy()
+            var suffix = self.plugin_prompt_suffix.copy()
+            self.system_prompt = String(prompt.removesuffix(suffix))
+        self.plugin_prompt_suffix = ""
         var hints = self.plugin_prompt_hints()
         if hints != "":
-            self.system_prompt += "\n\n" + hints
+            self.plugin_prompt_suffix = "\n\n" + hints
+            self.system_prompt += self.plugin_prompt_suffix
 
     def reload_plugins(mut self) raises -> Int:
+        var production = True
         for i in range(len(self.plugin_names)):
-            var old_name = self.plugin_names[i]
-            self._remove_remote_endpoint("plugin", old_name)
-            self.plugin_clients[i].reload()
-            var registration = self.plugin_clients[i].protocol.registration.value().copy()
-            self.plugin_names[i] = registration.name
-            self.add_remote_tools(
-                "plugin", registration.name, registration.tools.copy()
-            )
+            if not self.plugin_sources[i] and not self.plugin_clients[i].executable:
+                production = False
+        if not production:
+            # Fixture-only clients have no process launch metadata. Keep their
+            # deterministic in-memory reconnect path for unit tests.
+            for i in range(len(self.plugin_names)):
+                var old_name = self.plugin_names[i]
+                self._remove_remote_endpoint("plugin", old_name)
+                self.plugin_clients[i].reload()
+                var registration = self.plugin_clients[i].protocol.registration.value().copy()
+                self.plugin_names[i] = registration.name
+                self.add_remote_tools(
+                    "plugin", registration.name, registration.tools.copy()
+                )
+            self.apply_plugin_prompt_hints()
+            return len(self.plugin_names)
+
+        # Build and negotiate every candidate before mutating any live owner.
+        # The registry commit below is global across this reload, so a failure
+        # in plugin N cannot leave plugins 0..N-1 silently upgraded.
+        var candidates = List[PluginClient]()
+        var candidate_sources = List[Optional[PluginSourceMetadata]]()
+        var registrations = List[PluginRegistration]()
+        try:
+            for i in range(len(self.plugin_names)):
+                var candidate: PluginClient
+                var candidate_source = self.plugin_sources[i].copy()
+                if self.plugin_sources[i]:
+                    if not self.plugin_build_options[i]:
+                        raise Error("source plugin has no retained build options")
+                    var prepared = rebuild_source_plugin(
+                        self.plugin_sources[i].value().copy(),
+                        self.plugin_build_options[i].value().copy(),
+                    )
+                    candidate = PluginClient.launch(prepared.executable.copy())
+                    var identity = candidate.protocol.registration.value().copy()
+                    prepared.source.value().validate_registration(
+                        identity.name, identity.version
+                    )
+                    candidate_source = prepared.source.copy()
+                else:
+                    candidate = self.plugin_clients[i].replacement()
+                registrations.append(
+                    candidate.protocol.registration.value().copy()
+                )
+                candidate_sources.append(candidate_source^)
+                candidates.append(candidate^)
+        except error:
+            for i in range(len(candidates)):
+                candidates[i].cancel()
+            raise error
+
+        for index in range(len(registrations)):
+            for previous in range(index):
+                if registrations[previous].name == registrations[index].name:
+                    for candidate_index in range(len(candidates)):
+                        candidates[candidate_index].cancel()
+                    raise Error(
+                        "duplicate plugin registration name: "
+                        + registrations[index].name
+                    )
+
+        var old_remote = self.remote.copy()
+        var old_tools = self.tools.copy()
+        var old_definitions = self.definitions.copy()
+        try:
+            var old_names = self.plugin_names.copy()
+            for name in old_names:
+                self._remove_remote_endpoint("plugin", name)
+            for registration in registrations:
+                self.add_remote_tools(
+                    "plugin", registration.name, registration.tools.copy()
+                )
+        except error:
+            self.remote = old_remote^
+            self.tools = old_tools^
+            self.definitions = old_definitions^
+            for i in range(len(candidates)):
+                candidates[i].cancel()
+            raise error
+
+        for i in range(len(self.plugin_names)):
+            self.plugin_clients[i].cancel()
+            self.plugin_clients[i] = candidates.pop(0)
+            self.plugin_names[i] = registrations[i].name
+            self.plugin_sources[i] = candidate_sources[i].copy()
+        self.apply_plugin_prompt_hints()
         return len(self.plugin_names)
 
     def remote_status_lines(self) -> List[String]:
@@ -773,6 +936,7 @@ struct Runtime:
 
     def dispatch(mut self, call: ToolCall, cancel: CancellationToken):
         var content: String
+        var ok: Bool
         try:
             var prepared = self.tools.prepare(call.name, call.arguments)
             var decision = self.tools.authorize(prepared, self.permissions)
@@ -788,6 +952,7 @@ struct Runtime:
 
                     )
                     content = "Permission prompt"
+                    ok = False
                     for scope in decision.scopes:
                         content += ": " + scope
                 else:
@@ -796,37 +961,49 @@ struct Runtime:
                         prepared.name, decision.scopes, answer
                     )
                     if answer.is_allow():
-                        content = self._execute_prepared(prepared, call.id, cancel)
+                        var result = self._execute_prepared(
+                            prepared, call.id, cancel
+                        )
+                        content = result.content
+                        ok = result.ok
                     else:
                         content = "Permission denied"
+                        ok = False
                         for scope in decision.scopes:
                             content += ": " + scope
             elif decision.effect == PermissionEffect.deny():
                 content = "Permission denied"
+                ok = False
                 for scope in decision.scopes:
                     content += ": " + scope
             elif cancel.is_cancelled():
                 content = "Error: operation cancelled"
+                ok = False
             else:
-                content = self._execute_prepared(prepared, call.id, cancel)
+                var result = self._execute_prepared(prepared, call.id, cancel)
+                content = result.content
+                ok = result.ok
         except error:
             content = "Error: " + String(error)
-        self.append_tool_result(call, ToolResult.success(content))
+            ok = False
+        self.append_tool_result(call, ToolResult(ok, content))
 
     def _execute_prepared(
         mut self,
         prepared: PreparedTool,
         tool_call_id: String,
         cancel: CancellationToken,
-    ) raises -> String:
+    ) raises -> ToolResult:
         if prepared.name == "task":
-            return self._run_subagent(prepared, tool_call_id, cancel)
+            return ToolResult.success(
+                self._run_subagent(prepared, tool_call_id, cancel)
+            )
         if self.remote.is_remote(prepared.name):
             var queued = self.remote.take_queued(prepared.name)
             if queued:
-                return queued.value().content
+                return queued.value().copy()
             return self._dispatch_remote(prepared)
-        return self.tools.execute(prepared).content
+        return self.tools.execute(prepared)
 
     def _run_subagent(
         mut self,
@@ -923,37 +1100,36 @@ struct Runtime:
             raise Error("subagent finished without providing a summary")
         return result.text
 
-    def _dispatch_remote(mut self, prepared: PreparedTool) raises -> String:
+    def _dispatch_remote(mut self, prepared: PreparedTool) raises -> ToolResult:
         var protocol = self.remote.protocol_for(prepared.name)
         var endpoint = self.remote.endpoint_for(prepared.name)
         if protocol == "mcp":
             var raw_name = self.remote.raw_name_for(prepared.name)
             for i in range(len(self.mcp_stdio_names)):
                 if self.mcp_stdio_names[i] == endpoint and self.mcp_stdio_enabled[i]:
-                    return serialize_json(
+                    return ToolResult.success(serialize_json(
                         self.mcp_stdio_clients[i].call_tool(
                             self.mcp_stdio_transports[i],
                             raw_name,
                             prepared.arguments.copy(),
                         )
-                    )
+                    ))
             for i in range(len(self.mcp_http_names)):
                 if self.mcp_http_names[i] == endpoint and self.mcp_http_enabled[i]:
-                    return serialize_json(
+                    return ToolResult.success(serialize_json(
                         self.mcp_http_clients[i].call_tool(
                             self.mcp_http_transports[i],
                             raw_name,
                             prepared.arguments.copy(),
                         )
-                    )
+                    ))
         elif protocol == "plugin":
             for i in range(len(self.plugin_names)):
                 if self.plugin_names[i] == endpoint:
-                    return serialize_json(
-                        self.plugin_clients[i].invoke(
-                            "tool", prepared.name, prepared.arguments.copy()
-                        )
+                    var value = self.plugin_clients[i].invoke(
+                        "tool", prepared.name, prepared.arguments.copy()
                     )
+                    return InvocationResult.from_json(value).to_tool_result()
         raise Error(
             "remote endpoint is not attached: " + protocol + ":" + endpoint
         )
@@ -1082,7 +1258,9 @@ def _domain_messages(messages: List[Message]) raises -> List[DomainMessage]:
         if legacy.role == "tool":
             message = DomainMessage(Role.user())
             message.add_block(
-                ContentBlock.tool_result(legacy.tool_call_id, legacy.content)
+                ContentBlock.tool_result(
+                    legacy.tool_call_id, legacy.content, legacy.is_error
+                )
             )
         for call in legacy.tool_calls:
             var input = JsonValue.object()

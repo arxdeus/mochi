@@ -31,7 +31,8 @@ from mochi.mcp import (
 )
 from mochi.ops import plan_update, replace_from_download, restore_backup
 from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager
-from mochi.plugin import PluginClient, PluginExecutable, PluginTransport
+from mochi.plugin import PluginClient
+from mochi.plugin_source import PluginBuildOptions, prepare_plugin
 from mochi.prompt import build_system_prompt, load_instruction_text
 from mochi.provider import (
     AnthropicProviderSpec,
@@ -236,17 +237,31 @@ def main() raises:
                     _ = runtime.mark_mcp_http_error(endpoint.name, "error: " + reason)
                     print("MCP", endpoint.name, "failed:", reason)
         for path in config.plugins:
-            var client = PluginClient(_spawn_plugin(PluginExecutable(path)))
-            client.connect()
-            var registration = client.protocol.registration.value().copy()
-            runtime.add_remote_tools(
-                "plugin", registration.name, registration.tools.copy()
-            )
-            print(
-                "Plugin", registration.name, registration.version,
-                "initialized; tools=", len(registration.tools.array_value),
-            )
-            runtime.attach_plugin(registration.name, client^)
+            try:
+                var build_options = PluginBuildOptions(
+                    paths.cache + "/mojo-plugins",
+                    getenv("MOCHI_MOJO_COMPILER", "mojo"),
+                    VERSION,
+                )
+                var sdk_path = getenv("MOCHI_PLUGIN_SDK_PATH", "")
+                if sdk_path != "":
+                    build_options.add_compiler_argument("-I")
+                    build_options.add_compiler_argument(sdk_path)
+                var prepared = prepare_plugin(path, build_options)
+                var client = PluginClient.launch(prepared.executable.copy())
+                var registration = runtime.install_plugin(
+                    client^,
+                    prepared.source.copy(),
+                    Optional(build_options.copy()) if prepared.source else None,
+                )
+                print(
+                    "Plugin", registration.name, registration.version,
+                    "initialized; tools=", len(registration.tools.array_value),
+                )
+            except error:
+                # Match Maki package loading: one incompatible or malformed
+                # owner is skipped without preventing independent siblings.
+                print("Plugin", path, "skipped:", String(error))
         runtime.apply_plugin_prompt_hints()
 
         if config.print_mode and not config.prompt:
@@ -431,15 +446,6 @@ def _spawn_stdio(var command: List[String]) raises -> StdioTransport:
     var fds = _spawn_piped(command^)
     var transport = StdioTransport()
     transport.process = Process(child_pid=c_pid_t(fds[0]))
-    transport.pid = c_pid_t(fds[0])
-    transport.write_fd = Int32(fds[1])
-    transport.read_fd = Int32(fds[2])
-    return transport^
-
-
-def _spawn_plugin(executable: PluginExecutable) raises -> PluginTransport:
-    var fds = _spawn_piped(executable.command())
-    var transport = PluginTransport()
     transport.pid = c_pid_t(fds[0])
     transport.write_fd = Int32(fds[1])
     transport.read_fd = Int32(fds[2])
@@ -1432,17 +1438,17 @@ def _render_editor(mut ui: UiState):
 
 
 def _read_line() raises -> Optional[String]:
-    var result = String("")
+    var bytes = List[UInt8]()
     while True:
         var byte = external_call["getchar", c_int]()
         if byte < 0:
-            if result == "":
+            if len(bytes) == 0:
                 return None
-            return Optional(result^)
+            return Optional(String(from_utf8=Span(bytes)))
         if byte == 10:
-            return Optional(result^)
+            return Optional(String(from_utf8=Span(bytes)))
         if byte != 13:
-            result += chr(Int(byte))
+            bytes.append(UInt8(byte))
 
 
 def _print_result(result: RuntimeResult, output_format: String):

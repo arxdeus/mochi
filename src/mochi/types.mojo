@@ -24,6 +24,7 @@ struct Message(Copyable, Movable):
     var tool_calls: List[ToolCall]
     var tool_call_id: String
     var name: String
+    var is_error: Bool
 
     def __init__(out self, role: String, content: String):
         self.role = role
@@ -31,6 +32,7 @@ struct Message(Copyable, Movable):
         self.tool_calls = List[ToolCall]()
         self.tool_call_id = ""
         self.name = ""
+        self.is_error = False
 
     def add_tool_call(mut self, var call: ToolCall):
         self.tool_calls.append(call^)

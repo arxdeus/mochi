@@ -249,14 +249,14 @@ def parse_args(arguments: List[String]) raises -> CliConfig:
 def read_stdin() raises -> String:
     """Read standard input to EOF using Mojo native file descriptors."""
     var reader = FileDescriptor(0)
-    var result = String("")
+    var bytes = List[UInt8]()
     while True:
         var buffer = Array[Byte, 4096](fill=0)
         var count = reader.read_bytes(buffer)
         if count <= 0:
-            return result^
+            return String(from_utf8=Span(bytes))
         for index in range(count):
-            result += String(buffer[index])
+            bytes.append(UInt8(buffer[index]))
 
 
 def validate_protocol_metadata(config: CliConfig) raises:
@@ -378,7 +378,7 @@ Options:
       --yolo                    Allow tool operations without prompting
       --mcp-stdio NAME=COMMAND  Connect an MCP stdio server; may be repeated
       --mcp-http NAME=URL       Connect an MCP HTTP server; may be repeated
-      --plugin PATH             Launch a Mojo executable plugin; may be repeated
+      --plugin PATH             Build a .mojo/manifest plugin or launch an executable
 """
 
 
