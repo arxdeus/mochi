@@ -1,4 +1,11 @@
-from std.ffi import CStringSlice, c_int, c_long, c_pid_t, c_size_t, external_call
+from std.ffi import (
+    CStringSlice,
+    c_int,
+    c_long,
+    c_pid_t,
+    c_size_t,
+    external_call,
+)
 from std.os import Process, getenv
 from std.os.path import exists
 from std.sys import argv
@@ -30,7 +37,11 @@ from mochi.mcp import (
     complete_mcp_oauth_with,
 )
 from mochi.ops import plan_update, replace_from_download, restore_backup
-from mochi.permissions import PermissionAnswer, PermissionEffect, PermissionManager
+from mochi.permissions import (
+    PermissionAnswer,
+    PermissionEffect,
+    PermissionManager,
+)
 from mochi.plugin import PluginClient
 from mochi.plugin_source import PluginBuildOptions, prepare_plugin
 from mochi.prompt import build_system_prompt, load_instruction_text
@@ -73,6 +84,7 @@ from mochi.ui import (
     UiEvent,
     UiReducer,
     UiState,
+    _terminal_cell_width,
     command_completion,
     command_help_lines,
     command_matches,
@@ -191,12 +203,14 @@ def main() raises:
             var client = McpClient(endpoint.name)
             var capabilities = client.initialize(transport)
             var tools = client.list_tools(transport)
-            runtime.add_remote_tools(
-                "mcp", endpoint.name, _json_array(tools)
-            )
+            runtime.add_remote_tools("mcp", endpoint.name, _json_array(tools))
             print(
-                "MCP", endpoint.name, "initialized; tools=", len(tools),
-                "capabilities=", serialize_json(capabilities),
+                "MCP",
+                endpoint.name,
+                "initialized; tools=",
+                len(tools),
+                "capabilities=",
+                serialize_json(capabilities),
             )
             runtime.attach_mcp_stdio(endpoint.name, client^, transport^)
         for endpoint in config.mcp_http:
@@ -223,8 +237,12 @@ def main() raises:
                     "mcp", endpoint.name, _json_array(tools)
                 )
                 print(
-                    "MCP", endpoint.name, "initialized; tools=", len(tools),
-                    "capabilities=", serialize_json(capabilities),
+                    "MCP",
+                    endpoint.name,
+                    "initialized; tools=",
+                    len(tools),
+                    "capabilities=",
+                    serialize_json(capabilities),
                 )
                 runtime.attach_mcp_http(endpoint.name, client^, transport^)
             except error:
@@ -234,7 +252,9 @@ def main() raises:
                     _ = runtime.mark_mcp_http_error(endpoint.name, "needs auth")
                     print("MCP", endpoint.name, "needs authentication.")
                 else:
-                    _ = runtime.mark_mcp_http_error(endpoint.name, "error: " + reason)
+                    _ = runtime.mark_mcp_http_error(
+                        endpoint.name, "error: " + reason
+                    )
                     print("MCP", endpoint.name, "failed:", reason)
         for path in config.plugins:
             try:
@@ -255,8 +275,11 @@ def main() raises:
                     Optional(build_options.copy()) if prepared.source else None,
                 )
                 print(
-                    "Plugin", registration.name, registration.version,
-                    "initialized; tools=", len(registration.tools.array_value),
+                    "Plugin",
+                    registration.name,
+                    registration.version,
+                    "initialized; tools=",
+                    len(registration.tools.array_value),
                 )
             except error:
                 # Match Maki package loading: one incompatible or malformed
@@ -278,10 +301,7 @@ def main() raises:
             var history = InputHistory(paths.state)
             history.load()
             var memories = NoteStore(
-                paths.state
-                + "/projects/"
-                + project_id(cwd)
-                + "/memories"
+                paths.state + "/projects/" + project_id(cwd) + "/memories"
             )
             var preferences = PreferenceStore(paths.state + "/preferences.json")
             preferences.load()
@@ -366,7 +386,9 @@ def _production_provider(config: CliConfig) raises -> ProductionProvider:
         var credentials = load_openai_oauth_credentials()
         if credentials.expired(_now_ms()):
             var transport = FlokiTransport()
-            credentials = refresh_openai_oauth_with(transport, credentials, _now_ms())
+            credentials = refresh_openai_oauth_with(
+                transport, credentials, _now_ms()
+            )
             save_openai_oauth_credentials(credentials)
         spec.account_id = credentials.account_id
         provider = OpenAICompatibleProvider(spec^)
@@ -514,6 +536,19 @@ def _run_prompt(
     _print_result(result, output_format)
 
 
+def _interactive_ui_state(
+    history: List[String],
+    messages: List[Message],
+    extension_commands: List[String],
+) -> UiState:
+    """Build every interactive-session UI with the same registered commands."""
+    var ui = UiState()
+    ui.set_history(history.copy())
+    ui.set_transcript(messages)
+    ui.set_extension_commands(extension_commands)
+    return ui^
+
+
 def _interactive(
     mut runtime: Runtime,
     mut session: Session,
@@ -524,10 +559,11 @@ def _interactive(
     paths: StoragePaths,
     output_format: String,
 ) raises:
-    var ui = UiState()
-    ui.set_history(history.entries.copy())
-    ui.set_transcript(runtime.messages)
-    ui.set_extension_commands(runtime.plugin_command_names())
+    var ui = _interactive_ui_state(
+        history.entries,
+        runtime.messages,
+        runtime.plugin_command_names(),
+    )
     while True:
         var line = _read_interactive_line(ui)
         if not line:
@@ -548,7 +584,10 @@ def _interactive(
                 return
             elif action.name == "reload":
                 try:
-                    print("Reloaded executable extensions:", runtime.reload_plugins())
+                    print(
+                        "Reloaded executable extensions:",
+                        runtime.reload_plugins(),
+                    )
                     ui.set_extension_commands(runtime.plugin_command_names())
                 except error:
                     print("Reload failed:", error)
@@ -622,9 +661,11 @@ def _interactive(
             elif action.name == "new" or action.name == "clear":
                 session = _new_session(runtime.model, session.cwd)
                 runtime.set_messages(List[Message]())
-                ui = UiState()
-                ui.set_history(history.entries.copy())
-                ui.set_transcript(runtime.messages)
+                ui = _interactive_ui_state(
+                    history.entries,
+                    runtime.messages,
+                    runtime.plugin_command_names(),
+                )
                 print("Started session:", session.id)
             elif action.name == "usage":
                 _interactive_usage(session, runtime)
@@ -634,9 +675,15 @@ def _interactive(
                 _interactive_help()
             else:
                 try:
-                    print(runtime.invoke_plugin_command(action.name, action.text))
+                    print(
+                        runtime.invoke_plugin_command(action.name, action.text)
+                    )
                 except error:
-                    print("Unknown command:", action.name, "(" + String(error) + ")")
+                    print(
+                        "Unknown command:",
+                        action.name,
+                        "(" + String(error) + ")",
+                    )
             continue
         _run_prompt(runtime, session, store, action.text, output_format)
         if _interactive_permissions(runtime):
@@ -658,9 +705,7 @@ def _interactive_permissions(mut runtime: Runtime) raises -> Bool:
         print("[y] allow once, [a] allow for session, [n] deny: ", end="")
         var answer = _read_line()
         if not answer:
-            _ = runtime.resolve_permission(
-                permission, PermissionAnswer.deny()
-            )
+            _ = runtime.resolve_permission(permission, PermissionAnswer.deny())
             return resolved
         var choice = String(answer.value().strip()).lower()
         if choice == "a" or choice == "always":
@@ -702,14 +747,38 @@ def _interactive_theme(
     mut preferences: PreferenceStore, mut ui: UiState
 ) raises:
     comptime themes = [
-        "ayu_dark", "ayu_light", "ayu_mirage", "carbonfox",
-        "catppuccin_frappe", "catppuccin_latte", "catppuccin_macchiato",
-        "catppuccin_mocha", "dark_daltonized", "dracula", "everforest_dark",
-        "fleet_dark", "github_dark", "gruvbox", "gruvbox_light", "kanagawa",
-        "kanagawa_ink", "kanagawa_plum", "material_darker", "monokai_pro",
-        "night_owl", "nightfox", "nord", "onedark", "rose_pine",
-        "rose_pine_dawn", "rose_pine_midnight", "rose_pine_moon",
-        "solarized_dark", "solarized_light", "tokyonight", "vscode_dark_plus",
+        "ayu_dark",
+        "ayu_light",
+        "ayu_mirage",
+        "carbonfox",
+        "catppuccin_frappe",
+        "catppuccin_latte",
+        "catppuccin_macchiato",
+        "catppuccin_mocha",
+        "dark_daltonized",
+        "dracula",
+        "everforest_dark",
+        "fleet_dark",
+        "github_dark",
+        "gruvbox",
+        "gruvbox_light",
+        "kanagawa",
+        "kanagawa_ink",
+        "kanagawa_plum",
+        "material_darker",
+        "monokai_pro",
+        "night_owl",
+        "nightfox",
+        "nord",
+        "onedark",
+        "rose_pine",
+        "rose_pine_dawn",
+        "rose_pine_midnight",
+        "rose_pine_moon",
+        "solarized_dark",
+        "solarized_light",
+        "tokyonight",
+        "vscode_dark_plus",
         "zenburn",
     ]
     var current = String("dracula")
@@ -733,9 +802,13 @@ def _interactive_theme(
             preferences.set("theme", JsonValue.string(current))
             _ = UiReducer.reduce(ui, UiEvent.picker_close())
         elif byte == 27:
-            var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+            var bracket = external_call[
+                "mochi_terminal_read_byte", c_int, c_int
+            ](20)
             if bracket == 91:
-                var key = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+                var key = external_call[
+                    "mochi_terminal_read_byte", c_int, c_int
+                ](20)
                 if key == 65:
                     _ = UiReducer.reduce(ui, UiEvent.picker_previous())
                 elif key == 66:
@@ -779,9 +852,13 @@ def _interactive_mcp(
             reconnect = ui.picker_items[ui.picker_selected]
             _ = UiReducer.reduce(ui, UiEvent.picker_close())
         elif byte == 27:
-            var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+            var bracket = external_call[
+                "mochi_terminal_read_byte", c_int, c_int
+            ](20)
             if bracket == 91:
-                var key = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+                var key = external_call[
+                    "mochi_terminal_read_byte", c_int, c_int
+                ](20)
                 if key == 65:
                     _ = UiReducer.reduce(ui, UiEvent.picker_previous())
                 elif key == 66:
@@ -798,7 +875,9 @@ def _interactive_mcp(
             var count = runtime.reconnect_mcp_http(reconnect)
             print("MCP", reconnect, "reconnected; tools=", count)
         except error:
-            _ = runtime.mark_mcp_http_error(reconnect, "error: " + String(error))
+            _ = runtime.mark_mcp_http_error(
+                reconnect, "error: " + String(error)
+            )
             print("MCP", reconnect, "reconnect failed:", error)
     elif logout != "":
         var url = runtime.mcp_http_url(logout)
@@ -819,8 +898,14 @@ def _authenticate_mcp(
         return
     var bound_port: c_int = 0
     var listener = external_call[
-        "mochi_oauth_callback_bind", c_int, c_int, Pointer[mut=True, c_int, MutAnyOrigin]
-    ](8765, rebind[Pointer[mut=True, c_int, MutAnyOrigin]](Pointer(to=bound_port)))
+        "mochi_oauth_callback_bind",
+        c_int,
+        c_int,
+        Pointer[mut=True, c_int, MutAnyOrigin],
+    ](
+        8765,
+        rebind[Pointer[mut=True, c_int, MutAnyOrigin]](Pointer(to=bound_port)),
+    )
     if listener < 0:
         print("Unable to start MCP OAuth callback listener.")
         return
@@ -830,7 +915,11 @@ def _authenticate_mcp(
     )
     var client_id = String("")
     var client_secret = String("")
-    if existing and existing.value().redirect_uri and existing.value().redirect_uri.value() == redirect_uri:
+    if (
+        existing
+        and existing.value().redirect_uri
+        and existing.value().redirect_uri.value() == redirect_uri
+    ):
         client_id = existing.value().client_id
         if existing.value().client_secret:
             client_secret = existing.value().client_secret.value()
@@ -842,15 +931,26 @@ def _authenticate_mcp(
         client_id=client_id,
         client_secret=client_secret,
     )
-    print("Open this URL in your browser:\n\n  " + flow.authorization_url + "\n")
+    print(
+        "Open this URL in your browser:\n\n  " + flow.authorization_url + "\n"
+    )
     _ = external_call[
         "mochi_open_browser", c_int, CStringSlice[ImmutAnyOrigin]
-    ](rebind[CStringSlice[ImmutAnyOrigin]](flow.authorization_url.as_c_string_slice()))
+    ](
+        rebind[CStringSlice[ImmutAnyOrigin]](
+            flow.authorization_url.as_c_string_slice()
+        )
+    )
     print("Waiting for callback on " + redirect_uri + "...")
     print("Or paste the complete redirect URL here:")
     var callback = List[UInt8](length=8192, fill=0)
     var status = external_call[
-        "mochi_oauth_callback_wait", c_int, c_int, Pointer[mut=True, UInt8, MutAnyOrigin], c_size_t, c_int
+        "mochi_oauth_callback_wait",
+        c_int,
+        c_int,
+        Pointer[mut=True, UInt8, MutAnyOrigin],
+        c_size_t,
+        c_int,
     ](
         listener,
         rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](callback.unsafe_ptr()),
@@ -860,7 +960,9 @@ def _authenticate_mcp(
     if status < 0:
         print("MCP OAuth authorization timed out.")
         return
-    var callback_text = String(String(unsafe_from_utf8=Span(callback)).strip("\0"))
+    var callback_text = String(
+        String(unsafe_from_utf8=Span(callback)).strip("\0")
+    )
     var tokens = complete_mcp_oauth_with(
         transport, flow, callback_text, _now_ms()
     )
@@ -869,7 +971,8 @@ def _authenticate_mcp(
         Optional(tokens.copy()),
         flow.client_id,
         Optional(flow.client_secret) if flow.client_secret != "" else None,
-        Optional(flow.client_secret_expires_at) if flow.client_secret_expires_at > 0 else None,
+        Optional(flow.client_secret_expires_at) if flow.client_secret_expires_at
+        > 0 else None,
         Optional(flow.redirect_uri),
         Optional(flow.token_endpoint),
     )
@@ -898,8 +1001,13 @@ def _render_picker(ui: UiState):
         var selected = ui.picker_selected
         var toggle = "[x] " if ui.picker_enabled[selected] else "[ ] "
         print(
-            toggle + ui.picker_items[selected] + "  " + String(selected + 1)
-            + "/" + String(len(ui.picker_items)) + "  Enter toggle · Esc close",
+            toggle
+            + ui.picker_items[selected]
+            + "  "
+            + String(selected + 1)
+            + "/"
+            + String(len(ui.picker_items))
+            + "  Enter toggle · Esc close",
             end="",
         )
 
@@ -923,9 +1031,13 @@ def _interactive_tasks(session: Session, mut ui: UiState) raises:
             selected = ui.picker_selected
             _ = UiReducer.reduce(ui, UiEvent.picker_close())
         elif byte == 27:
-            var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+            var bracket = external_call[
+                "mochi_terminal_read_byte", c_int, c_int
+            ](20)
             if bracket == 91:
-                var key = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+                var key = external_call[
+                    "mochi_terminal_read_byte", c_int, c_int
+                ](20)
                 if key == 65:
                     _ = UiReducer.reduce(ui, UiEvent.picker_previous())
                 elif key == 66:
@@ -961,12 +1073,14 @@ def _interactive_cd(
         return False
     var resolved = List[UInt8](length=4096, fill=0)
     var status = external_call[
-        "mochi_change_directory", c_int, CStringSlice[ImmutAnyOrigin], Pointer[mut=True, UInt8, MutAnyOrigin], c_size_t
+        "mochi_change_directory",
+        c_int,
+        CStringSlice[ImmutAnyOrigin],
+        Pointer[mut=True, UInt8, MutAnyOrigin],
+        c_size_t,
     ](
         rebind[CStringSlice[ImmutAnyOrigin]](path.as_c_string_slice()),
-        rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](
-            resolved.unsafe_ptr()
-        ),
+        rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](resolved.unsafe_ptr()),
         c_size_t(len(resolved)),
     )
     if status != 0:
@@ -982,9 +1096,7 @@ def _interactive_cd(
     return True
 
 
-def _interactive_btw(
-    mut runtime: Runtime, session: Session, question: String
-):
+def _interactive_btw(mut runtime: Runtime, session: Session, question: String):
     var trimmed = String(question.strip())
     if trimmed == "":
         print("Usage: /btw <question>")
@@ -1074,9 +1186,13 @@ def _interactive_login(
             selected = ui.picker_items[ui.picker_selected]
             _ = UiReducer.reduce(ui, UiEvent.picker_close())
         elif byte == 27:
-            var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+            var bracket = external_call[
+                "mochi_terminal_read_byte", c_int, c_int
+            ](20)
             if bracket == 91:
-                var key = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+                var key = external_call[
+                    "mochi_terminal_read_byte", c_int, c_int
+                ](20)
                 if key == 65:
                     _ = UiReducer.reduce(ui, UiEvent.picker_previous())
                 elif key == 66:
@@ -1168,9 +1284,13 @@ def _interactive_model(
             runtime.provider.set_model_info(find_model_info(runtime.model))
             _ = UiReducer.reduce(ui, UiEvent.picker_close())
         elif byte == 27:
-            var bracket = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+            var bracket = external_call[
+                "mochi_terminal_read_byte", c_int, c_int
+            ](20)
             if bracket == 91:
-                var key = external_call["mochi_terminal_read_byte", c_int, c_int](20)
+                var key = external_call[
+                    "mochi_terminal_read_byte", c_int, c_int
+                ](20)
                 if key == 65:
                     _ = UiReducer.reduce(ui, UiEvent.picker_previous())
                 elif key == 66:
@@ -1199,14 +1319,15 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
     if raw_mode <= 0:
         print("> ", end="")
         return _read_line()
+    var frame = _TerminalEditorFrame()
     _set_terminal_input_modes(True)
-    _render_editor(ui)
+    _render_editor(ui, frame)
     while True:
         var byte = external_call["getchar", c_int]()
         if byte < 0 or byte == 4:
+            _finish_editor_frame(frame)
             _set_terminal_input_modes(False)
             external_call["mochi_terminal_disable_raw", NoneType]()
-            print()
             if ui.draft == "":
                 return None
             return Optional(ui.draft.copy())
@@ -1215,11 +1336,11 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                 _ = UiReducer.reduce(ui, UiEvent.search_close())
             else:
                 _ = UiReducer.reduce(ui, UiEvent.edit(""))
-            _render_editor(ui)
+            _render_editor(ui, frame)
             continue
         if byte == 6:
             _ = UiReducer.reduce(ui, UiEvent.search_open())
-            _render_editor(ui)
+            _render_editor(ui, frame)
             continue
         if ui.search_open:
             if byte == 10 or byte == 13:
@@ -1266,22 +1387,25 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                         ui.search_query + _read_utf8_character(Int(byte))
                     ),
                 )
-            _render_editor(ui)
+            _render_editor(ui, frame)
             continue
         if byte == 10 or byte == 13:
-            if ui.cursor == ui.draft.count_codepoints() and ui.draft.endswith("\\"):
+            if ui.cursor == ui.draft.count_codepoints() and ui.draft.endswith(
+                "\\"
+            ):
                 _ = UiReducer.reduce(ui, UiEvent.continue_line())
-                _render_editor(ui)
+                _render_editor(ui, frame)
                 continue
+            _finish_editor_frame(frame)
             _set_terminal_input_modes(False)
             external_call["mochi_terminal_disable_raw", NoneType]()
-            print()
             return Optional(ui.draft.copy())
         if byte == 127 or byte == 8:
             _ = UiReducer.reduce(ui, UiEvent.delete_backward())
         elif byte == 9 and ui.draft.startswith("/"):
             _ = UiReducer.reduce(
-                ui, UiEvent.edit(command_completion(ui.draft, ui.command_selected))
+                ui,
+                UiEvent.edit(command_completion(ui.draft, ui.command_selected)),
             )
         elif byte == 27:
             var bracket = external_call[
@@ -1294,12 +1418,18 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                 if key == 60:
                     _read_sgr_mouse(ui)
                 elif key == 65:
-                    if ui.draft.startswith("/") and len(command_matches(ui.draft)) > 0:
+                    if (
+                        ui.draft.startswith("/")
+                        and len(command_matches(ui.draft)) > 0
+                    ):
                         _ = UiReducer.reduce(ui, UiEvent.command_previous())
                     else:
                         _ = UiReducer.reduce(ui, UiEvent.history_up())
                 elif key == 66:
-                    if ui.draft.startswith("/") and len(command_matches(ui.draft)) > 0:
+                    if (
+                        ui.draft.startswith("/")
+                        and len(command_matches(ui.draft)) > 0
+                    ):
                         _ = UiReducer.reduce(ui, UiEvent.command_next())
                     else:
                         _ = UiReducer.reduce(ui, UiEvent.history_down())
@@ -1312,10 +1442,14 @@ def _read_interactive_line(mut ui: UiState) raises -> Optional[String]:
                     var zero_again = external_call["getchar", c_int]()
                     var tilde = external_call["getchar", c_int]()
                     if zero == 48 and zero_again == 48 and tilde == 126:
-                        _ = UiReducer.reduce(ui, UiEvent.paste_spaced(_read_bracketed_paste()))
+                        _ = UiReducer.reduce(
+                            ui, UiEvent.paste_spaced(_read_bracketed_paste())
+                        )
         elif byte >= 32:
-            _ = UiReducer.reduce(ui, UiEvent.insert(_read_utf8_character(Int(byte))))
-        _render_editor(ui)
+            _ = UiReducer.reduce(
+                ui, UiEvent.insert(_read_utf8_character(Int(byte)))
+            )
+        _render_editor(ui, frame)
 
 
 def _set_terminal_input_modes(enabled: Bool):
@@ -1399,11 +1533,21 @@ def _read_utf8_character(first: Int) raises -> String:
     return String(unsafe_from_utf8=Span(bytes))
 
 
-def _render_editor(mut ui: UiState):
+struct _TerminalEditorFrame(Copyable, Movable):
+    var rows: Int
+    var cursor_row: Int
+    var scroll_y: Int
+
+    def __init__(out self):
+        self.rows = 0
+        self.cursor_row = 0
+        self.scroll_y = 0
+
+
+def _render_editor(mut ui: UiState, mut frame: _TerminalEditorFrame):
     var columns = Int(external_call["mochi_terminal_columns", c_int]())
     if columns <= 0:
         columns = ui.viewport_width
-    ui.register_terminal_zones(columns, 1)
     if ui.search_open:
         var count = len(ui.search_matches)
         var selected = 0
@@ -1415,26 +1559,263 @@ def _render_editor(mut ui: UiState):
             preview = "  |  " + results[ui.search_selected]
         elif ui.search_query != "":
             preview = "  |  No matches"
-        print(
-            "\r\x1b[2KSearch: " + ui.search_query + "  " + String(selected)
-            + "/" + String(count) + preview,
-            end="",
+        var layout = ui.input_cursor_layout(
+            columns, 1, True, True, scroll_y=frame.scroll_y
+        )
+        var rows = List[String]()
+        rows.append(
+            _terminal_clip(
+                "Search: "
+                + ui.search_query
+                + "  "
+                + String(selected)
+                + "/"
+                + String(count)
+                + preview,
+                columns,
+            )
+        )
+        ui.register_terminal_zones(columns, 1)
+        var search_cursor_col = _search_cursor_column(ui.search_query, columns)
+        _paint_editor_frame(
+            frame,
+            rows,
+            0 if search_cursor_col >= 0 else -1,
+            max(0, search_cursor_col),
+            layout.scroll_y,
         )
         return
-    var tail = ui.draft.count_codepoints() - ui.cursor
-    print("\r\x1b[2K> " + ui.draft, end="")
-    if tail > 0:
-        print("\x1b[" + String(tail) + "D", end="")
+
+    var editor_height = max(1, ui.viewport_height)
+    var layout = ui.input_cursor_layout(
+        columns,
+        editor_height,
+        True,
+        True,
+        scroll_y=frame.scroll_y,
+    )
+    var cursor_line_active = ui.picker_name == "" and ui.overlay_name == ""
+    var all_rows = _terminal_input_rows(
+        ui.draft,
+        columns,
+        cursor=ui.cursor,
+        reserve_cursor_row=cursor_line_active,
+    )
+    while len(all_rows) < layout.total_rows:
+        all_rows.append("")
+
+    var rows = List[String]()
+    var visible_end = min(len(all_rows), layout.scroll_y + editor_height)
+    for row in range(layout.scroll_y, visible_end):
+        rows.append(all_rows[row])
+    if len(rows) == 0:
+        rows.append("")
+    var input_row_count = len(rows)
+
     if ui.draft.startswith("/") and not " " in ui.draft:
         var matches = command_matches(ui.draft)
-        if len(matches) > 0:
+        if len(matches) > 0 and len(rows) < editor_height:
             var selected = min(ui.command_selected, len(matches) - 1)
-            print(
-                "\x1b[s\x1b[90m  " + matches[selected] + "  "
-                + String(selected + 1) + "/" + String(len(matches))
-                + "\x1b[0m\x1b[u",
-                end="",
+            var hint = _terminal_clip(
+                "  "
+                + matches[selected]
+                + "  "
+                + String(selected + 1)
+                + "/"
+                + String(len(matches)),
+                columns,
             )
+            rows.append("\x1b[90m" + hint + "\x1b[0m")
+
+    ui.register_terminal_zones(columns, input_row_count)
+    var cursor_row = -1
+    var cursor_col = 0
+    if layout.cursor:
+        cursor_row = layout.cursor.value().row
+        cursor_col = layout.cursor.value().col
+    _paint_editor_frame(frame, rows, cursor_row, cursor_col, layout.scroll_y)
+
+
+def _terminal_input_rows(
+    draft: String,
+    width: Int,
+    cursor: Int = -1,
+    reserve_cursor_row: Bool = False,
+) -> List[String]:
+    var rows = List[String]()
+    var logical_line = String("")
+    var first_line = True
+    var row_width = max(1, width - 2)
+    var consumed = 0
+    var logical_codepoints = 0
+    for part in draft.codepoint_slices():
+        if String(part) == "\n":
+            _append_terminal_input_line(
+                rows,
+                logical_line,
+                first_line,
+                row_width,
+                reserve_cursor_row
+                and cursor >= consumed
+                and cursor <= consumed + logical_codepoints,
+            )
+            logical_line = ""
+            first_line = False
+            consumed += logical_codepoints + 1
+            logical_codepoints = 0
+        else:
+            logical_line += String(part)
+            logical_codepoints += 1
+    _append_terminal_input_line(
+        rows,
+        logical_line,
+        first_line,
+        row_width,
+        reserve_cursor_row
+        and cursor >= consumed
+        and cursor <= consumed + logical_codepoints,
+    )
+    return rows^
+
+
+def _append_terminal_input_line(
+    mut rows: List[String],
+    line: String,
+    first_line: Bool,
+    row_width: Int,
+    reserve_cursor_row: Bool = False,
+):
+    var row = String("> " if first_line else "  ")
+    var cells = 0
+    for part in line.codepoint_slices():
+        var codepoint = 0
+        for cp in part.codepoints():
+            codepoint = Int(cp.to_u32())
+            break
+        var width = _terminal_cell_width(codepoint)
+        if cells > 0 and cells + width > row_width:
+            rows.append(row)
+            row = ""
+            cells = 0
+        row += String(part)
+        cells += width
+    rows.append(row^)
+    # Maki reserves one display cell for the software cursor on its logical
+    # line. If the final visual row is full, that cell owns a trailing empty
+    # row even when the caret is earlier in the line.
+    if reserve_cursor_row and cells + 1 > row_width:
+        rows.append("")
+
+
+def _terminal_clip(value: String, width: Int) -> String:
+    var result = String("")
+    var cells = 0
+    for part in value.codepoint_slices():
+        var codepoint = 0
+        for cp in part.codepoints():
+            codepoint = Int(cp.to_u32())
+            break
+        var part_width = _terminal_cell_width(codepoint)
+        if cells + part_width > max(0, width):
+            break
+        result += String(part)
+        cells += part_width
+    return result^
+
+
+def _terminal_text_width(value: String) -> Int:
+    var cells = 0
+    for part in value.codepoint_slices():
+        var codepoint = 0
+        for cp in part.codepoints():
+            codepoint = Int(cp.to_u32())
+            break
+        cells += _terminal_cell_width(codepoint)
+    return cells
+
+
+def _search_cursor_column(query: String, width: Int) -> Int:
+    # Search owns its own caret. The main-input cursor is intentionally hidden
+    # while the overlay is open, so park the real terminal cursor on the first
+    # separator cell immediately after the query instead.
+    var column = _terminal_text_width("Search: " + query)
+    if column < 0 or column >= max(0, width):
+        return -1
+    return column
+
+
+def _paint_editor_frame(
+    mut frame: _TerminalEditorFrame,
+    rows: List[String],
+    cursor_row: Int,
+    cursor_col: Int,
+    scroll_y: Int,
+):
+    print(
+        _editor_frame_sequence(frame, rows, cursor_row, cursor_col, scroll_y),
+        end="",
+    )
+
+
+def _editor_frame_sequence(
+    mut frame: _TerminalEditorFrame,
+    rows: List[String],
+    cursor_row: Int,
+    cursor_col: Int,
+    scroll_y: Int,
+) -> String:
+    var output = String("\x1b[?25l")
+    if frame.rows > 0:
+        output += "\r"
+        if frame.cursor_row > 0:
+            output += "\x1b[" + String(frame.cursor_row) + "A"
+        for row in range(frame.rows):
+            output += "\x1b[2K"
+            if row + 1 < frame.rows:
+                output += "\x1b[1B\r"
+        if frame.rows > 1:
+            output += "\x1b[" + String(frame.rows - 1) + "A"
+        output += "\r"
+
+    for row in range(len(rows)):
+        output += "\x1b[2K" + rows[row]
+        if row + 1 < len(rows):
+            output += "\r\n"
+
+    var visible_cursor = cursor_row >= 0 and cursor_row < len(rows)
+    output += "\r"
+    if visible_cursor:
+        var rows_up = len(rows) - 1 - cursor_row
+        if rows_up > 0:
+            output += "\x1b[" + String(rows_up) + "A"
+        if cursor_col > 0:
+            output += "\x1b[" + String(cursor_col) + "C"
+        output += "\x1b[?25h"
+        frame.cursor_row = cursor_row
+    else:
+        if len(rows) > 1:
+            output += "\x1b[" + String(len(rows) - 1) + "A"
+        frame.cursor_row = 0
+    frame.rows = len(rows)
+    frame.scroll_y = scroll_y
+    return output^
+
+
+def _finish_editor_frame(mut frame: _TerminalEditorFrame):
+    print(_finish_editor_frame_sequence(frame), end="")
+
+
+def _finish_editor_frame_sequence(
+    mut frame: _TerminalEditorFrame,
+) -> String:
+    var output = String("\r")
+    if frame.rows > 0 and frame.cursor_row < frame.rows - 1:
+        output += "\x1b[" + String(frame.rows - 1 - frame.cursor_row) + "B"
+    output += "\n\x1b[?25h"
+    frame.rows = 0
+    frame.cursor_row = 0
+    frame.scroll_y = 0
+    return output^
 
 
 def _read_line() raises -> Optional[String]:
@@ -1463,8 +1844,10 @@ def _print_result(result: RuntimeResult, output_format: String):
         value.set("turns", JsonValue.integer(result.turns))
         var usage = JsonValue.object()
         usage.set("input_tokens", JsonValue.integer(result.usage.input_tokens))
-        usage.set("output_tokens", JsonValue.integer(result.usage.output_tokens))
+        usage.set(
+            "output_tokens", JsonValue.integer(result.usage.output_tokens)
+        )
         value.set("usage", usage^)
         print(serialize_json(value))
     except error:
-        print("{\"type\":\"error\",\"message\":\"output serialization failed\"}")
+        print('{"type":"error","message":"output serialization failed"}')

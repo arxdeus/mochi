@@ -103,7 +103,9 @@ def test_builtin_provider_and_model_catalog() raises:
     assert_equal(models[0].pricing.value().cache_read, 0.5)
     assert_true(models[0].supports_thinking.value())
     assert_true(models[0].supports_vision.value())
-    assert_equal(find_model_info("gemini-2.5-pro").context_window.value(), 1048576)
+    assert_equal(
+        find_model_info("gemini-2.5-pro").context_window.value(), 1048576
+    )
     assert_equal(find_model_info("custom-model").id, "custom-model")
 
 
@@ -139,7 +141,9 @@ def test_copilot_auth_discovery_and_headers() raises:
     )
     var request = provider.build_request(JsonValue.object())
     assert_equal(request.url, "https://api.githubcopilot.com/chat/completions")
-    assert_equal(request.headers[len(request.headers) - 1].value, "Bearer secret")
+    assert_equal(
+        request.headers[len(request.headers) - 1].value, "Bearer secret"
+    )
     var names = String("")
     for header in request.headers:
         names += header.name + "\n"
@@ -151,7 +155,9 @@ def test_copilot_auth_discovery_and_headers() raises:
 
 
 def test_copilot_model_discovery_and_routing() raises:
-    var request = copilot_models_request("https://copilot.example.test/", "secret")
+    var request = copilot_models_request(
+        "https://copilot.example.test/", "secret"
+    )
     assert_equal(request.method, "GET")
     assert_equal(request.url, "https://copilot.example.test/models")
     var models = copilot_parse_models(
@@ -160,7 +166,7 @@ def test_copilot_model_discovery_and_routing() raises:
         + '{"id":"other","model_picker_enabled":true,"capabilities":{"type":"embeddings"}},'
         + '{"id":"claude-sonnet","model_picker_enabled":true,"model_picker_category":"powerful","supported_endpoints":["/chat/completions","/responses","/v1/messages"],"capabilities":{"type":"chat","limits":{"max_context_window_tokens":200000,"max_output_tokens":64000},"supports":{"vision":true,"adaptive_thinking":true}}},'
         + '{"id":"gpt","model_picker_enabled":true,"supported_endpoints":["/responses"],"capabilities":{"type":"chat","supports":{"reasoning_effort":["low","high"]}}}'
-        + ']}'
+        + "]}"
     )
     assert_equal(len(models), 2)
     assert_equal(models[0].id, "claude-sonnet")
@@ -170,17 +176,17 @@ def test_copilot_model_discovery_and_routing() raises:
     assert_true(models[0].supports_vision.value())
     assert_equal(models[0].tier.value().tag, ModelTier.STRONG)
     assert_equal(models[1].id, "gpt")
-    var messages = parse_json('{"supported_endpoints":["/responses","/v1/messages"]}')
+    var messages = parse_json(
+        '{"supported_endpoints":["/responses","/v1/messages"]}'
+    )
     assert_equal(copilot_model_endpoint(messages), "messages")
-    assert_equal(copilot_model_endpoint(parse_json('{}')), "chat")
+    assert_equal(copilot_model_endpoint(parse_json("{}")), "chat")
     assert_equal(copilot_guess_endpoint("claude-sonnet-4.6"), "messages")
     assert_equal(
         copilot_guess_endpoint("copilot/claude-sonnet-4.6"), "messages"
     )
     assert_equal(copilot_guess_endpoint("gpt-5.6-terra"), "responses")
-    assert_equal(
-        copilot_guess_endpoint("copilot/gpt-5.6-terra"), "responses"
-    )
+    assert_equal(copilot_guess_endpoint("copilot/gpt-5.6-terra"), "responses")
     assert_equal(copilot_guess_endpoint("gpt-4.1"), "chat")
     var responses = copilot_provider_spec(
         "https://api.githubcopilot.com", "secret"
@@ -267,9 +273,7 @@ def test_anthropic_malformed_tool_input_falls_back_to_object() raises:
 
 def test_gemini_sse_text_thinking_tools_usage_and_stop() raises:
     var parser = GeminiStreamParser()
-    var stream = (
-        'data: {"candidates":[{"content":{"parts":[{"text":"reason ","thought":true},{"text":"more","thought":true,"thoughtSignature":"sig"},{"text":"Hello"},{"functionCall":{"name":"bash","args":{"cmd":"ls"}},"thoughtSignature":"tool-sig"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":10,"cachedContentTokenCount":3}}\n\n'
-    )
+    var stream = 'data: {"candidates":[{"content":{"parts":[{"text":"reason ","thought":true},{"text":"more","thought":true,"thoughtSignature":"sig"},{"text":"Hello"},{"functionCall":{"name":"bash","args":{"cmd":"ls"}},"thoughtSignature":"tool-sig"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":10,"cachedContentTokenCount":3}}\n\n'
     var events = parser.feed(stream)
     for event in parser.finish():
         events.append(event.copy())
@@ -372,14 +376,14 @@ def test_provider_injected_transport_streams_during_perform() raises:
 def test_http_response_headers_and_request_methods() raises:
     var response = HttpResponse()
     response.add_header_line("HTTP/1.1 200 OK\r\n")
-    response.add_header_line("Content-Type: text/event-stream; charset=utf-8\r\n")
+    response.add_header_line(
+        "Content-Type: text/event-stream; charset=utf-8\r\n"
+    )
     response.add_header_line("mCp-SeSsIoN-Id: session-42\r\n")
     response.add_header_line("X-Test: first\r\n")
     response.add_header_line("x-test: second\r\n")
     response.add_header_line("\r\n")
-    assert_equal(
-        response.content_type(), "text/event-stream; charset=utf-8"
-    )
+    assert_equal(response.content_type(), "text/event-stream; charset=utf-8")
     assert_equal(response.mcp_session_id(), "session-42")
     assert_equal(response.header("X-TEST"), "second")
     assert_equal(len(response.headers), 4)
@@ -411,9 +415,7 @@ def test_tool_call_indices_are_bounded_without_allocation() raises:
     var assembler = ToolCallAssembler()
     assert_false(assembler.add(ToolCallDelta(-1, "negative", "read", "{}")))
     assert_false(assembler.add(ToolCallDelta(512, "limit", "read", "{}")))
-    assert_false(
-        assembler.add(ToolCallDelta(1000000, "huge", "read", "{}"))
-    )
+    assert_false(assembler.add(ToolCallDelta(1000000, "huge", "read", "{}")))
     assert_equal(len(assembler.calls), 0)
 
     var parser = OpenAIStreamParser()
@@ -460,6 +462,67 @@ def test_retry_and_key_rotation() raises:
     assert_false(RetryState.retryable_status(400))
 
 
+def test_streamed_overload_tags_drive_retry_status() raises:
+    var parser = OpenAIStreamParser()
+    with assert_raises():
+        _ = parser.feed(
+            'data: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"overloaded"}}\n\n'
+        )
+    assert_equal(parser.error_status, 529)
+    assert_true(RetryState.retryable_status(parser.error_status))
+
+    var fallback = OpenAIStreamParser()
+    with assert_raises():
+        _ = fallback.feed(
+            'data: {"type":"error","error":{"type":"invalid_request_error","code":"invalid_value","message":"bad request"}}\n\n'
+        )
+    assert_equal(fallback.error_status, 400)
+    assert_false(RetryState.retryable_status(fallback.error_status))
+
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("openai-oauth", "https://invalid.local")
+    )
+    var transport = MockTransport()
+    var chunks: List[String] = [
+        'event: error\ndata: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"overloaded"}}\n\n'
+    ]
+    transport.enqueue_stream(HttpResponse(200, ""), chunks)
+    with assert_raises():
+        _ = provider.complete_json_with(
+            transport, parse_json('{"stream":true}')
+        )
+    assert_equal(provider.last_http_status(), 529)
+
+
+def test_response_failed_event_name_drives_rate_limit_status() raises:
+    var parser = OpenAIStreamParser()
+    with assert_raises():
+        _ = parser.feed(
+            "event: response.failed\n"
+            'data: {"response":{"error":{"code":"rate_limit_exceeded","message":"rate limited"}}}\n\n'
+        )
+    assert_equal(parser.error_status, 429)
+    assert_true(RetryState.retryable_status(parser.error_status))
+
+
+def test_eof_flushed_stream_error_updates_provider_status() raises:
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("openai-oauth", "https://invalid.local")
+    )
+    var transport = MockTransport()
+    var chunks: List[String] = [
+        "event: response.failed\n"
+        'data: {"response":{"error":{"code":"server_is_overloaded","message":"overloaded at eof"}}}'
+    ]
+    transport.enqueue_stream(HttpResponse(200, ""), chunks)
+    with assert_raises():
+        _ = provider.complete_json_with(
+            transport, parse_json('{"stream":true}')
+        )
+    assert_equal(provider.last_http_status(), 529)
+    assert_true(RetryState.retryable_status(provider.last_http_status()))
+
+
 def test_oauth_state_and_refresh_request() raises:
     var oauth = OAuthState()
     oauth.access_token = "old"
@@ -500,25 +563,56 @@ def test_provider_auth_precedence_and_usage() raises:
 
 def test_openai_oauth_device_refresh_and_responses_transport() raises:
     var transport = MockTransport()
-    transport.enqueue(HttpResponse(200, '{"device_auth_id":"device","user_code":"ABCD","interval":"1"}'))
+    transport.enqueue(
+        HttpResponse(
+            200, '{"device_auth_id":"device","user_code":"ABCD","interval":"1"}'
+        )
+    )
     transport.enqueue(HttpResponse(403, "pending"))
     transport.enqueue(HttpResponse(404, "pending"))
-    transport.enqueue(HttpResponse(200, '{"authorization_code":"code","code_verifier":"verify"}'))
-    transport.enqueue(HttpResponse(200, '{"access_token":"access","refresh_token":"refresh","expires_in":3600,"id_token":"e30.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0XzEyMyJ9.sig"}'))
+    transport.enqueue(
+        HttpResponse(
+            200, '{"authorization_code":"code","code_verifier":"verify"}'
+        )
+    )
+    transport.enqueue(
+        HttpResponse(
+            200,
+            '{"access_token":"access","refresh_token":"refresh","expires_in":3600,"id_token":"e30.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0XzEyMyJ9.sig"}',
+        )
+    )
     var path = "/tmp/mochi-openai-oauth-test.json"
     var credentials = openai_device_login_with(transport, 1000, path, False)
     assert_equal(credentials.account_id, "acct_123")
     assert_equal(len(transport.requests), 5)
-    assert_equal(transport.requests[0].url, "https://auth.openai.com/api/accounts/deviceauth/usercode")
-    assert_equal(transport.requests[4].url, "https://auth.openai.com/oauth/token")
-    assert_true("redirect_uri=https%3A%2F%2Fauth.openai.com%2Fdeviceauth%2Fcallback" in transport.requests[4].body)
+    assert_equal(
+        transport.requests[0].url,
+        "https://auth.openai.com/api/accounts/deviceauth/usercode",
+    )
+    assert_equal(
+        transport.requests[4].url, "https://auth.openai.com/oauth/token"
+    )
+    assert_true(
+        "redirect_uri=https%3A%2F%2Fauth.openai.com%2Fdeviceauth%2Fcallback"
+        in transport.requests[4].body
+    )
 
     var refresh_transport = MockTransport()
-    refresh_transport.enqueue(HttpResponse(200, '{"access_token":"new-access","refresh_token":"new-refresh","expires_in":60}'))
-    credentials = refresh_openai_oauth_with(refresh_transport, credentials, 5000)
+    refresh_transport.enqueue(
+        HttpResponse(
+            200,
+            '{"access_token":"new-access","refresh_token":"new-refresh","expires_in":60}',
+        )
+    )
+    credentials = refresh_openai_oauth_with(
+        refresh_transport, credentials, 5000
+    )
     assert_equal(credentials.access_token, "new-access")
     assert_equal(credentials.expires_at_ms, 65000)
-    assert_true("client_id=app_EMoamEEZ73f0CkXaXp7hrann" in refresh_transport.requests[0].body)
+    assert_true(
+        "client_id=app_EMoamEEZ73f0CkXaXp7hrann"
+        in refresh_transport.requests[0].body
+    )
 
     var spec = ProviderSpec("openai-oauth", "")
     spec.responses_api = True
@@ -531,7 +625,9 @@ def test_openai_oauth_device_refresh_and_responses_transport() raises:
         'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":1}}}\n\n',
     ]
     stream_transport.enqueue_stream(HttpResponse(200, ""), chunks)
-    var result = provider.complete_json_with(stream_transport, parse_json('{"stream":true}'))
+    var result = provider.complete_json_with(
+        stream_transport, parse_json('{"stream":true}')
+    )
     assert_equal(result.message.content, "hello")
     assert_equal(result.usage.input_tokens, 4)
     var request = stream_transport.requests[0].copy()
@@ -545,11 +641,15 @@ def test_openai_oauth_device_refresh_and_responses_transport() raises:
 
 def test_openai_jwt_account_id() raises:
     assert_equal(
-        extract_chatgpt_account_id("e30.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0XzEyMyJ9.sig"),
+        extract_chatgpt_account_id(
+            "e30.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0XzEyMyJ9.sig"
+        ),
         "acct_123",
     )
     assert_equal(
-        extract_chatgpt_account_id("e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF80NTYifX0.sig"),
+        extract_chatgpt_account_id(
+            "e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF80NTYifX0.sig"
+        ),
         "acct_456",
     )
     assert_equal(extract_chatgpt_account_id("invalid"), "")
@@ -571,7 +671,7 @@ def test_openai_responses_tool_done_and_incomplete() raises:
     assert_equal(result.message.tool_calls[0].arguments, '{"path":"README.md"}')
 
 
-struct ContractEventLog(ProviderEventSink, Copyable, Movable):
+struct ContractEventLog(Copyable, Movable, ProviderEventSink):
     var events: List[DomainProviderEvent]
 
     def __init__(out self):
@@ -607,7 +707,9 @@ def test_anthropic_provider_contract_adapter() raises:
         200000,
     )
     var messages: List[DomainMessage] = [DomainMessage.user("inspect")]
-    var tools = parse_json('[{"type":"function","function":{"name":"read","description":"Read","parameters":{"type":"object"}}}]')
+    var tools = parse_json(
+        '[{"type":"function","function":{"name":"read","description":"Read","parameters":{"type":"object"}}}]'
+    )
     var request = ProviderRequest(
         model^,
         CancellationToken(),
@@ -620,7 +722,9 @@ def test_anthropic_provider_contract_adapter() raises:
     var result = adapter.stream_message(request^, sink)
     assert_equal(result.message.content[0].text, "hello")
     assert_true(result.message.content[1].is_tool_use())
-    assert_equal(result.message.content[1].input.get("path").string_value, "README.md")
+    assert_equal(
+        result.message.content[1].input.get("path").string_value, "README.md"
+    )
     assert_equal(result.usage.input, 4)
     assert_equal(result.usage.output, 3)
     assert_true(result.stop_reason.value().is_tool_use())
@@ -631,8 +735,12 @@ def test_anthropic_provider_contract_adapter() raises:
     assert_equal(sent.headers[3].name, "x-api-key")
     var body = parse_json(sent.body)
     assert_equal(body.get("model").string_value, "claude-opus-4-6")
-    assert_equal(body.get("system").array_value[0].get("text").string_value, "system")
-    assert_equal(body.get("tools").array_value[0].get("name").string_value, "read")
+    assert_equal(
+        body.get("system").array_value[0].get("text").string_value, "system"
+    )
+    assert_equal(
+        body.get("tools").array_value[0].get("name").string_value, "read"
+    )
     assert_equal(body.get("thinking").get("type").string_value, "adaptive")
     assert_equal(body.get("speed").string_value, "fast")
 
@@ -644,7 +752,9 @@ def test_gemini_provider_contract_adapter() raises:
     ]
     transport.enqueue_stream(HttpResponse(200, ""), chunks)
     var adapter = GeminiProviderAdapterWithTransport(
-        GeminiProviderSpec("https://generativelanguage.googleapis.com/v1beta", "secret"),
+        GeminiProviderSpec(
+            "https://generativelanguage.googleapis.com/v1beta", "secret"
+        ),
         transport^,
         find_model_info("gemini-2.5-pro"),
     )
@@ -660,7 +770,9 @@ def test_gemini_provider_contract_adapter() raises:
         1048576,
     )
     var messages: List[DomainMessage] = [DomainMessage.user("inspect")]
-    var tools = parse_json('[{"type":"function","function":{"name":"read","description":"Read","parameters":{"type":"object"}}}]')
+    var tools = parse_json(
+        '[{"type":"function","function":{"name":"read","description":"Read","parameters":{"type":"object"}}}]'
+    )
     var request = ProviderRequest(
         model^,
         CancellationToken(),
@@ -673,7 +785,9 @@ def test_gemini_provider_contract_adapter() raises:
     var result = adapter.stream_message(request^, sink)
     assert_equal(result.message.content[0].text, "hello")
     assert_true(result.message.content[1].is_tool_use())
-    assert_equal(result.message.content[1].input.get("path").string_value, "README.md")
+    assert_equal(
+        result.message.content[1].input.get("path").string_value, "README.md"
+    )
     assert_equal(result.usage.input, 4)
     assert_equal(result.usage.output, 3)
     assert_equal(result.usage.cache_read, 2)
@@ -682,11 +796,31 @@ def test_gemini_provider_contract_adapter() raises:
     assert_true("gemini-2.5-pro:streamGenerateContent?alt=sse" in sent.url)
     assert_equal(sent.headers[2].name, "x-goog-api-key")
     var body = parse_json(sent.body)
-    assert_equal(body.get("contents").array_value[0].get("role").string_value, "user")
-    assert_equal(body.get("systemInstruction").get("parts").array_value[0].get("text").string_value, "system")
-    assert_equal(body.get("tools").array_value[0].get("functionDeclarations").array_value[0].get("name").string_value, "read")
     assert_equal(
-        body.get("generationConfig").get("thinkingConfig").get("thinkingBudget").int_value,
+        body.get("contents").array_value[0].get("role").string_value, "user"
+    )
+    assert_equal(
+        body.get("systemInstruction")
+        .get("parts")
+        .array_value[0]
+        .get("text")
+        .string_value,
+        "system",
+    )
+    assert_equal(
+        body.get("tools")
+        .array_value[0]
+        .get("functionDeclarations")
+        .array_value[0]
+        .get("name")
+        .string_value,
+        "read",
+    )
+    assert_equal(
+        body.get("generationConfig")
+        .get("thinkingConfig")
+        .get("thinkingBudget")
+        .int_value,
         8192,
     )
 
@@ -762,9 +896,7 @@ def test_openai_provider_contract_pre_cancel() raises:
     cancel.cancel()
     var sink = ContractEventLog()
     with assert_raises():
-        _ = adapter.stream_message(
-            ProviderRequest(model^, cancel.copy()), sink
-        )
+        _ = adapter.stream_message(ProviderRequest(model^, cancel.copy()), sink)
     assert_equal(len(adapter.transport.requests), 0)
 
 

@@ -1,4 +1,4 @@
-from std.ffi import c_int, external_call
+from std.ffi import CStringSlice, c_int, external_call
 from std.os import listdir, makedirs, remove
 from std.os.path import exists, isfile
 from std.testing import (
@@ -12,6 +12,7 @@ from std.testing import (
 from mochi.plugin_source import (
     PLUGIN_MANIFEST_FILE,
     PluginBuildOptions,
+    _absolute_path,
     compare_semver,
     compiler_command,
     discover_plugin_source,
@@ -28,9 +29,8 @@ from mochi.plugin_source import (
 def _root() -> String:
     # A fresh process gets a fresh cache, so the suite is repeatable without
     # deleting another run's files or relying on test discovery order.
-    return (
-        "/tmp/mochi-plugin-source-test-"
-        + String(external_call["getpid", c_int]())
+    return "/tmp/mochi-plugin-source-test-" + String(
+        external_call["getpid", c_int]()
     )
 
 
@@ -44,6 +44,15 @@ def _remove(path: String):
         remove(path)
     except:
         pass
+
+
+def _change_directory(path: String) raises:
+    var owned_path = path
+    var status = external_call["chdir", c_int, CStringSlice[ImmutAnyOrigin]](
+        rebind[CStringSlice[ImmutAnyOrigin]](owned_path.as_c_string_slice())
+    )
+    if status != 0:
+        raise Error("unable to change test directory")
 
 
 def _assert_no_build_stages(cache: String) raises:
@@ -154,9 +163,7 @@ def test_content_and_build_spec_hash_are_deterministic() raises:
     )
     newer_toolchain.set_toolchain_identity("mojo-test-2")
     assert_true(first != plugin_build_hash(spec, newer_toolchain))
-    var newer_target = PluginBuildOptions(
-        _root() + "/cache-hash", "/opt/mojo"
-    )
+    var newer_target = PluginBuildOptions(_root() + "/cache-hash", "/opt/mojo")
     newer_target.set_toolchain_identity("mojo-test-1")
     newer_target.set_target_identity("different-target")
     assert_true(first != plugin_build_hash(spec, newer_target))
@@ -177,9 +184,7 @@ def test_content_and_build_spec_hash_are_deterministic() raises:
     var sdk = _root() + "/sdk"
     makedirs(sdk, exist_ok=True)
     _write(sdk + "/plugin_sdk.mojo", "def sdk() -> Int:\n    return 1\n")
-    var sdk_options = PluginBuildOptions(
-        _root() + "/cache-hash", "/opt/mojo"
-    )
+    var sdk_options = PluginBuildOptions(_root() + "/cache-hash", "/opt/mojo")
     sdk_options.set_toolchain_identity("mojo-test-1")
     sdk_options.add_compiler_argument("-I")
     sdk_options.add_compiler_argument(sdk)
@@ -190,9 +195,7 @@ def test_content_and_build_spec_hash_are_deterministic() raises:
     var package_hash = plugin_build_hash(spec, sdk_options)
     _write(sdk + "/compiled.mojopkg", "package-two")
     assert_true(package_hash != plugin_build_hash(spec, sdk_options))
-    var unsupported = PluginBuildOptions(
-        _root() + "/cache-hash", "/opt/mojo"
-    )
+    var unsupported = PluginBuildOptions(_root() + "/cache-hash", "/opt/mojo")
     unsupported.set_toolchain_identity("mojo-test-1")
     unsupported.add_compiler_argument("-Xlinker")
     unsupported.add_compiler_argument("/tmp/native.o")
@@ -209,7 +212,7 @@ def test_build_cache_hit_and_atomic_output() raises:
     var paths_log = _root() + "/compiler-paths.log"
     var live_entry = directory + "/plugin.mojo"
     var original = "def main():\n    pass\n"
-    var changed = "def main():\n    print(\"changed live tree\")\n"
+    var changed = 'def main():\n    print("changed live tree")\n'
     makedirs(_root(), exist_ok=True)
     _fixture(directory)
     _remove(log)
@@ -222,14 +225,14 @@ def test_build_cache_hit_and_atomic_output() raises:
         + "\nprintf 'def main():\\n    print(\"changed live tree\")\\n' > "
         + live_entry
         + "\nout=''\nplugin_root=''\nentry=''\nwhile [ \"$#\" -gt 0 ]; do\n"
-        + "  if [ \"$1\" = '-I' ]; then\n    shift\n    [ -n \"$plugin_root\" ] || plugin_root=$1\n"
+        + '  if [ "$1" = \'-I\' ]; then\n    shift\n    [ -n "$plugin_root" ] || plugin_root=$1\n'
         + "  elif [ \"$1\" = '-o' ]; then\n    shift\n    out=$1\n"
-        + "  elif [ \"${1%.mojo}\" != \"$1\" ]; then\n    entry=$1\n  fi\n  shift\ndone\n"
-        + "printf '%s\\n%s\\n' \"$plugin_root\" \"$entry\" > "
+        + '  elif [ "${1%.mojo}" != "$1" ]; then\n    entry=$1\n  fi\n  shift\ndone\n'
+        + 'printf \'%s\\n%s\\n\' "$plugin_root" "$entry" > '
         + paths_log
-        + "\ncat \"$entry\" > "
+        + '\ncat "$entry" > '
         + observed
-        + "\n[ -n \"$out\" ] || exit"
+        + '\n[ -n "$out" ] || exit'
         ' 2\nprintf \'#!/bin/sh\\nexit 0\\n\' > "$out"\nchmod 755 "$out"\n',
     )
     var chmod_status = external_call["chmod", c_int](
@@ -253,9 +256,7 @@ def test_build_cache_hit_and_atomic_output() raises:
     assert_equal(len(paths), 3)
     var staged_plugin_root = String(paths[0])
     var staged_entry = String(paths[1])
-    assert_true(
-        staged_plugin_root.startswith(cache + "/.mochi-plugin-stage-")
-    )
+    assert_true(staged_plugin_root.startswith(cache + "/.mochi-plugin-stage-"))
     assert_true(staged_plugin_root.endswith("/plugin"))
     assert_equal(staged_entry, staged_plugin_root + "/plugin.mojo")
     assert_true(staged_entry != live_entry)
@@ -279,6 +280,119 @@ def test_build_cache_hit_and_atomic_output() raises:
     _assert_no_build_stages(cache)
 
 
+def test_compiler_descendants_are_drained_before_cache_publish() raises:
+    var directory = _root() + "/descendant-build"
+    var cache = _root() + "/descendant-cache"
+    var compiler = _root() + "/descendant-mojo.sh"
+    var ready = _root() + "/descendant-ready"
+    var wrote = _root() + "/descendant-wrote"
+    _fixture(directory)
+    _remove(ready)
+    _remove(wrote)
+    _write(
+        compiler,
+        "#!/bin/sh\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n"
+        + "  if [ \"$1\" = '-o' ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\n"
+        + '[ -n "$out" ] || exit 2\nprintf \'#!/bin/sh\\nexit 0\\n\' > "$out"\nchmod 755 "$out"\n'
+        + '( exec 9>>"$out"; printf ready > '
+        + ready
+        + "; sleep 1; printf corrupt >&9; printf wrote > "
+        + wrote
+        + " ) &\nwhile [ ! -e "
+        + ready
+        + " ]; do sleep 0.01; done\nexit 0\n",
+    )
+    assert_equal(
+        Int(
+            external_call["chmod", c_int](
+                compiler.as_c_string_slice(), UInt32(0o755)
+            )
+        ),
+        0,
+    )
+    var options = PluginBuildOptions(cache, compiler)
+    options.set_toolchain_identity("descendant-test")
+    var prepared = prepare_plugin(directory, options)
+    assert_true(prepared.source)
+    assert_false(prepared.source.value().cache_hit)
+    assert_equal(
+        open(prepared.executable.path, "r").read(), "#!/bin/sh\nexit 0\n"
+    )
+    _ = external_call["sleep", UInt32](UInt32(2))
+    assert_false(exists(wrote))
+    assert_equal(
+        open(prepared.executable.path, "r").read(), "#!/bin/sh\nexit 0\n"
+    )
+    assert_false(
+        exists(
+            prepared.executable.path
+            + ".tmp."
+            + String(external_call["getpid", c_int]())
+        )
+    )
+    _assert_no_build_stages(cache)
+
+
+def test_source_build_paths_survive_process_chdir() raises:
+    var original_directory = _absolute_path(".")
+    var anchor = _root() + "/cwd-anchor"
+    var other = _root() + "/cwd-other"
+    var plugin = anchor + "/plugin"
+    var compiler = anchor + "/fake-mojo.sh"
+    makedirs(anchor + "/sdk", exist_ok=True)
+    makedirs(other, exist_ok=True)
+    _fixture(plugin)
+    _write(anchor + "/sdk/sdk.mojo", "def sdk() -> Int:\n    return 1\n")
+    _write(
+        compiler,
+        "#!/bin/sh\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n"
+        + "  if [ \"$1\" = '-o' ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\n"
+        + '[ -n "$out" ] || exit 2\nprintf \'#!/bin/sh\\nexit 0\\n\' > "$out"\nchmod 755 "$out"\n',
+    )
+    assert_equal(
+        Int(
+            external_call["chmod", c_int](
+                compiler.as_c_string_slice(), UInt32(0o755)
+            )
+        ),
+        0,
+    )
+
+    _change_directory(anchor)
+    try:
+        var options = PluginBuildOptions("cache", "./fake-mojo.sh")
+        options.set_toolchain_identity("cwd-stability-test")
+        options.add_compiler_argument("-I")
+        options.add_compiler_argument("sdk")
+        assert_equal(options.cache_directory, anchor + "/cache")
+        assert_equal(options.compiler, anchor + "/./fake-mojo.sh")
+        assert_equal(options.compiler_arguments[1], anchor + "/sdk")
+
+        var first = prepare_plugin("plugin", options)
+        assert_true(first.source)
+        assert_equal(first.source.value().root, plugin)
+        assert_false(first.source.value().cache_hit)
+
+        _change_directory(other)
+        _write(
+            plugin + "/plugin.mojo",
+            'def main():\n    print("generation two")\n',
+        )
+        var second = rebuild_source_plugin(first.source.value().copy(), options)
+        assert_false(second.source.value().cache_hit)
+        assert_true(second.executable.path.startswith(anchor + "/cache/"))
+        assert_true(
+            second.source.value().build_hash != first.source.value().build_hash
+        )
+        _change_directory(original_directory)
+    except error:
+        try:
+            _change_directory(original_directory)
+        except:
+            pass
+        raise error
+
+
 def test_failed_compiler_leaves_no_executable_or_temporary_artifact() raises:
     var directory = _root() + "/failed-build"
     var cache = _root() + "/failed-cache"
@@ -288,11 +402,11 @@ def test_failed_compiler_leaves_no_executable_or_temporary_artifact() raises:
     _write(
         compiler,
         "#!/bin/sh\nout=''\nplugin_root=''\nwhile [ \"$#\" -gt 0 ]; do\n"
-        + "  if [ \"$1\" = '-I' ]; then\n    shift\n    [ -n \"$plugin_root\" ] || plugin_root=$1\n"
+        + '  if [ "$1" = \'-I\' ]; then\n    shift\n    [ -n "$plugin_root" ] || plugin_root=$1\n'
         + "  elif [ \"$1\" = '-o' ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\n"
         + "printf '%s\\n' \"$plugin_root\" > "
         + paths_log
-        + "\nprintf '#!/bin/sh\\nexit 0\\n' > \"$out\"\nchmod 755 \"$out\"\nexit 7\n",
+        + '\nprintf \'#!/bin/sh\\nexit 0\\n\' > "$out"\nchmod 755 "$out"\nexit 7\n',
     )
     assert_equal(
         Int(
@@ -315,9 +429,7 @@ def test_failed_compiler_leaves_no_executable_or_temporary_artifact() raises:
     assert_false(exists(temporary))
     var failed_paths = open(paths_log, "r").read().split("\n")
     var staged_plugin_root = String(failed_paths[0])
-    assert_true(
-        staged_plugin_root.startswith(cache + "/.mochi-plugin-stage-")
-    )
+    assert_true(staged_plugin_root.startswith(cache + "/.mochi-plugin-stage-"))
     assert_true(staged_plugin_root.endswith("/plugin"))
     assert_false(exists(staged_plugin_root))
     _assert_no_build_stages(cache)
@@ -332,7 +444,7 @@ def test_cache_nested_under_source_is_excluded_from_snapshot() raises:
         compiler,
         "#!/bin/sh\nout=''\nwhile [ \"$#\" -gt 0 ]; do\n"
         + "  if [ \"$1\" = '-o' ]; then\n    shift\n    out=$1\n  fi\n  shift\ndone\n"
-        + "[ -n \"$out\" ] || exit 2\nprintf '#!/bin/sh\\nexit 0\\n' > \"$out\"\nchmod 755 \"$out\"\n",
+        + '[ -n "$out" ] || exit 2\nprintf \'#!/bin/sh\\nexit 0\\n\' > "$out"\nchmod 755 "$out"\n',
     )
     assert_equal(
         Int(

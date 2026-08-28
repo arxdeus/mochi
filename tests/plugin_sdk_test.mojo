@@ -13,8 +13,16 @@ from mochi.plugin import (
     PluginRegistration,
     RpcMessage,
 )
-from mochi.plugin_sdk import PluginHandler, PluginServer
-from std.testing import TestSuite, assert_equal, assert_true
+from mochi.plugin_sdk import (
+    PluginHandler,
+    PluginServer,
+    _bounded_response,
+    _read_line,
+    _write_all,
+)
+from std.ffi import c_int
+from std.sys._libc import close, pipe
+from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 
 
 struct EchoHandler(Movable, PluginHandler):
@@ -89,7 +97,10 @@ def test_server_lifecycle_matches_host_protocol() raises:
     assert_equal(host.registration.value().name, "echo")
     assert_equal(len(host.registration.value().tools.array_value), 1)
     assert_equal(
-        host.registration.value().commands.array_value[0].get("name").string_value,
+        host.registration.value()
+        .commands.array_value[0]
+        .get("name")
+        .string_value,
         "/hello",
     )
 
@@ -183,6 +194,54 @@ def test_parse_response_registration_and_handler_errors() raises:
     var request = host.invoke("tool", "echo", JsonValue.object())
     assert_equal(_error_code(failing.handle_line(request)), ERROR_INVOKE)
     assert_true(failing.is_ready())
+
+
+def test_stdio_reader_batches_and_retains_following_lines() raises:
+    var descriptors = List[c_int](length=2, fill=0)
+    assert_equal(pipe(descriptors.unsafe_ptr()), 0)
+    var writer = FileDescriptor(Int(descriptors[1]))
+    writer.write_bytes("first\nsecond\n".as_bytes())
+    _ = close(descriptors[1])
+
+    var reader = FileDescriptor(Int(descriptors[0]))
+    var buffered = List[UInt8]()
+    var first = _read_line(reader, buffered)
+    assert_true(first)
+    assert_equal(first.value(), "first")
+    assert_true(len(buffered) > 0)
+    var second = _read_line(reader, buffered)
+    assert_true(second)
+    assert_equal(second.value(), "second")
+    assert_true(not _read_line(reader, buffered))
+    _ = close(descriptors[0])
+
+
+def test_stdio_writer_advances_until_the_complete_frame_is_written() raises:
+    var descriptors = List[c_int](length=2, fill=0)
+    assert_equal(pipe(descriptors.unsafe_ptr()), 0)
+    _write_all(Int(descriptors[1]), "chunked response\n", 3)
+    _ = close(descriptors[1])
+
+    var reader = FileDescriptor(Int(descriptors[0]))
+    var buffered = List[UInt8]()
+    var response = _read_line(reader, buffered)
+    assert_true(response)
+    assert_equal(response.value(), "chunked response")
+    _ = close(descriptors[0])
+
+
+def test_transport_rejects_oversized_request_and_bounds_response() raises:
+    var bytes = List[UInt8](length=258, fill=UInt8(120))
+    var response = _bounded_response(41, String(from_utf8=Span(bytes)), 256)
+    assert_true(response.byte_length() <= 257)
+    var message = RpcMessage.parse(response)
+    assert_equal(message.id, 41)
+    assert_equal(message.kind, RpcMessage.ERROR)
+    assert_equal(message.error.code, ERROR_INTERNAL)
+
+    var reader = FileDescriptor(-1)
+    with assert_raises():
+        _ = _read_line(reader, bytes, 256)
 
 
 def main() raises:

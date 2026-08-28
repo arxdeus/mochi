@@ -16,9 +16,14 @@ from mochi.domain import (
     ThinkingSupport,
 )
 from mochi.json import JsonValue, parse_json, serialize_json
-from mochi.invocation import InvocationResult
+from mochi.invocation import InvocationResult, invocation_result_to_json
 from mochi.session import Session, message_to_json
-from mochi.mcp import McpClient, McpOAuthState, StdioTransport, StreamableHttpTransport
+from mochi.mcp import (
+    McpClient,
+    McpOAuthState,
+    StdioTransport,
+    StreamableHttpTransport,
+)
 from mochi.permissions import (
     PermissionAnswer,
     PermissionEffect,
@@ -39,7 +44,11 @@ from mochi.provider_contract import (
     RequestOptions,
     ThinkingConfig,
 )
-from mochi.plugin import PluginClient, PluginRegistration
+from mochi.plugin import (
+    PluginClient,
+    PluginRegistration,
+    plugin_command_key,
+)
 from mochi.plugin_source import (
     PluginBuildOptions,
     PluginSourceMetadata,
@@ -54,6 +63,7 @@ from mochi.tools import (
     mcp_wire_tool_name,
 )
 from mochi.types import CancellationToken, Message, ToolCall, Usage
+from mochi.ui import command_names
 
 
 @fieldwise_init
@@ -73,7 +83,7 @@ struct PendingPermission(Copyable, Movable):
     var scopes: List[String]
 
 
-struct RuntimeEventSink(ProviderEventSink, Copyable, Movable):
+struct RuntimeEventSink(Copyable, Movable, ProviderEventSink):
     var events: List[DomainProviderEvent]
 
     def __init__(out self):
@@ -81,6 +91,64 @@ struct RuntimeEventSink(ProviderEventSink, Copyable, Movable):
 
     def emit(mut self, event: DomainProviderEvent) raises:
         self.events.append(event.copy())
+
+
+def _mcp_call_result(value: JsonValue) raises -> ToolResult:
+    """Preserve the MCP tool result error bit at the runtime boundary."""
+    var is_error = False
+    if value.kind == JsonValue.OBJECT:
+        var error_key = String("")
+        if value.contains("isError"):
+            error_key = "isError"
+        elif value.contains("is_error"):
+            error_key = "is_error"
+        if error_key != "":
+            var error_value = value.get(error_key)
+            if error_value.kind != JsonValue.BOOL:
+                raise Error(
+                    "MCP tool result " + error_key + " must be a boolean"
+                )
+            is_error = error_value.bool_value
+    var content = serialize_json(value)
+    if is_error:
+        return ToolResult.failure(content^)
+    return ToolResult.success(content^)
+
+
+def _validate_plugin_ownership(
+    registrations: List[PluginRegistration],
+) raises:
+    """Reject owner and command identities that cannot route unambiguously."""
+    var plugin_names = List[String]()
+    var command_keys = List[String]()
+    var command_owners = List[String]()
+    for builtin in command_names():
+        command_keys.append(plugin_command_key(builtin))
+        command_owners.append("builtin")
+
+    for registration in registrations:
+        for existing in plugin_names:
+            if existing == registration.name:
+                raise Error(
+                    "duplicate plugin registration name: " + registration.name
+                )
+        plugin_names.append(registration.name)
+        var owner = "plugin:" + registration.name
+        for command in registration.command_names():
+            var key = plugin_command_key(command)
+            for i in range(len(command_keys)):
+                if command_keys[i] == key:
+                    raise Error(
+                        "command name conflict: "
+                        + command
+                        + " ("
+                        + command_owners[i]
+                        + " vs "
+                        + owner
+                        + ")"
+                    )
+            command_keys.append(key^)
+            command_owners.append(owner.copy())
 
 
 @fieldwise_init
@@ -129,6 +197,7 @@ struct Runtime:
     var plugin_sources: List[Optional[PluginSourceMetadata]]
     var plugin_build_options: List[Optional[PluginBuildOptions]]
     var plugin_prompt_suffix: String
+    var last_invocation_result: Optional[JsonValue]
     var subagent_ids: List[String]
     var subagent_names: List[String]
     var subagent_models: List[String]
@@ -179,6 +248,7 @@ struct Runtime:
         self.plugin_sources = List[Optional[PluginSourceMetadata]]()
         self.plugin_build_options = List[Optional[PluginBuildOptions]]()
         self.plugin_prompt_suffix = ""
+        self.last_invocation_result = None
         self.subagent_ids = List[String]()
         self.subagent_names = List[String]()
         self.subagent_models = List[String]()
@@ -228,6 +298,7 @@ struct Runtime:
         self.plugin_sources = List[Optional[PluginSourceMetadata]]()
         self.plugin_build_options = List[Optional[PluginBuildOptions]]()
         self.plugin_prompt_suffix = ""
+        self.last_invocation_result = None
         self.subagent_ids = List[String]()
         self.subagent_names = List[String]()
         self.subagent_models = List[String]()
@@ -245,17 +316,29 @@ struct Runtime:
                 var thinking = meta.get("thinking")
                 if thinking.kind == JsonValue.STRING:
                     _ = self.set_thinking(thinking.string_value)
-                elif thinking.kind == JsonValue.OBJECT and thinking.contains("kind"):
+                elif thinking.kind == JsonValue.OBJECT and thinking.contains(
+                    "kind"
+                ):
                     var kind = thinking.get("kind").string_value
                     if kind == "budget" and thinking.contains("tokens"):
-                        _ = self.set_thinking(String(thinking.get("tokens").int_value))
+                        _ = self.set_thinking(
+                            String(thinking.get("tokens").int_value)
+                        )
                     elif kind == "effort" and thinking.contains("level"):
-                        _ = self.set_thinking(thinking.get("level").string_value)
+                        _ = self.set_thinking(
+                            thinking.get("level").string_value
+                        )
                     else:
                         _ = self.set_thinking(kind)
-            if meta.contains("fast") and meta.get("fast").kind == JsonValue.BOOL:
+            if (
+                meta.contains("fast")
+                and meta.get("fast").kind == JsonValue.BOOL
+            ):
                 _ = self.set_fast(meta.get("fast").bool_value)
-            if meta.contains("workflow") and meta.get("workflow").kind == JsonValue.BOOL:
+            if (
+                meta.contains("workflow")
+                and meta.get("workflow").kind == JsonValue.BOOL
+            ):
                 self.workflow = meta.get("workflow").bool_value
                 self.tools.set_workflow(self.workflow)
         except:
@@ -325,7 +408,15 @@ struct Runtime:
                 )
 
     def ask_btw(mut self, question: String, session_id: String = "") -> String:
-        comptime reminder = "<system-reminder>\nThis is a side question. Answer it directly in a single response.\n- You have NO tools: you cannot read files, run commands, or take any action.\n- One-off response: there are no follow-up turns.\n- Answer ONLY from the existing conversation context.\n- Never say \"Let me...\", \"I'll now...\", or promise any action.\n- If you don't know, say so; do not offer to look it up.\n</system-reminder>"
+        comptime reminder = (
+            "<system-reminder>\nThis is a side question. Answer it directly in"
+            " a single response.\n- You have NO tools: you cannot read files,"
+            " run commands, or take any action.\n- One-off response: there are"
+            " no follow-up turns.\n- Answer ONLY from the existing conversation"
+            ' context.\n- Never say "Let me...", "I\'ll now...", or promise any'
+            " action.\n- If you don't know, say so; do not offer to look it"
+            " up.\n</system-reminder>"
+        )
         var messages = self.messages.copy()
         messages.append(Message("user", reminder + "\n\n" + question))
         var model = _runtime_model(
@@ -360,6 +451,7 @@ struct Runtime:
     def resolve_permission(
         mut self, permission: PendingPermission, answer: PermissionAnswer
     ) -> String:
+        self.last_invocation_result = None
         self.permissions.apply_decision(
             permission.tool, permission.scopes, answer
         )
@@ -369,9 +461,7 @@ struct Runtime:
             try:
                 var permission_cancel = CancellationToken()
                 var result = self._execute_prepared(
-                    PreparedTool(
-                        permission.tool, permission.arguments.copy()
-                    ),
+                    PreparedTool(permission.tool, permission.arguments.copy()),
                     permission.tool_call_id,
                     permission_cancel^,
                 )
@@ -383,7 +473,12 @@ struct Runtime:
             if self.messages[i].tool_call_id == permission.tool_call_id:
                 self.messages[i].content = content
                 self.messages[i].is_error = is_error
+                if self.last_invocation_result:
+                    self.messages[
+                        i
+                    ].tool_result = self.last_invocation_result.value().copy()
                 break
+        self.last_invocation_result = None
         return content^
 
     def queue_input(mut self, input: String):
@@ -407,15 +502,20 @@ struct Runtime:
     def consume_queued_input(mut self) -> Bool:
         if len(self.queued_inputs) == 0:
             return False
-        var input = self.queued_inputs.pop(0)
-        self.messages.append(
-            Message(
-                "user",
-                "<user-interrupt>\nThe user sent a new message while you were working. Address it and continue.\n\n"
-                + input
-                + "\n</user-interrupt>",
+        # Match Maki's queue burst semantics: messages queued back-to-back land
+        # as consecutive user messages before the next provider request, so a
+        # single turn can answer all of them in order.
+        while len(self.queued_inputs) > 0:
+            var input = self.queued_inputs.pop(0)
+            self.messages.append(
+                Message(
+                    "user",
+                    "<user-interrupt>\nThe user sent a new message while you"
+                    " were working. Address it and continue.\n\n"
+                    + input
+                    + "\n</user-interrupt>",
+                )
             )
-        )
         return True
 
     def add_tool(mut self, var definition: ToolDefinition) raises:
@@ -456,7 +556,9 @@ struct Runtime:
             )
             self.tools.register_remote(metadata)
             self.remote.register(metadata, raw_name)
-            self.add_tool(ToolDefinition(name, description, metadata.parameters.copy()))
+            self.add_tool(
+                ToolDefinition(name, description, metadata.parameters.copy())
+            )
 
     def enqueue_remote_result(
         mut self, var name: String, var result: ToolResult
@@ -481,6 +583,9 @@ struct Runtime:
         message.tool_call_id = call.id
         message.name = call.name
         message.is_error = not result.ok
+        if self.last_invocation_result:
+            message.tool_result = self.last_invocation_result.value().copy()
+            self.last_invocation_result = None
         self.messages.append(message^)
 
     def attach_mcp_stdio(
@@ -513,11 +618,49 @@ struct Runtime:
         var client: PluginClient,
         var source: Optional[PluginSourceMetadata] = None,
         var build_options: Optional[PluginBuildOptions] = None,
+    ) raises:
+        if not client.protocol.registration:
+            client.cancel()
+            raise Error("plugin did not register")
+        var registration = client.protocol.registration.value().copy()
+        if registration.name != name:
+            client.cancel()
+            raise Error(
+                "plugin attachment name mismatch: "
+                + name
+                + " vs "
+                + registration.name
+            )
+        try:
+            var registrations = self._plugin_registrations()
+            registrations.append(registration^)
+            _validate_plugin_ownership(registrations)
+        except error:
+            client.cancel()
+            raise error
+        self._attach_plugin_unchecked(name^, client^, source^, build_options^)
+
+    def _attach_plugin_unchecked(
+        mut self,
+        var name: String,
+        var client: PluginClient,
+        var source: Optional[PluginSourceMetadata] = None,
+        var build_options: Optional[PluginBuildOptions] = None,
     ):
         self.plugin_names.append(name^)
         self.plugin_clients.append(client^)
         self.plugin_sources.append(source^)
         self.plugin_build_options.append(build_options^)
+
+    def _plugin_registrations(self) raises -> List[PluginRegistration]:
+        var registrations = List[PluginRegistration]()
+        for i in range(len(self.plugin_clients)):
+            if not self.plugin_clients[i].protocol.registration:
+                raise Error("attached plugin did not register")
+            registrations.append(
+                self.plugin_clients[i].protocol.registration.value().copy()
+            )
+        return registrations^
 
     def install_plugin(
         mut self,
@@ -535,12 +678,9 @@ struct Runtime:
                 source.value().validate_registration(
                     registration.name, registration.version
                 )
-            for existing in self.plugin_names:
-                if existing == registration.name:
-                    raise Error(
-                        "duplicate plugin registration name: "
-                        + registration.name
-                    )
+            var registrations = self._plugin_registrations()
+            registrations.append(registration.copy())
+            _validate_plugin_ownership(registrations)
         except error:
             client.cancel()
             raise error
@@ -557,7 +697,7 @@ struct Runtime:
             self.definitions = old_definitions^
             client.cancel()
             raise error
-        self.attach_plugin(
+        self._attach_plugin_unchecked(
             registration.name,
             client^,
             source^,
@@ -570,32 +710,33 @@ struct Runtime:
         for i in range(len(self.plugin_clients)):
             if not self.plugin_clients[i].protocol.registration:
                 continue
-            var commands = self.plugin_clients[i].protocol.registration.value().commands.copy()
-            for item in commands.array_value:
-                if item.kind == JsonValue.STRING:
-                    result.append(item.string_value)
-                elif item.kind == JsonValue.OBJECT and item.contains("name"):
-                    result.append(item.get("name").string_value)
+            for command in (
+                self.plugin_clients[i]
+                .protocol.registration.value()
+                .command_names()
+            ):
+                result.append(command)
         return result^
 
     def invoke_plugin_command(
         mut self, name: String, arguments: String
     ) raises -> String:
+        var requested_key = plugin_command_key(name)
         for i in range(len(self.plugin_clients)):
             if not self.plugin_clients[i].protocol.registration:
                 continue
-            var commands = self.plugin_clients[i].protocol.registration.value().commands.copy()
-            for item in commands.array_value:
-                var command = String("")
-                if item.kind == JsonValue.STRING:
-                    command = item.string_value
-                elif item.kind == JsonValue.OBJECT and item.contains("name"):
-                    command = item.get("name").string_value
-                if command == name:
+            for command in (
+                self.plugin_clients[i]
+                .protocol.registration.value()
+                .command_names()
+            ):
+                if plugin_command_key(command) == requested_key:
                     var input = JsonValue.object()
                     input.set("arguments", JsonValue.string(arguments))
                     return serialize_json(
-                        self.plugin_clients[i].invoke("command", name, input^)
+                        self.plugin_clients[i].invoke(
+                            "command", command, input^
+                        )
                     )
         raise Error("unknown extension command: " + name)
 
@@ -604,7 +745,11 @@ struct Runtime:
         for i in range(len(self.plugin_clients)):
             if not self.plugin_clients[i].protocol.registration:
                 continue
-            var hints = self.plugin_clients[i].protocol.registration.value().prompt_hints.copy()
+            var hints = (
+                self.plugin_clients[i]
+                .protocol.registration.value()
+                .prompt_hints.copy()
+            )
             for hint in hints.array_value:
                 if hint.kind == JsonValue.STRING:
                     if result != "":
@@ -626,25 +771,6 @@ struct Runtime:
             self.system_prompt += self.plugin_prompt_suffix
 
     def reload_plugins(mut self) raises -> Int:
-        var production = True
-        for i in range(len(self.plugin_names)):
-            if not self.plugin_sources[i] and not self.plugin_clients[i].executable:
-                production = False
-        if not production:
-            # Fixture-only clients have no process launch metadata. Keep their
-            # deterministic in-memory reconnect path for unit tests.
-            for i in range(len(self.plugin_names)):
-                var old_name = self.plugin_names[i]
-                self._remove_remote_endpoint("plugin", old_name)
-                self.plugin_clients[i].reload()
-                var registration = self.plugin_clients[i].protocol.registration.value().copy()
-                self.plugin_names[i] = registration.name
-                self.add_remote_tools(
-                    "plugin", registration.name, registration.tools.copy()
-                )
-            self.apply_plugin_prompt_hints()
-            return len(self.plugin_names)
-
         # Build and negotiate every candidate before mutating any live owner.
         # The registry commit below is global across this reload, so a failure
         # in plugin N cannot leave plugins 0..N-1 silently upgraded.
@@ -657,13 +783,17 @@ struct Runtime:
                 var candidate_source = self.plugin_sources[i].copy()
                 if self.plugin_sources[i]:
                     if not self.plugin_build_options[i]:
-                        raise Error("source plugin has no retained build options")
+                        raise Error(
+                            "source plugin has no retained build options"
+                        )
                     var prepared = rebuild_source_plugin(
                         self.plugin_sources[i].value().copy(),
                         self.plugin_build_options[i].value().copy(),
                     )
                     candidate = PluginClient.launch(prepared.executable.copy())
-                    var identity = candidate.protocol.registration.value().copy()
+                    var identity = (
+                        candidate.protocol.registration.value().copy()
+                    )
                     prepared.source.value().validate_registration(
                         identity.name, identity.version
                     )
@@ -680,15 +810,12 @@ struct Runtime:
                 candidates[i].cancel()
             raise error
 
-        for index in range(len(registrations)):
-            for previous in range(index):
-                if registrations[previous].name == registrations[index].name:
-                    for candidate_index in range(len(candidates)):
-                        candidates[candidate_index].cancel()
-                    raise Error(
-                        "duplicate plugin registration name: "
-                        + registrations[index].name
-                    )
+        try:
+            _validate_plugin_ownership(registrations)
+        except error:
+            for candidate_index in range(len(candidates)):
+                candidates[candidate_index].cancel()
+            raise error
 
         var old_remote = self.remote.copy()
         var old_tools = self.tools.copy()
@@ -701,6 +828,11 @@ struct Runtime:
                 self.add_remote_tools(
                     "plugin", registration.name, registration.tools.copy()
                 )
+            # A candidate can flush valid registration JSON and then exit.
+            # Recheck every owned leader immediately before retiring any
+            # last-known-good generation.
+            for candidate_index in range(len(candidates)):
+                candidates[candidate_index].require_live_process()
         except error:
             self.remote = old_remote^
             self.tools = old_tools^
@@ -722,27 +854,24 @@ struct Runtime:
         for i in range(len(self.mcp_stdio_names)):
             var status = "disabled"
             if self.mcp_stdio_enabled[i]:
-                status = (
-                    "running"
-                    if self.mcp_stdio_clients[i].session.initialized
-                    else "connecting"
-                )
-            lines.append(
-                self.mcp_stdio_names[i] + " · stdio · " + status
-            )
+                status = "running" if self.mcp_stdio_clients[
+                    i
+                ].session.initialized else "connecting"
+            lines.append(self.mcp_stdio_names[i] + " · stdio · " + status)
         for i in range(len(self.mcp_http_names)):
             var status = "disabled"
             if self.mcp_http_enabled[i]:
                 status = "connecting"
-            if self.mcp_http_enabled[i] and self.mcp_http_clients[i].session.initialized:
+            if (
+                self.mcp_http_enabled[i]
+                and self.mcp_http_clients[i].session.initialized
+            ):
                 status = "running"
                 if self.mcp_http_authenticated[i]:
                     status += " · authenticated"
             if self.mcp_http_enabled[i] and self.mcp_http_errors[i] != "":
                 status = self.mcp_http_errors[i]
-            lines.append(
-                self.mcp_http_names[i] + " · http · " + status
-            )
+            lines.append(self.mcp_http_names[i] + " · http · " + status)
         for name in self.plugin_names:
             lines.append(name + " · executable extension · running")
         return lines^
@@ -752,11 +881,15 @@ struct Runtime:
         for i in range(len(self.mcp_stdio_names)):
             if result != "":
                 result += "\n"
-            result += ("1:" if self.mcp_stdio_enabled[i] else "0:") + self.mcp_stdio_names[i]
+            result += (
+                "1:" if self.mcp_stdio_enabled[i] else "0:"
+            ) + self.mcp_stdio_names[i]
         for i in range(len(self.mcp_http_names)):
             if result != "":
                 result += "\n"
-            result += ("1:" if self.mcp_http_enabled[i] else "0:") + self.mcp_http_names[i]
+            result += (
+                "1:" if self.mcp_http_enabled[i] else "0:"
+            ) + self.mcp_http_names[i]
         return result^
 
     def set_mcp_enabled(mut self, name: String, enabled: Bool) -> Bool:
@@ -814,7 +947,10 @@ struct Runtime:
         self.tools.remove_owner(protocol + ":" + endpoint)
         for i in range(len(self.definitions) - 1, -1, -1):
             var name = self.definitions[i].name
-            if not self.remote.is_remote(name) and self.tools.index_of(name) < 0:
+            if (
+                not self.remote.is_remote(name)
+                and self.tools.index_of(name) < 0
+            ):
                 _ = self.definitions.pop(i)
 
     def clear_mcp_oauth(mut self, name: String) -> Bool:
@@ -848,9 +984,13 @@ struct Runtime:
             return build_responses_request_body(
                 self.model, request_messages, self.definitions
             )
-        return build_request_body(self.model, request_messages, self.definitions)
+        return build_request_body(
+            self.model, request_messages, self.definitions
+        )
 
-    def run(mut self, prompt: String, cancel: CancellationToken) -> RuntimeResult:
+    def run(
+        mut self, prompt: String, cancel: CancellationToken
+    ) -> RuntimeResult:
         self.messages.append(Message("user", prompt))
         return self._run_turns(cancel.copy())
 
@@ -863,7 +1003,9 @@ struct Runtime:
         var completed_turns = 0
         for turn in range(1, self.max_turns + 1):
             if cancel.is_cancelled():
-                return self._result(final_text, usage, completed_turns, "cancelled")
+                return self._result(
+                    final_text, usage, completed_turns, "cancelled"
+                )
             _ = self.compact_if_needed()
             _ = self.consume_queued_command()
             var response: ProviderResult
@@ -871,8 +1013,12 @@ struct Runtime:
                 response = self._complete_with_retry(cancel)
             except error:
                 if cancel.is_cancelled():
-                    return self._result(final_text, usage, completed_turns, "cancelled")
-                return self._provider_error(String(error), usage, completed_turns)
+                    return self._result(
+                        final_text, usage, completed_turns, "cancelled"
+                    )
+                return self._provider_error(
+                    String(error), usage, completed_turns
+                )
             usage.add(response.usage)
             completed_turns = turn
             self.messages.append(response.message.copy())
@@ -884,7 +1030,9 @@ struct Runtime:
                 return self._result(final_text, usage, completed_turns, reason)
             for call in response.message.tool_calls:
                 if cancel.is_cancelled():
-                    return self._result(final_text, usage, completed_turns, "cancelled")
+                    return self._result(
+                        final_text, usage, completed_turns, "cancelled"
+                    )
                 self.dispatch(call, cancel)
                 if len(self.pending_permissions) > 0:
                     return self._result(
@@ -924,7 +1072,9 @@ struct Runtime:
             except error:
                 var status = self.provider.last_http_status()
                 var auth_failure = status == 401 or status == 403
-                var retryable = status == 0 or RetryState.retryable_status(status)
+                var retryable = status == 0 or RetryState.retryable_status(
+                    status
+                )
                 if auth_failure:
                     retryable = self.provider.recover_auth()
                 if not retryable or not retry.can_retry():
@@ -935,6 +1085,7 @@ struct Runtime:
                 _sleep_ms(delay)
 
     def dispatch(mut self, call: ToolCall, cancel: CancellationToken):
+        self.last_invocation_result = None
         var content: String
         var ok: Bool
         try:
@@ -943,13 +1094,12 @@ struct Runtime:
             if decision.effect == PermissionEffect.prompt():
                 if len(self.permission_answers) == 0:
                     self.pending_permissions.append(
-                          PendingPermission(
-                              call.id,
-                              prepared.name,
-                              prepared.arguments.copy(),
-                              decision.scopes.copy(),
-                          )
-
+                        PendingPermission(
+                            call.id,
+                            prepared.name,
+                            prepared.arguments.copy(),
+                            decision.scopes.copy(),
+                        )
                     )
                     content = "Permission prompt"
                     ok = False
@@ -1031,7 +1181,9 @@ struct Runtime:
                 target = ModelTier.strong()
             elif requested != "medium":
                 raise Error("unknown model tier: " + requested)
-            var current = self.provider.model_info.tier.value().tag if self.provider.model_info.tier else ModelTier.MEDIUM
+            var current = (
+                self.provider.model_info.tier.value().tag if self.provider.model_info.tier else ModelTier.MEDIUM
+            )
             var effective = min(current, target.tag)
             for candidate in builtin_model_catalog():
                 if candidate.tier and candidate.tier.value().tag == effective:
@@ -1050,35 +1202,55 @@ struct Runtime:
         )
         child.system_prompt = self.system_prompt
         if prepared.arguments.contains("subagent_type"):
-            var subagent_type = prepared.arguments.get("subagent_type").string_value
+            var subagent_type = prepared.arguments.get(
+                "subagent_type"
+            ).string_value
             if subagent_type != "research" and subagent_type != "general":
                 raise Error("unknown subagent type: " + subagent_type)
             if subagent_type == "research":
-                child.system_prompt += "\nYou are a read-only research subagent. Do not modify files or run mutating commands."
+                child.system_prompt += (
+                    "\nYou are a read-only research subagent. Do not modify"
+                    " files or run mutating commands."
+                )
         for definition in self.definitions:
             if definition.name != "task":
                 child.definitions.append(definition.copy())
         var structured = prepared.arguments.contains("output_schema")
         if structured:
-            prompt += "\n\nReturn only a JSON object matching the requested output schema."
+            prompt += (
+                "\n\nReturn only a JSON object matching the requested output"
+                " schema."
+            )
         var result = child.run(prompt, cancel)
         var retries = 0
-        while result.stop_reason != "provider_error" and result.stop_reason != "cancelled" and retries < 2:
+        while (
+            result.stop_reason != "provider_error"
+            and result.stop_reason != "cancelled"
+            and retries < 2
+        ):
             if structured:
                 try:
                     var output = parse_json(result.text)
-                    _validate_json_schema(output, prepared.arguments.get("output_schema"))
+                    _validate_json_schema(
+                        output, prepared.arguments.get("output_schema")
+                    )
                     break
                 except:
                     retries += 1
                     result = child.run(
-                        "Your result did not match the required JSON schema. Return only a valid matching JSON object.",
+                        (
+                            "Your result did not match the required JSON"
+                            " schema. Return only a valid matching JSON object."
+                        ),
                         cancel,
                     )
             elif result.text == "":
                 retries += 1
                 result = child.run(
-                    "You finished without a summary. Reply with a concise summary.",
+                    (
+                        "You finished without a summary. Reply with a concise"
+                        " summary."
+                    ),
                     cancel,
                 )
             else:
@@ -1087,15 +1259,23 @@ struct Runtime:
         self.subagent_names.append(name^)
         self.subagent_models.append(child_model)
         self.subagent_messages.append(result.messages.copy())
-        if result.stop_reason == "provider_error" or result.stop_reason == "cancelled":
+        if (
+            result.stop_reason == "provider_error"
+            or result.stop_reason == "cancelled"
+        ):
             raise Error("sub-agent " + result.stop_reason + ": " + result.text)
         if structured:
             try:
                 var output = parse_json(result.text)
-                _validate_json_schema(output, prepared.arguments.get("output_schema"))
+                _validate_json_schema(
+                    output, prepared.arguments.get("output_schema")
+                )
                 return serialize_json(output)
             except error:
-                raise Error("subagent result does not match output_schema: " + String(error))
+                raise Error(
+                    "subagent result does not match output_schema: "
+                    + String(error)
+                )
         if result.text == "":
             raise Error("subagent finished without providing a summary")
         return result.text
@@ -1106,30 +1286,40 @@ struct Runtime:
         if protocol == "mcp":
             var raw_name = self.remote.raw_name_for(prepared.name)
             for i in range(len(self.mcp_stdio_names)):
-                if self.mcp_stdio_names[i] == endpoint and self.mcp_stdio_enabled[i]:
-                    return ToolResult.success(serialize_json(
+                if (
+                    self.mcp_stdio_names[i] == endpoint
+                    and self.mcp_stdio_enabled[i]
+                ):
+                    return _mcp_call_result(
                         self.mcp_stdio_clients[i].call_tool(
                             self.mcp_stdio_transports[i],
                             raw_name,
                             prepared.arguments.copy(),
                         )
-                    ))
+                    )
             for i in range(len(self.mcp_http_names)):
-                if self.mcp_http_names[i] == endpoint and self.mcp_http_enabled[i]:
-                    return ToolResult.success(serialize_json(
+                if (
+                    self.mcp_http_names[i] == endpoint
+                    and self.mcp_http_enabled[i]
+                ):
+                    return _mcp_call_result(
                         self.mcp_http_clients[i].call_tool(
                             self.mcp_http_transports[i],
                             raw_name,
                             prepared.arguments.copy(),
                         )
-                    ))
+                    )
         elif protocol == "plugin":
             for i in range(len(self.plugin_names)):
                 if self.plugin_names[i] == endpoint:
                     var value = self.plugin_clients[i].invoke(
                         "tool", prepared.name, prepared.arguments.copy()
                     )
-                    return InvocationResult.from_json(value).to_tool_result()
+                    var result = InvocationResult.from_json(value)
+                    self.last_invocation_result = Optional(
+                        invocation_result_to_json(result)
+                    )
+                    return result.to_tool_result()
         raise Error(
             "remote endpoint is not attached: " + protocol + ":" + endpoint
         )
@@ -1232,8 +1422,12 @@ def _runtime_model(id: String, provider: String, info: ModelInfo) -> Model:
     var thinking = ThinkingSupport.no()
     if info.supports_thinking and info.supports_thinking.value():
         thinking = ThinkingSupport.yes()
-    var pricing = info.pricing.value().copy() if info.pricing else ModelPricing()
-    var context_window = info.context_window.value() if info.context_window else 100000
+    var pricing = (
+        info.pricing.value().copy() if info.pricing else ModelPricing()
+    )
+    var context_window = (
+        info.context_window.value() if info.context_window else 100000
+    )
     return Model(
         id,
         provider,
@@ -1250,11 +1444,9 @@ def _runtime_model(id: String, provider: String, info: ModelInfo) -> Model:
 def _domain_messages(messages: List[Message]) raises -> List[DomainMessage]:
     var result = List[DomainMessage]()
     for legacy in messages:
-        var message = (
-            DomainMessage.assistant(legacy.content)
-            if legacy.role == "assistant"
-            else DomainMessage.user(legacy.content)
-        )
+        var message = DomainMessage.assistant(
+            legacy.content
+        ) if legacy.role == "assistant" else DomainMessage.user(legacy.content)
         if legacy.role == "tool":
             message = DomainMessage(Role.user())
             message.add_block(
@@ -1336,7 +1528,9 @@ def build_request_body(
         for definition in definitions:
             var function = JsonValue.object()
             function.set("name", JsonValue.string(definition.name))
-            function.set("description", JsonValue.string(definition.description))
+            function.set(
+                "description", JsonValue.string(definition.description)
+            )
             function.set("parameters", definition.parameters.copy())
             var tool = JsonValue.object()
             tool.set("type", JsonValue.string("function"))

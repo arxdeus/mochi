@@ -20,7 +20,13 @@ from mochi.domain import (
 )
 from std.utils import Variant
 
-from mochi.http import FlokiTransport, HttpHeader, HttpRequest, HttpResponse, HttpTransport
+from mochi.http import (
+    FlokiTransport,
+    HttpHeader,
+    HttpRequest,
+    HttpResponse,
+    HttpTransport,
+)
 from mochi.json import JsonValue, parse_json, serialize_json
 from mochi.provider_contract import (
     Provider,
@@ -29,7 +35,13 @@ from mochi.provider_contract import (
     ThinkingConfig,
     provider_error_text,
 )
-from mochi.types import CancellationToken, Message, ProviderEvent, ToolCall, Usage
+from mochi.types import (
+    CancellationToken,
+    Message,
+    ProviderEvent,
+    ToolCall,
+    Usage,
+)
 
 
 comptime OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -106,7 +118,9 @@ def copilot_provider_spec(base_url: String, token: String) -> ProviderSpec:
     return spec^
 
 
-def copilot_discovery_request(token: String, host: String = "github.com") raises -> HttpRequest:
+def copilot_discovery_request(
+    token: String, host: String = "github.com"
+) raises -> HttpRequest:
     var request = HttpRequest("POST", copilot_graphql_url(host))
     request.add_header("Authorization", "Bearer " + token)
     request.add_header("Content-Type", "application/json")
@@ -147,10 +161,16 @@ def copilot_model_endpoint(model: JsonValue) -> String:
             var endpoints = model.get("supported_endpoints")
             if endpoints.kind == JsonValue.ARRAY:
                 for endpoint in endpoints.array_value:
-                    if endpoint.kind == JsonValue.STRING and endpoint.string_value == "/v1/messages":
+                    if (
+                        endpoint.kind == JsonValue.STRING
+                        and endpoint.string_value == "/v1/messages"
+                    ):
                         return "messages"
                 for endpoint in endpoints.array_value:
-                    if endpoint.kind == JsonValue.STRING and endpoint.string_value == "/responses":
+                    if (
+                        endpoint.kind == JsonValue.STRING
+                        and endpoint.string_value == "/responses"
+                    ):
                         return "responses"
         except:
             pass
@@ -192,9 +212,13 @@ def copilot_parse_models(body: String) raises -> List[ModelInfo]:
             if capabilities.contains("limits"):
                 var limits = capabilities.get("limits")
                 if limits.contains("max_context_window_tokens"):
-                    context = Optional(limits.get("max_context_window_tokens").int_value)
+                    context = Optional(
+                        limits.get("max_context_window_tokens").int_value
+                    )
                 if limits.contains("max_output_tokens"):
-                    maximum = Optional(limits.get("max_output_tokens").int_value)
+                    maximum = Optional(
+                        limits.get("max_output_tokens").int_value
+                    )
             if capabilities.contains("supports"):
                 var supports = capabilities.get("supports")
                 if supports.contains("vision"):
@@ -203,7 +227,11 @@ def copilot_parse_models(body: String) raises -> List[ModelInfo]:
                     supports.contains("adaptive_thinking")
                     or supports.contains("max_thinking_budget")
                     or supports.contains("min_thinking_budget")
-                    or (supports.contains("reasoning_effort") and len(supports.get("reasoning_effort").array_value) > 0)
+                    or (
+                        supports.contains("reasoning_effort")
+                        and len(supports.get("reasoning_effort").array_value)
+                        > 0
+                    )
                 )
         except:
             pass
@@ -215,7 +243,17 @@ def copilot_parse_models(body: String) raises -> List[ModelInfo]:
             tier = Optional(ModelTier.medium())
         elif category == "powerful":
             tier = Optional(ModelTier.strong())
-        output.append(ModelInfo(id^, context, maximum, None, Optional(thinking), Optional(vision), tier^))
+        output.append(
+            ModelInfo(
+                id^,
+                context,
+                maximum,
+                None,
+                Optional(thinking),
+                Optional(vision),
+                tier^,
+            )
+        )
     return output^
 
 
@@ -224,9 +262,13 @@ def copilot_discovered_endpoint(response: HttpResponse) -> String:
         return DEFAULT_COPILOT_API_ENDPOINT
     try:
         var value = parse_json(response.body)
-        var endpoint = value.get("data").get("viewer").get(
-            "copilotEndpoints"
-        ).get("api").string_value
+        var endpoint = (
+            value.get("data")
+            .get("viewer")
+            .get("copilotEndpoints")
+            .get("api")
+            .string_value
+        )
         if String(endpoint.strip()) != "":
             return endpoint^
     except:
@@ -268,14 +310,18 @@ def builtin_provider_registry() raises -> ProviderRegistry:
     var registry = ProviderRegistry()
     registry.register(ProviderSpec("openai", "https://api.openai.com/v1"))
     registry.register(copilot_provider_spec(DEFAULT_COPILOT_API_ENDPOINT, ""))
-    registry.register(ProviderSpec("openrouter", "https://openrouter.ai/api/v1"))
+    registry.register(
+        ProviderSpec("openrouter", "https://openrouter.ai/api/v1")
+    )
     registry.register(ProviderSpec("xai", "https://api.x.ai/v1"))
     registry.register(ProviderSpec("deepseek", "https://api.deepseek.com/v1"))
     registry.register(ProviderSpec("mistral", "https://api.mistral.ai/v1"))
     registry.register(ProviderSpec("zai", "https://api.z.ai/api/paas/v4"))
     registry.register(ProviderSpec("groq", "https://api.groq.com/openai/v1"))
     registry.register(ProviderSpec("together", "https://api.together.xyz/v1"))
-    registry.register(ProviderSpec("fireworks", "https://api.fireworks.ai/inference/v1"))
+    registry.register(
+        ProviderSpec("fireworks", "https://api.fireworks.ai/inference/v1")
+    )
     registry.register(ProviderSpec("perplexity", "https://api.perplexity.ai"))
     registry.register(ProviderSpec("cerebras", "https://api.cerebras.ai/v1"))
     registry.register(ProviderSpec("moonshot", "https://api.moonshot.ai/v1"))
@@ -287,17 +333,138 @@ def builtin_provider_registry() raises -> ProviderRegistry:
 
 def builtin_model_catalog() -> List[ModelInfo]:
     return [
-        _model_info("gpt-5.6-sol", 372000, 128000, 5.0, 30.0, 6.25, 0.5, True, True, ModelTier.strong()),
-        _model_info("gpt-5.6-terra", 372000, 128000, 2.5, 15.0, 3.125, 0.25, True, True, ModelTier.medium()),
-        _model_info("gpt-5.6-luna", 372000, 128000, 1.0, 6.0, 1.25, 0.1, True, True, ModelTier.weak()),
-        _model_info("gpt-5.3-codex", 400000, 128000, 1.75, 14.0, 0.0, 0.175, True, True, ModelTier.strong()),
-        _model_info("gpt-5.2-codex", 400000, 128000, 1.75, 14.0, 0.0, 0.175, True, True, ModelTier.strong()),
-        _model_info("gpt-4.1", 1047576, 32768, 2.0, 8.0, 0.0, 0.5, False, True, ModelTier.medium()),
-        _model_info("gpt-4.1-mini", 1047576, 32768, 0.4, 1.6, 0.0, 0.1, False, True, ModelTier.medium()),
-        _model_info("claude-opus-4-6", 200000, 128000, 5.0, 25.0, 6.25, 0.5, True, True, ModelTier.strong()),
-        _model_info("claude-sonnet-4-6", 200000, 64000, 3.0, 15.0, 3.75, 0.3, True, True, ModelTier.medium()),
-        _model_info("gemini-2.5-pro", 1048576, 65536, 1.25, 5.0, 0.0, 0.31, True, True, ModelTier.strong()),
-        _model_info("gemini-2.5-flash", 1048576, 65536, 0.15, 0.6, 0.0, 0.04, True, True, ModelTier.medium()),
+        _model_info(
+            "gpt-5.6-sol",
+            372000,
+            128000,
+            5.0,
+            30.0,
+            6.25,
+            0.5,
+            True,
+            True,
+            ModelTier.strong(),
+        ),
+        _model_info(
+            "gpt-5.6-terra",
+            372000,
+            128000,
+            2.5,
+            15.0,
+            3.125,
+            0.25,
+            True,
+            True,
+            ModelTier.medium(),
+        ),
+        _model_info(
+            "gpt-5.6-luna",
+            372000,
+            128000,
+            1.0,
+            6.0,
+            1.25,
+            0.1,
+            True,
+            True,
+            ModelTier.weak(),
+        ),
+        _model_info(
+            "gpt-5.3-codex",
+            400000,
+            128000,
+            1.75,
+            14.0,
+            0.0,
+            0.175,
+            True,
+            True,
+            ModelTier.strong(),
+        ),
+        _model_info(
+            "gpt-5.2-codex",
+            400000,
+            128000,
+            1.75,
+            14.0,
+            0.0,
+            0.175,
+            True,
+            True,
+            ModelTier.strong(),
+        ),
+        _model_info(
+            "gpt-4.1",
+            1047576,
+            32768,
+            2.0,
+            8.0,
+            0.0,
+            0.5,
+            False,
+            True,
+            ModelTier.medium(),
+        ),
+        _model_info(
+            "gpt-4.1-mini",
+            1047576,
+            32768,
+            0.4,
+            1.6,
+            0.0,
+            0.1,
+            False,
+            True,
+            ModelTier.medium(),
+        ),
+        _model_info(
+            "claude-opus-4-6",
+            200000,
+            128000,
+            5.0,
+            25.0,
+            6.25,
+            0.5,
+            True,
+            True,
+            ModelTier.strong(),
+        ),
+        _model_info(
+            "claude-sonnet-4-6",
+            200000,
+            64000,
+            3.0,
+            15.0,
+            3.75,
+            0.3,
+            True,
+            True,
+            ModelTier.medium(),
+        ),
+        _model_info(
+            "gemini-2.5-pro",
+            1048576,
+            65536,
+            1.25,
+            5.0,
+            0.0,
+            0.31,
+            True,
+            True,
+            ModelTier.strong(),
+        ),
+        _model_info(
+            "gemini-2.5-flash",
+            1048576,
+            65536,
+            0.15,
+            0.6,
+            0.0,
+            0.04,
+            True,
+            True,
+            ModelTier.medium(),
+        ),
         ModelInfo.id_only("grok-4"),
         ModelInfo.id_only("deepseek-chat"),
         ModelInfo.id_only("mistral-large-latest"),
@@ -454,7 +621,9 @@ struct OpenAIOAuthCredentials(Copyable, Movable):
     var account_id: String
 
     def expired(self, now_ms: Int, margin_ms: Int = 30000) -> Bool:
-        return self.expires_at_ms > 0 and now_ms + margin_ms >= self.expires_at_ms
+        return (
+            self.expires_at_ms > 0 and now_ms + margin_ms >= self.expires_at_ms
+        )
 
     def oauth_state(self) -> OAuthState:
         var state = OAuthState()
@@ -476,7 +645,9 @@ def openai_oauth_credentials_path() raises -> String:
     return root + "/mochi/openai_oauth.json"
 
 
-def load_openai_oauth_credentials(path: String = "") raises -> OpenAIOAuthCredentials:
+def load_openai_oauth_credentials(
+    path: String = "",
+) raises -> OpenAIOAuthCredentials:
     var resolved = path
     if resolved == "":
         resolved = openai_oauth_credentials_path()
@@ -490,11 +661,15 @@ def load_openai_oauth_credentials(path: String = "") raises -> OpenAIOAuthCreden
     if credentials.access_token == "":
         raise Error("cached OpenAI OAuth credentials have no access token")
     if credentials.account_id == "":
-        credentials.account_id = extract_chatgpt_account_id(credentials.access_token)
+        credentials.account_id = extract_chatgpt_account_id(
+            credentials.access_token
+        )
     return credentials^
 
 
-def save_openai_oauth_credentials(credentials: OpenAIOAuthCredentials, path: String = "") raises:
+def save_openai_oauth_credentials(
+    credentials: OpenAIOAuthCredentials, path: String = ""
+) raises:
     var resolved = path
     if resolved == "":
         resolved = openai_oauth_credentials_path()
@@ -544,7 +719,10 @@ def extract_chatgpt_account_id(token: String) -> String:
                 return namespaced^
         if claims.contains("organizations"):
             var organizations = claims.get("organizations")
-            if organizations.kind == JsonValue.ARRAY and len(organizations.array_value) > 0:
+            if (
+                organizations.kind == JsonValue.ARRAY
+                and len(organizations.array_value) > 0
+            ):
                 return _string_or(organizations.array_value[0], "id", "")
     except:
         pass
@@ -570,7 +748,9 @@ def base64url_decode(value: String) raises -> String:
     return output^
 
 
-def refresh_openai_oauth_with[T: HttpTransport](
+def refresh_openai_oauth_with[
+    T: HttpTransport
+](
     mut transport: T, credentials: OpenAIOAuthCredentials, now_ms: Int
 ) raises -> OpenAIOAuthCredentials:
     var state = credentials.oauth_state()
@@ -582,7 +762,9 @@ def refresh_openai_oauth_with[T: HttpTransport](
     if access == "":
         raise Error("OpenAI OAuth refresh has no access_token")
     var refresh = _string_or(value, "refresh_token", credentials.refresh_token)
-    var account = extract_chatgpt_account_id(_string_or(value, "id_token", access))
+    var account = extract_chatgpt_account_id(
+        _string_or(value, "id_token", access)
+    )
     if account == "":
         account = extract_chatgpt_account_id(access)
     if account == "":
@@ -595,7 +777,9 @@ def refresh_openai_oauth_with[T: HttpTransport](
     )
 
 
-def openai_device_login_with[T: HttpTransport](
+def openai_device_login_with[
+    T: HttpTransport
+](
     mut transport: T, now_ms: Int, path: String = "", poll_delay: Bool = True
 ) raises -> OpenAIOAuthCredentials:
     var code_request = HttpRequest("POST", OPENAI_DEVICE_CODE_URL)
@@ -623,13 +807,19 @@ def openai_device_login_with[T: HttpTransport](
         var poll = HttpRequest("POST", OPENAI_DEVICE_TOKEN_URL)
         poll.add_header("Content-Type", "application/json")
         poll.body = (
-            '{"device_auth_id":"' + device_id + '","user_code":"' + user_code + '"}'
+            '{"device_auth_id":"'
+            + device_id
+            + '","user_code":"'
+            + user_code
+            + '"}'
         )
         token_response = transport.perform(poll)
         if token_response.status == 200:
             break
         if token_response.status != 403 and token_response.status != 404:
-            raise Error("OpenAI device token HTTP " + String(token_response.status))
+            raise Error(
+                "OpenAI device token HTTP " + String(token_response.status)
+            )
     if token_response.status != 200:
         raise Error("OpenAI device authorization timed out")
     var device_token = parse_json(token_response.body)
@@ -642,9 +832,12 @@ def openai_device_login_with[T: HttpTransport](
     exchange.body = (
         "grant_type=authorization_code&code="
         + form_encode(authorization_code)
-        + "&redirect_uri=" + form_encode(OPENAI_REDIRECT_URI)
-        + "&client_id=" + form_encode(OPENAI_CLIENT_ID)
-        + "&code_verifier=" + form_encode(code_verifier)
+        + "&redirect_uri="
+        + form_encode(OPENAI_REDIRECT_URI)
+        + "&client_id="
+        + form_encode(OPENAI_CLIENT_ID)
+        + "&code_verifier="
+        + form_encode(code_verifier)
     )
     var response = transport.perform(exchange)
     if response.status != 200:
@@ -654,28 +847,37 @@ def openai_device_login_with[T: HttpTransport](
     var refresh = _string_or(value, "refresh_token", "")
     if access == "" or refresh == "":
         raise Error("OpenAI token exchange returned incomplete credentials")
-    var account = extract_chatgpt_account_id(_string_or(value, "id_token", access))
+    var account = extract_chatgpt_account_id(
+        _string_or(value, "id_token", access)
+    )
     if account == "":
         account = extract_chatgpt_account_id(access)
     var credentials = OpenAIOAuthCredentials(
-        access, refresh, now_ms + _int_or(value, "expires_in", 3600) * 1000, account
+        access,
+        refresh,
+        now_ms + _int_or(value, "expires_in", 3600) * 1000,
+        account,
     )
     save_openai_oauth_credentials(credentials, path)
     return credentials^
 
 
 struct SSEParser(Copyable, Movable):
-    """Incremental SSE parser supporting arbitrary transport chunk boundaries.
-    """
+    """Incremental SSE parser supporting arbitrary transport chunk boundaries."""
 
     var pending: String
     var data_lines: List[String]
+    var event_name: String
+    var dispatched_event_names: List[String]
 
     def __init__(out self):
         self.pending = ""
         self.data_lines = List[String]()
+        self.event_name = ""
+        self.dispatched_event_names = List[String]()
 
     def feed(mut self, chunk: String) -> List[String]:
+        self.dispatched_event_names.clear()
         self.pending += chunk
         var output = List[String]()
         while True:
@@ -690,6 +892,7 @@ struct SSEParser(Copyable, Movable):
         return output^
 
     def finish(mut self) -> List[String]:
+        self.dispatched_event_names.clear()
         var output = List[String]()
         if self.pending != "":
             var line = self.pending^
@@ -703,6 +906,11 @@ struct SSEParser(Copyable, Movable):
     def _accept_line(mut self, var line: String, mut output: List[String]):
         if line == "":
             self._dispatch(output)
+        elif line.startswith("event:"):
+            var value = _byte_suffix(line, 6)
+            if value.startswith(" "):
+                value = _byte_suffix(value, 1)
+            self.event_name = value^
         elif line.startswith("data:"):
             var value = _byte_suffix(line, 5)
             if value.startswith(" "):
@@ -710,15 +918,16 @@ struct SSEParser(Copyable, Movable):
             self.data_lines.append(value^)
 
     def _dispatch(mut self, mut output: List[String]):
-        if len(self.data_lines) == 0:
-            return
-        var data = String("")
-        for i in range(len(self.data_lines)):
-            if i > 0:
-                data += "\n"
-            data += self.data_lines[i]
-        output.append(data^)
+        if len(self.data_lines) > 0:
+            var data = String("")
+            for i in range(len(self.data_lines)):
+                if i > 0:
+                    data += "\n"
+                data += self.data_lines[i]
+            output.append(data^)
+            self.dispatched_event_names.append(self.event_name.copy())
         self.data_lines.clear()
+        self.event_name = ""
 
 
 @fieldwise_init
@@ -780,29 +989,82 @@ struct ToolCallAssembler(Copyable, Movable):
         return result^
 
 
+def _sse_error_tag_status(tag: String) -> Int:
+    if tag == "overloaded_error" or tag == "server_is_overloaded":
+        return 529
+    if tag == "service_unavailable_error":
+        return 503
+    if tag == "api_error" or tag == "server_error":
+        return 500
+    if (
+        tag == "rate_limit_error"
+        or tag == "rate_limit_exceeded"
+        or tag == "tokens"
+    ):
+        return 429
+    if tag == "request_too_large":
+        return 413
+    if tag == "not_found_error":
+        return 404
+    if tag == "permission_error":
+        return 403
+    if tag == "billing_error" or tag == "insufficient_quota":
+        return 402
+    if tag == "authentication_error" or tag == "invalid_api_key":
+        return 401
+    return 0
+
+
+def _sse_error_detail_status(detail: JsonValue, fallback: Int) raises -> Int:
+    if detail.kind != JsonValue.OBJECT:
+        return fallback
+    if detail.contains("code"):
+        var code = detail.get("code")
+        if code.kind == JsonValue.STRING:
+            var status = _sse_error_tag_status(code.string_value)
+            if status > 0:
+                return status
+    if detail.contains("type"):
+        var kind = detail.get("type")
+        if kind.kind == JsonValue.STRING:
+            var status = _sse_error_tag_status(kind.string_value)
+            if status > 0:
+                return status
+    return fallback
+
+
 struct OpenAIStreamParser(Copyable, Movable):
     var sse: SSEParser
     var tools: ToolCallAssembler
     var usage: Usage
     var stop_reason: String
+    var error_status: Int
 
     def __init__(out self):
         self.sse = SSEParser()
         self.tools = ToolCallAssembler()
         self.usage = Usage()
         self.stop_reason = ""
+        self.error_status = 0
 
     def feed(mut self, chunk: String) raises -> List[ProviderEvent]:
-        return self._parse_payloads(self.sse.feed(chunk))
+        var payloads = self.sse.feed(chunk)
+        return self._parse_payloads(
+            payloads^, self.sse.dispatched_event_names.copy()
+        )
 
     def finish(mut self) raises -> List[ProviderEvent]:
-        return self._parse_payloads(self.sse.finish())
+        var payloads = self.sse.finish()
+        return self._parse_payloads(
+            payloads^, self.sse.dispatched_event_names.copy()
+        )
 
     def _parse_payloads(
-        mut self, payloads: List[String]
+        mut self, payloads: List[String], event_names: List[String]
     ) raises -> List[ProviderEvent]:
         var events = List[ProviderEvent]()
-        for payload in payloads:
+        for index in range(len(payloads)):
+            var payload = payloads[index].copy()
             if payload == "[DONE]":
                 if self.stop_reason == "":
                     self.stop_reason = "stop"
@@ -810,6 +1072,8 @@ struct OpenAIStreamParser(Copyable, Movable):
                 continue
             var root = parse_json(payload)
             var event_type = _string_or(root, "type", "")
+            if event_type == "" and index < len(event_names):
+                event_type = event_names[index].copy()
             if event_type == "response.output_text.delta":
                 var content = _string_or(root, "delta", "")
                 if content != "":
@@ -833,7 +1097,9 @@ struct OpenAIStreamParser(Copyable, Movable):
                         )
                 continue
             if event_type == "response.function_call_arguments.delta":
-                var index = _int_or(root, "output_index", len(self.tools.calls) - 1)
+                var index = _int_or(
+                    root, "output_index", len(self.tools.calls) - 1
+                )
                 if index >= 0:
                     var arguments = String("")
                     if root.contains("delta"):
@@ -842,14 +1108,14 @@ struct OpenAIStreamParser(Copyable, Movable):
                             arguments = delta.string_value
                         elif delta.kind == JsonValue.OBJECT:
                             arguments = serialize_json(delta)
-                    _ = self.tools.add(
-                        ToolCallDelta(index, "", "", arguments^)
-                    )
+                    _ = self.tools.add(ToolCallDelta(index, "", "", arguments^))
                 continue
             if event_type == "response.output_item.done":
                 var item = root.get("item")
                 if _string_or(item, "type", "") == "function_call":
-                    var index = _int_or(root, "output_index", len(self.tools.calls) - 1)
+                    var index = _int_or(
+                        root, "output_index", len(self.tools.calls) - 1
+                    )
                     var arguments = _string_or(item, "arguments", "")
                     if arguments == "" and item.contains("arguments"):
                         var raw_arguments = item.get("arguments")
@@ -869,7 +1135,10 @@ struct OpenAIStreamParser(Copyable, Movable):
                             )
                         )
                 continue
-            if event_type == "response.completed" or event_type == "response.incomplete":
+            if (
+                event_type == "response.completed"
+                or event_type == "response.incomplete"
+            ):
                 var response = root.get("response")
                 if response.contains("usage"):
                     var response_usage = response.get("usage")
@@ -887,12 +1156,25 @@ struct OpenAIStreamParser(Copyable, Movable):
                 continue
             if event_type == "error" or event_type == "response.failed":
                 var message = String("response generation failed")
+                var detail = root.copy()
+                var default_status = 400
+                if event_type == "response.failed":
+                    default_status = 500
                 if root.contains("response"):
                     var failed = root.get("response")
-                    if failed.contains("error"):
-                        message = _string_or(failed.get("error"), "message", message)
-                elif root.contains("message"):
-                    message = _string_or(root, "message", message)
+                    if failed.kind == JsonValue.OBJECT and failed.contains(
+                        "error"
+                    ):
+                        detail = failed.get("error")
+                elif root.contains("error"):
+                    detail = root.get("error")
+                if detail.kind == JsonValue.OBJECT:
+                    message = _string_or(detail, "message", message)
+                    self.error_status = _sse_error_detail_status(
+                        detail, default_status
+                    )
+                else:
+                    self.error_status = default_status
                 raise Error("OpenAI Responses stream error: " + message)
             if root.contains("usage") and not root.get("usage").is_null():
                 var raw_usage = root.get("usage")
@@ -989,7 +1271,9 @@ struct AnthropicStreamParser(Copyable, Movable):
                     var message = root.get("message")
                     if message.contains("usage"):
                         var usage = message.get("usage")
-                        self.usage.input_tokens = _int_or(usage, "input_tokens", 0)
+                        self.usage.input_tokens = _int_or(
+                            usage, "input_tokens", 0
+                        )
                         events.append(ProviderEvent.usage_event(self.usage))
                 continue
             if event_type == "content_block_start":
@@ -1048,9 +1332,7 @@ struct AnthropicStreamParser(Copyable, Movable):
                     var partial = _string_or(delta, "partial_json", "")
                     self.tool_arguments[index] += partial
                     events.append(
-                        ProviderEvent.tool_call_delta(
-                            ToolCall("", "", partial)
-                        )
+                        ProviderEvent.tool_call_delta(ToolCall("", "", partial))
                     )
                 continue
             if event_type == "content_block_stop":
@@ -1071,7 +1353,9 @@ struct AnthropicStreamParser(Copyable, Movable):
             if event_type == "message_delta":
                 if root.contains("usage"):
                     var usage = root.get("usage")
-                    self.usage.output_tokens = _int_or(usage, "output_tokens", 0)
+                    self.usage.output_tokens = _int_or(
+                        usage, "output_tokens", 0
+                    )
                     events.append(ProviderEvent.usage_event(self.usage))
                 if root.contains("delta"):
                     self.stop_reason = _string_or(
@@ -1133,7 +1417,9 @@ struct GeminiStreamParser(Copyable, Movable):
             if root.contains("usageMetadata"):
                 var usage = root.get("usageMetadata")
                 self.usage.input_tokens = _int_or(usage, "promptTokenCount", 0)
-                self.usage.output_tokens = _int_or(usage, "candidatesTokenCount", 0)
+                self.usage.output_tokens = _int_or(
+                    usage, "candidatesTokenCount", 0
+                )
                 self.cache_read_tokens = _int_or(
                     usage, "cachedContentTokenCount", 0
                 )
@@ -1160,7 +1446,9 @@ struct GeminiStreamParser(Copyable, Movable):
                                     if input.kind != JsonValue.OBJECT:
                                         input = JsonValue.object()
                                 var id = (
-                                    "call_" + name + "_"
+                                    "call_"
+                                    + name
+                                    + "_"
                                     + String(self.next_tool_id)
                                 )
                                 self.next_tool_id += 1
@@ -1180,14 +1468,17 @@ struct GeminiStreamParser(Copyable, Movable):
                                 )
                                 events.append(
                                     ProviderEvent.tool_call_delta(
-                                        ToolCall(id, name, serialize_json(input))
+                                        ToolCall(
+                                            id, name, serialize_json(input)
+                                        )
                                     )
                                 )
                             elif part.contains("text"):
                                 var text = _string_or(part, "text", "")
                                 var thought = (
                                     part.contains("thought")
-                                    and part.get("thought").kind == JsonValue.BOOL
+                                    and part.get("thought").kind
+                                    == JsonValue.BOOL
                                     and part.get("thought").bool_value
                                 )
                                 if thought:
@@ -1352,9 +1643,9 @@ struct OpenAICompatibleProvider(Copyable, Movable):
         var transport = FlokiTransport()
         return self.refresh_oauth_with(transport, now_ms)
 
-    def refresh_oauth_with[T: HttpTransport](
-        mut self, mut transport: T, now_ms: Int
-    ) raises -> Bool:
+    def refresh_oauth_with[
+        T: HttpTransport
+    ](mut self, mut transport: T, now_ms: Int) raises -> Bool:
         if not self.has_oauth or not self.oauth.can_refresh():
             return False
         var response = transport.perform(self.oauth.refresh_request())
@@ -1381,14 +1672,16 @@ struct OpenAICompatibleProvider(Copyable, Movable):
         var transport = FlokiTransport()
         return self.complete_json_with(transport, body)
 
-    def complete_json_with[T: HttpTransport](
-        mut self, mut transport: T, body: JsonValue
-    ) raises -> ProviderResult:
+    def complete_json_with[
+        T: HttpTransport
+    ](mut self, mut transport: T, body: JsonValue) raises -> ProviderResult:
         return self.complete_json_with_cancel(
             transport, body, CancellationToken()
         )
 
-    def complete_json_with_cancel[T: HttpTransport](
+    def complete_json_with_cancel[
+        T: HttpTransport
+    ](
         mut self,
         mut transport: T,
         body: JsonValue,
@@ -1399,11 +1692,15 @@ struct OpenAICompatibleProvider(Copyable, Movable):
         var response = transport.perform_stream_cancellable(
             self.build_request(body),
             _accept_provider_chunk,
-            Pointer(to=state).unsafe_bitcast[NoneType]().unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=state)
+            .unsafe_bitcast[NoneType]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
             cancel.copy(),
         )
         self.last_status = response.status
         if state.error != "":
+            if state.parser.error_status > 0:
+                self.last_status = state.parser.error_status
             raise Error("provider stream parse failed: " + state.error)
         if response.status < 200 or response.status >= 300:
             raise Error(
@@ -1412,7 +1709,12 @@ struct OpenAICompatibleProvider(Copyable, Movable):
                 + ": "
                 + response.body
             )
-        state.finish()
+        try:
+            state.finish()
+        except error:
+            if state.parser.error_status > 0:
+                self.last_status = state.parser.error_status
+            raise Error("provider stream parse failed: " + String(error))
         self.last_usage = state.result.usage.copy()
         return state.result.copy()
 
@@ -1464,9 +1766,9 @@ struct OpenAICompatibleProvider(Copyable, Movable):
         var transport = FlokiTransport()
         return self.recover_auth_with(transport, refresh_time)
 
-    def recover_auth_with[T: HttpTransport](
-        mut self, mut transport: T, now_ms: Int = 0
-    ) raises -> Bool:
+    def recover_auth_with[
+        T: HttpTransport
+    ](mut self, mut transport: T, now_ms: Int = 0) raises -> Bool:
         if self.has_oauth and self.oauth.can_refresh():
             return self.refresh_oauth_with(transport, now_ms)
         if not self.has_oauth:
@@ -1519,7 +1821,7 @@ def _accept_anthropic_chunk(
 
 struct AnthropicProviderAdapterWithTransport[
     T: HttpTransport & Movable & Deinitable
-](Provider, Movable):
+](Movable, Provider):
     var spec: AnthropicProviderSpec
     var transport: Self.T
     var model_info: ModelInfo
@@ -1539,9 +1841,9 @@ struct AnthropicProviderAdapterWithTransport[
     def list_models(mut self) raises -> List[ModelInfo]:
         return [self.model_info.copy()]
 
-    def stream_message[S: ProviderEventSink](
-        mut self, request: ProviderRequest, mut sink: S
-    ) raises -> StreamResponse:
+    def stream_message[
+        S: ProviderEventSink
+    ](mut self, request: ProviderRequest, mut sink: S) raises -> StreamResponse:
         self.last_error = None
         request.cancel.check()
         var body = _anthropic_body(request)
@@ -1567,7 +1869,9 @@ struct AnthropicProviderAdapterWithTransport[
             response = self.transport.perform_stream_cancellable(
                 http^,
                 _accept_anthropic_chunk,
-                Pointer(to=state).unsafe_bitcast[NoneType]().unsafe_origin_cast[MutUntrackedOrigin](),
+                Pointer(to=state)
+                .unsafe_bitcast[NoneType]()
+                .unsafe_origin_cast[MutUntrackedOrigin](),
                 request.cancel.copy(),
             )
         except error:
@@ -1585,7 +1889,9 @@ struct AnthropicProviderAdapterWithTransport[
             if block.is_text() and block.text != "":
                 sink.emit(DomainProviderEvent.text_delta(block.text))
             elif block.is_tool_use():
-                sink.emit(DomainProviderEvent.tool_use_start(block.id, block.name))
+                sink.emit(
+                    DomainProviderEvent.tool_use_start(block.id, block.name)
+                )
         var message = DomainMessage(Role.assistant())
         for block in state.parser.blocks:
             message.add_block(block.copy())
@@ -1606,9 +1912,9 @@ struct AnthropicProviderAdapterWithTransport[
         raise Error(provider_error_text(error))
 
 
-def _emit_legacy_event[S: ProviderEventSink](
-    event: ProviderEvent, mut sink: S
-) raises:
+def _emit_legacy_event[
+    S: ProviderEventSink
+](event: ProviderEvent, mut sink: S) raises:
     if event.kind == "text_delta":
         sink.emit(DomainProviderEvent.text_delta(event.text))
     elif event.kind == "tool_call_delta" and event.tool_call:
@@ -1620,10 +1926,12 @@ def _emit_legacy_event[S: ProviderEventSink](
 def _anthropic_body(request: ProviderRequest) raises -> JsonValue:
     var body = JsonValue.object()
     body.set("model", JsonValue.string(request.model.id))
-    body.set("max_tokens", JsonValue.integer(
-        request.model.max_output_tokens.value()
-        if request.model.max_output_tokens else 8192
-    ))
+    body.set(
+        "max_tokens",
+        JsonValue.integer(
+            request.model.max_output_tokens.value() if request.model.max_output_tokens else 8192
+        ),
+    )
     body.set("stream", JsonValue.boolean(True))
     var system = JsonValue.array()
     if request.system != "":
@@ -1720,8 +2028,9 @@ def _anthropic_tools(tools: JsonValue) raises -> JsonValue:
         )
         item.set(
             "input_schema",
-            source.get("parameters")
-            if source.contains("parameters") else JsonValue.object(),
+            source.get("parameters") if source.contains(
+                "parameters"
+            ) else JsonValue.object(),
         )
         output.append(item^)
     if len(output.array_value) > 0:
@@ -1746,7 +2055,9 @@ struct GeminiProviderSpec(Copyable, Movable):
 
     def stream_url(self, model: String) -> String:
         return (
-            String(self.base_url.removesuffix("/")) + "/models/" + model
+            String(self.base_url.removesuffix("/"))
+            + "/models/"
+            + model
             + ":streamGenerateContent?alt=sse"
         )
 
@@ -1772,7 +2083,7 @@ def _accept_gemini_chunk(
 
 struct GeminiProviderAdapterWithTransport[
     T: HttpTransport & Movable & Deinitable
-](Provider, Movable):
+](Movable, Provider):
     var spec: GeminiProviderSpec
     var transport: Self.T
     var model_info: ModelInfo
@@ -1792,14 +2103,12 @@ struct GeminiProviderAdapterWithTransport[
     def list_models(mut self) raises -> List[ModelInfo]:
         return [self.model_info.copy()]
 
-    def stream_message[S: ProviderEventSink](
-        mut self, request: ProviderRequest, mut sink: S
-    ) raises -> StreamResponse:
+    def stream_message[
+        S: ProviderEventSink
+    ](mut self, request: ProviderRequest, mut sink: S) raises -> StreamResponse:
         self.last_error = None
         request.cancel.check()
-        var http = HttpRequest(
-            "POST", self.spec.stream_url(request.model.id)
-        )
+        var http = HttpRequest("POST", self.spec.stream_url(request.model.id))
         http.timeout_ms = self.spec.timeout_ms
         http.body = serialize_json(_gemini_body(request))
         http.add_header("Content-Type", "application/json")
@@ -1811,7 +2120,9 @@ struct GeminiProviderAdapterWithTransport[
             response = self.transport.perform_stream_cancellable(
                 http^,
                 _accept_gemini_chunk,
-                Pointer(to=state).unsafe_bitcast[NoneType]().unsafe_origin_cast[MutUntrackedOrigin](),
+                Pointer(to=state)
+                .unsafe_bitcast[NoneType]()
+                .unsafe_origin_cast[MutUntrackedOrigin](),
                 request.cancel.copy(),
             )
         except error:
@@ -1827,7 +2138,9 @@ struct GeminiProviderAdapterWithTransport[
             if block.is_text() and block.text != "":
                 sink.emit(DomainProviderEvent.text_delta(block.text))
             elif block.is_tool_use():
-                sink.emit(DomainProviderEvent.tool_use_start(block.id, block.name))
+                sink.emit(
+                    DomainProviderEvent.tool_use_start(block.id, block.name)
+                )
         var message = DomainMessage(Role.assistant())
         for block in state.parser.blocks:
             message.add_block(block.copy())
@@ -1950,20 +2263,22 @@ def _gemini_tools(tools: JsonValue) raises -> JsonValue:
         )
         declaration.set(
             "parameters",
-            source.get("parameters")
-            if source.contains("parameters") else JsonValue.object(),
+            source.get("parameters") if source.contains(
+                "parameters"
+            ) else JsonValue.object(),
         )
         output.append(declaration^)
     return output^
 
 
-
-struct OpenAIProviderAdapter(Provider, Movable):
+struct OpenAIProviderAdapter(Movable, Provider):
     var inner: OpenAICompatibleProvider
     var model_info: ModelInfo
     var last_error: Optional[MochiError]
 
-    def __init__(out self, var inner: OpenAICompatibleProvider, model: ModelInfo):
+    def __init__(
+        out self, var inner: OpenAICompatibleProvider, model: ModelInfo
+    ):
         self.inner = inner^
         self.model_info = model.copy()
         self.last_error = None
@@ -1971,9 +2286,9 @@ struct OpenAIProviderAdapter(Provider, Movable):
     def list_models(mut self) raises -> List[ModelInfo]:
         return [self.model_info.copy()]
 
-    def stream_message[S: ProviderEventSink](
-        mut self, request: ProviderRequest, mut sink: S
-    ) raises -> StreamResponse:
+    def stream_message[
+        S: ProviderEventSink
+    ](mut self, request: ProviderRequest, mut sink: S) raises -> StreamResponse:
         self.last_error = None
         if request.cancel.is_cancelled():
             return self._fail(MochiError.cancelled())
@@ -1987,9 +2302,13 @@ struct OpenAIProviderAdapter(Provider, Movable):
         if len(self.inner.fixture_results) > 0:
             var result = self.inner.fixture_results.pop(0)
             if result.message.content != "":
-                sink.emit(DomainProviderEvent.text_delta(result.message.content))
+                sink.emit(
+                    DomainProviderEvent.text_delta(result.message.content)
+                )
             for call in result.message.tool_calls:
-                sink.emit(DomainProviderEvent.tool_use_start(call.id, call.name))
+                sink.emit(
+                    DomainProviderEvent.tool_use_start(call.id, call.name)
+                )
             return _stream_response(result)
         if self.inner.fixture_error != "":
             raise Error(self.inner.fixture_error)
@@ -2071,12 +2390,16 @@ struct ProductionProvider(Movable):
             GeminiProviderAdapterWithTransport(spec^, transport^, model)
         )
 
-    def stream_message[S: ProviderEventSink](
-        mut self, request: ProviderRequest, mut sink: S
-    ) raises -> StreamResponse:
+    def stream_message[
+        S: ProviderEventSink
+    ](mut self, request: ProviderRequest, mut sink: S) raises -> StreamResponse:
         if self.adapter.isa[OpenAIProviderAdapter]():
-            return self.adapter[OpenAIProviderAdapter].stream_message(request, sink)
-        if self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+            return self.adapter[OpenAIProviderAdapter].stream_message(
+                request, sink
+            )
+        if self.adapter.isa[
+            AnthropicProviderAdapterWithTransport[FlokiTransport]
+        ]():
             return self.adapter[
                 AnthropicProviderAdapterWithTransport[FlokiTransport]
             ].stream_message(request, sink)
@@ -2087,13 +2410,17 @@ struct ProductionProvider(Movable):
     def last_http_status(self) -> Int:
         if self.adapter.isa[OpenAIProviderAdapter]():
             return self.adapter[OpenAIProviderAdapter].inner.last_http_status()
-        if self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+        if self.adapter.isa[
+            AnthropicProviderAdapterWithTransport[FlokiTransport]
+        ]():
             var error = self.adapter[
                 AnthropicProviderAdapterWithTransport[FlokiTransport]
             ].last_error.copy()
             if error:
                 return error.value().status
-        if self.adapter.isa[GeminiProviderAdapterWithTransport[FlokiTransport]]():
+        if self.adapter.isa[
+            GeminiProviderAdapterWithTransport[FlokiTransport]
+        ]():
             var error = self.adapter[
                 GeminiProviderAdapterWithTransport[FlokiTransport]
             ].last_error.copy()
@@ -2115,7 +2442,9 @@ struct ProductionProvider(Movable):
         self.model_info = model.copy()
         if self.adapter.isa[OpenAIProviderAdapter]():
             self.adapter[OpenAIProviderAdapter].model_info = model.copy()
-        elif self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+        elif self.adapter.isa[
+            AnthropicProviderAdapterWithTransport[FlokiTransport]
+        ]():
             self.adapter[
                 AnthropicProviderAdapterWithTransport[FlokiTransport]
             ].model_info = model.copy()
@@ -2132,12 +2461,16 @@ struct ProductionProvider(Movable):
             self.adapter[OpenAIProviderAdapter].inner.keys.keys.append(key)
             self.adapter[OpenAIProviderAdapter].inner.keys.index = 0
             return
-        if self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+        if self.adapter.isa[
+            AnthropicProviderAdapterWithTransport[FlokiTransport]
+        ]():
             self.adapter[
                 AnthropicProviderAdapterWithTransport[FlokiTransport]
             ].spec.api_key = key
             return
-        if self.adapter.isa[GeminiProviderAdapterWithTransport[FlokiTransport]]():
+        if self.adapter.isa[
+            GeminiProviderAdapterWithTransport[FlokiTransport]
+        ]():
             self.adapter[
                 GeminiProviderAdapterWithTransport[FlokiTransport]
             ].spec.api_key = key
@@ -2150,8 +2483,12 @@ struct ProductionProvider(Movable):
         if not self.adapter.isa[OpenAIProviderAdapter]():
             raise Error("OpenAI OAuth requires the openai provider")
         self.adapter[OpenAIProviderAdapter].inner.spec.responses_api = True
-        self.adapter[OpenAIProviderAdapter].inner.spec.account_id = credentials.account_id
-        self.adapter[OpenAIProviderAdapter].inner.set_oauth(credentials.oauth_state())
+        self.adapter[
+            OpenAIProviderAdapter
+        ].inner.spec.account_id = credentials.account_id
+        self.adapter[OpenAIProviderAdapter].inner.set_oauth(
+            credentials.oauth_state()
+        )
 
     def clone_for_child(self) raises -> ProductionProvider:
         if self.adapter.isa[OpenAIProviderAdapter]():
@@ -2159,7 +2496,9 @@ struct ProductionProvider(Movable):
                 self.adapter[OpenAIProviderAdapter].inner.copy(),
                 self.model_info,
             )
-        if self.adapter.isa[AnthropicProviderAdapterWithTransport[FlokiTransport]]():
+        if self.adapter.isa[
+            AnthropicProviderAdapterWithTransport[FlokiTransport]
+        ]():
             return ProductionProvider(
                 self.adapter[
                     AnthropicProviderAdapterWithTransport[FlokiTransport]
@@ -2178,7 +2517,7 @@ struct ProductionProvider(Movable):
 
 struct OpenAIProviderAdapterWithTransport[
     T: HttpTransport & Movable & Deinitable
-](Provider, Movable):
+](Movable, Provider):
     var inner: OpenAICompatibleProvider
     var transport: Self.T
     var model_info: ModelInfo
@@ -2198,9 +2537,9 @@ struct OpenAIProviderAdapterWithTransport[
     def list_models(mut self) raises -> List[ModelInfo]:
         return [self.model_info.copy()]
 
-    def stream_message[S: ProviderEventSink](
-        mut self, request: ProviderRequest, mut sink: S
-    ) raises -> StreamResponse:
+    def stream_message[
+        S: ProviderEventSink
+    ](mut self, request: ProviderRequest, mut sink: S) raises -> StreamResponse:
         self.last_error = None
         if request.cancel.is_cancelled():
             return self._fail(MochiError.cancelled())
@@ -2257,12 +2596,16 @@ def _legacy_messages(
                 legacy = Message("tool", block.text)
                 legacy.tool_call_id = block.id
             elif block.is_image():
-                raise Error("OpenAI compatibility adapter does not support image input")
+                raise Error(
+                    "OpenAI compatibility adapter does not support image input"
+                )
         result.append(legacy^)
     return result^
 
 
-def _chat_body(model: String, messages: List[Message], tools: JsonValue) raises -> JsonValue:
+def _chat_body(
+    model: String, messages: List[Message], tools: JsonValue
+) raises -> JsonValue:
     var body = JsonValue.object()
     body.set("model", JsonValue.string(model))
     body.set("stream", JsonValue.boolean(True))
@@ -2318,7 +2661,8 @@ def _responses_body(
             part.set(
                 "type",
                 JsonValue.string(
-                    "output_text" if message.role == "assistant" else "input_text"
+                    "output_text" if message.role
+                    == "assistant" else "input_text"
                 ),
             )
             part.set("text", JsonValue.string(message.content))
@@ -2338,14 +2682,15 @@ def _responses_body(
     return body^
 
 
-def _apply_openai_options(
-    mut body: JsonValue, request: ProviderRequest
-) raises:
+def _apply_openai_options(mut body: JsonValue, request: ProviderRequest) raises:
     var thinking = request.options.thinking.copy()
     if thinking.is_off():
         return
     var effort = thinking.display()
-    if thinking.tag == ThinkingConfig.ADAPTIVE or thinking.tag == ThinkingConfig.BUDGET:
+    if (
+        thinking.tag == ThinkingConfig.ADAPTIVE
+        or thinking.tag == ThinkingConfig.BUDGET
+    ):
         effort = "medium"
     elif effort == "minimal":
         effort = "low"

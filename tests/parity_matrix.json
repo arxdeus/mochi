@@ -2,7 +2,7 @@
   "schema_version": 2,
   "upstream": {
     "repository": "tontinton/maki",
-    "commit": "01d60931f2de41f319d171a74982f35185cd227d"
+    "commit": "f6847451b96dc9722c9ad4ba088e6af1e27b5c6a"
   },
   "statuses": [
     "missing",
@@ -293,12 +293,14 @@
       ],
       "mojo_refs": [
         "src/mochi/mcp.mojo",
-        "tests/mcp_test.mojo"
+        "src/mochi/runtime.mojo:Runtime._dispatch_remote",
+        "tests/mcp_test.mojo",
+        "tests/runtime_test.mojo:test_live_remote_mcp_and_plugin_dispatch"
       ],
       "checks": {
         "local": {
-          "command": "pixi run sh -c 'mojo build -I src tests/mcp_test.mojo -o /tmp/mochi-mcp-test && /tmp/mochi-mcp-test'",
-          "normalization": "JSON-RPC envelopes/results."
+          "command": "pixi run parity mcp.streamable_http.basic",
+          "normalization": "JSON-RPC envelopes/results and propagation of tools/call isError into the persisted tool message."
         },
         "paired_independent": {
           "status": "paired_independent",
@@ -1333,7 +1335,7 @@
       "owner": "mochi_ui",
       "status": "partial",
       "description": "Place the real terminal cursor on the rendered input cell so display-width wrapping and IME preedit anchoring match current Maki.",
-      "gap": "Current Maki tracks the exact wrapped cursor cell, including wide characters, and calls Frame::set_cursor_position for macOS IME anchoring. Mochi _render_editor moves left by a codepoint count on a single printed line and does not calculate wrapped display-cell coordinates.",
+      "gap": "Mochi now computes and emits a physical display-cell cursor across wrapping, wide and combining text, vertical scroll, and search input. The remaining gap is a shared pseudo-terminal coordinate oracle, string-level emoji/ZWJ width collapsing, and real IME validation in the full-screen/concurrent-session UI.",
       "upstream_refs": [
         "maki-ui/src/components/input.rs:InputBox::view",
         "maki-ui/src/components/input.rs:wrap_line",
@@ -1342,14 +1344,209 @@
       ],
       "mojo_refs": [
         "src/mochi/main.mojo:_render_editor",
-        "src/mochi/ui.mojo:UiState"
+        "src/mochi/ui.mojo:UiState.input_cursor_layout",
+        "tests/ui_test.mojo",
+        "tests/main_editor_test.mojo"
       ],
       "parity_criteria": [
         "Compute cursor row and column in terminal display cells across wrapping, wide Unicode, combining text, and viewport changes.",
         "Park the real terminal cursor on the visible cursor cell so macOS and other IMEs anchor preedit text correctly.",
         "Verify cursor coordinates in a pseudo-terminal against shared width/wrap fixtures."
       ],
-      "verification": "No cursor-position or IME check exists; current UI reducer tests do not observe the terminal cursor."
+      "verification": "Focused layout tests cover cursor coordinates and renderer integration emits the terminal cursor, but there is not yet a shared PTY/IME oracle."
+    },
+    {
+      "id": "agent.queue.message_burst",
+      "area": "agent",
+      "owner": "mochi_agent",
+      "status": "partial",
+      "description": "Drain consecutive queued user messages in order at a single provider-turn boundary.",
+      "gap": "Runtime can drain an already populated queue, but the synchronous terminal/provider loop has no production producer that can enqueue user input while a run is active, and no end-to-end test proves delivery in one provider request.",
+      "upstream_refs": [
+        "maki-agent/src/agent/run.rs:queued_messages_are_delivered_in_one_turn",
+        "maki-ui/src/agent/shared_queue.rs:QueueReceiver::pop_run"
+      ],
+      "mojo_refs": [
+        "src/mochi/runtime.mojo:Runtime.consume_queued_input",
+        "tests/runtime_test.mojo:test_queued_message_burst_drains_at_one_turn_boundary"
+      ],
+      "parity_criteria": [
+        "Accept terminal/UI input concurrently while provider streaming or tool dispatch is active.",
+        "Deliver every queued item, including mixed message kinds, in order before exactly one next provider request.",
+        "Verify the live producer, turn boundary, request payload, cancellation, and interleaving against shared fixtures."
+      ],
+      "verification": "A focused Runtime test covers ordered draining only; live same-turn queue delivery remains unimplemented."
+    },
+    {
+      "id": "provider.openai.streamed_error_retry",
+      "area": "providers",
+      "owner": "mochi_provider",
+      "status": "paired_independent",
+      "description": "Structured OpenAI/Codex SSE error tags map overloads and rate limits to retryable HTTP-equivalent status codes even inside an HTTP 200 stream.",
+      "upstream_refs": [
+        "maki-providers/src/providers/mod.rs:sse_error_status",
+        "maki-providers/src/providers/openai/responses.rs:parse_sse_error_event"
+      ],
+      "mojo_refs": [
+        "src/mochi/provider.mojo:_sse_error_detail_status",
+        "tests/provider_test.mojo:test_streamed_overload_tags_drive_retry_status",
+        "tests/provider_test.mojo:test_response_failed_event_name_drives_rate_limit_status",
+        "tests/provider_test.mojo:test_eof_flushed_stream_error_updates_provider_status"
+      ],
+      "checks": {
+        "local": {
+          "command": "pixi run parity provider.openai.streamed_error_retry",
+          "normalization": "Codex server_is_overloaded maps to 529, response.failed rate limits map to 429, EOF-flushed errors retain their retry status, and an unknown invalid request remains non-retryable 400."
+        },
+        "paired_independent": {
+          "status": "paired_independent",
+          "command": "MAKI_UPSTREAM=/path/to/maki pixi run parity provider.openai.streamed_error_retry",
+          "normalization": "Pinned upstream and Mochi structured streamed-error status assertions pass independently."
+        }
+      }
+    },
+    {
+      "id": "provider.openrouter.reported_cost",
+      "area": "providers",
+      "owner": "mochi_provider",
+      "status": "partial",
+      "description": "Prefer the exact non-zero response cost reported by OpenRouter over static requested-model pricing.",
+      "gap": "Mochi parses token counts and can estimate list cost, but Usage and TokenUsage do not carry the per-response OpenRouter cost field or its non-accumulating semantics.",
+      "upstream_refs": [
+        "maki-providers/src/model.rs:TokenUsage::billed_cost",
+        "maki-providers/src/providers/openai_compat.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/provider.mojo:OpenAIStreamParser",
+        "src/mochi/domain.mojo:TokenUsage",
+        "src/mochi/domain.mojo:ModelPricing"
+      ],
+      "parity_criteria": [
+        "Parse a positive cost from each OpenRouter usage chunk without losing token counts.",
+        "Prefer the reported response cost for billing while retaining list-cost fallback.",
+        "Clear rather than sum ephemeral response costs when usage values are accumulated."
+      ],
+      "verification": "No reported-cost field or oracle exists in Mochi."
+    },
+    {
+      "id": "ui.btw.thinking_style",
+      "area": "ui",
+      "owner": "mochi_ui",
+      "status": "partial",
+      "description": "Render ask-btw thinking with the same transcript style and lifecycle as main-agent thinking.",
+      "gap": "Mochi supports a one-shot ask_btw request but returns plain text; it has no btw modal stream or shared styled thinking renderer.",
+      "upstream_refs": [
+        "maki-ui/src/components/btw_modal.rs",
+        "maki-ui/src/components/messages/mod.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/runtime.mojo:Runtime.ask_btw",
+        "src/mochi/main.mojo"
+      ],
+      "parity_criteria": [
+        "Stream btw thinking and answer events through the same style primitives as the main transcript.",
+        "Match modal cancellation, completion, and focus behavior."
+      ],
+      "verification": "The request path exists, but the upstream UI behavior has no equivalent renderer test."
+    },
+    {
+      "id": "net.private_host.allowlist",
+      "area": "tools",
+      "owner": "mochi_tools",
+      "status": "missing",
+      "description": "Allow explicitly trusted private hosts, host-port pairs, and CIDR ranges through the network SSRF guard while rechecking every redirect.",
+      "gap": "Mochi has no equivalent webfetch/websearch/plugin-network guard or net.allowed_private_hosts configuration surface.",
+      "upstream_refs": [
+        "maki-lua/src/api/net.rs:HostAllowlist",
+        "maki-config/src/lib.rs:NetConfig",
+        "maki-lua/tests/plugin_host.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/http.mojo",
+        "src/mochi/config.mojo",
+        "src/mochi/tools.mojo"
+      ],
+      "parity_criteria": [
+        "Parse exact host, host-port, IPv4/IPv6, and CIDR grants with metadata-address safeguards.",
+        "Resolve and validate every request and redirect hop, dropping credentials across authority changes.",
+        "Keep plain HTTP only for explicitly trusted private services."
+      ],
+      "verification": "No network-tool policy implementation or executable oracle exists."
+    },
+    {
+      "id": "config.disabled_plugin.tool_handover",
+      "area": "config",
+      "owner": "mochi_config",
+      "status": "missing",
+      "description": "A disabled bundled plugin does not reserve its former tool name, allowing an enabled replacement to register it while preserving permission-name warnings.",
+      "gap": "Mochi has no compatible bundled-plugin enable/disable configuration or disabled-tools derivation, and does not warn when a plugin inherits rules attached to a builtin tool name.",
+      "upstream_refs": [
+        "maki-config/src/lib.rs:Config::into_config",
+        "maki-lua/src/loader.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/config.mojo",
+        "src/mochi/runtime.mojo:Runtime.install_plugin",
+        "src/mochi/tools.mojo:ToolRegistry.register_remote"
+      ],
+      "parity_criteria": [
+        "Do not copy disabled plugin names into the request-time disabled tool filter.",
+        "Permit an enabled replacement to claim the absent name while rejecting a genuinely live conflict.",
+        "Warn when a plugin takes a permission-sensitive builtin name."
+      ],
+      "verification": "No equivalent plugin configuration path or oracle exists."
+    },
+    {
+      "id": "extensions.session_end.lifecycle",
+      "area": "extensions",
+      "owner": "mochi_extensions",
+      "status": "missing",
+      "description": "Deliver a bounded SessionEnd event on every TUI, ACP, and headless session teardown path before session-owned resources are reaped.",
+      "gap": "Mochi has no plugin event or session-context protocol, so Mojo plugins cannot observe reset, load, delete, shutdown, ACP replacement/EOF, or headless completion. It also cannot await a suspending teardown callback without blocking the UI or ACP executor.",
+      "upstream_refs": [
+        "maki-lua/src/api/autocmd.rs:SessionEnd",
+        "maki-lua/src/loader.rs:EventHandle::end_session",
+        "maki-acp/src/server.rs:end_session_async",
+        "maki-ui/src/app/session.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/plugin.mojo:PluginProtocol",
+        "src/mochi/runtime.mojo:Runtime",
+        "src/mochi/acp.mojo",
+        "src/mochi/main.mojo"
+      ],
+      "parity_criteria": [
+        "Expose a versioned Mojo SDK SessionEnd callback carrying the session being left behind.",
+        "Fire it exactly once on reset, load, delete, shutdown, ACP replace/EOF, and headless completion before owned resource cleanup.",
+        "Bound and await suspending handlers without deadlocking UI shutdown or pausing ACP input."
+      ],
+      "verification": "No plugin lifecycle callback or shared teardown-path oracle exists in Mochi."
+    },
+    {
+      "id": "extensions.jobs.async_runtime",
+      "area": "extensions",
+      "owner": "mochi_extensions",
+      "status": "missing",
+      "description": "Give Mojo plugins inspectable task, plugin, and session-scoped background jobs whose callbacks can suspend and whose session jobs survive plugin reload.",
+      "gap": "The Mojo plugin protocol only supports serial host-to-plugin invocation. It has no jobstart/jobinfo/joblist/jobwait/jobforget surface, output-tail snapshots, session ownership, reload handover, coroutine callbacks, or ordered append-file host call.",
+      "upstream_refs": [
+        "maki-lua/src/api/fn.rs",
+        "maki-lua/src/api/fs.rs:append",
+        "maki-lua/src/runtime.rs",
+        "maki-lua/tests/plugin_host.rs"
+      ],
+      "mojo_refs": [
+        "src/mochi/plugin.mojo:PluginClient",
+        "src/mochi/plugin_sdk.mojo",
+        "src/mochi/plugin_source.mojo",
+        "tests/plugin_test.mojo"
+      ],
+      "parity_criteria": [
+        "Expose bounded job start, stop, wait, forget, info, and list calls with pid, command, exit state, elapsed time, and truncated stdout/stderr tails.",
+        "Enforce task, plugin, and session scopes; keep session jobs alive across plugin generation reload and reap them after SessionEnd.",
+        "Run exit and event callbacks in cancellable async scopes that may call ordered fs.append without blocking jobwait or shutdown."
+      ],
+      "verification": "No plugin background-job API, async callback dispatcher, or executable lifecycle oracle exists in Mochi."
     }
   ]
 }

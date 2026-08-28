@@ -6,10 +6,17 @@ native code: lexical path validation and an isolated build cache prevent
 accidental traversal or partial artifacts, but do not sandbox plugin behavior.
 """
 
-from std.ffi import CStringSlice, c_int, c_long, c_pid_t, c_size_t, external_call, get_errno
+from std.ffi import (
+    CStringSlice,
+    c_int,
+    c_long,
+    c_pid_t,
+    c_size_t,
+    external_call,
+    get_errno,
+)
 from std.os import listdir, makedirs, remove
 from std.os.path import exists, isdir, isfile
-from std.sys._libc import exit
 
 from mochi.json import JsonValue, parse_json
 from mochi.plugin import PLUGIN_PROTOCOL_VERSION, PluginExecutable
@@ -20,6 +27,7 @@ comptime PLUGIN_MANIFEST_VERSION = 1
 comptime DEFAULT_MOCHI_VERSION = "0.1.0"
 comptime PLUGIN_COMPILE_TIMEOUT_SECONDS = 120
 comptime PLUGIN_IDENTITY_TIMEOUT_SECONDS = 10
+comptime STABLE_PATH_BUFFER_BYTES = 64 * 1024
 
 
 struct SemanticVersion(Copyable, Movable):
@@ -149,8 +157,7 @@ struct PluginSourceMetadata(Copyable, Movable):
 
 
 struct PreparedPlugin(Copyable, Movable):
-    """A launchable plugin plus source metadata when compilation was required.
-    """
+    """A launchable plugin plus source metadata when compilation was required."""
 
     var executable: PluginExecutable
     var source: Optional[PluginSourceMetadata]
@@ -179,7 +186,14 @@ struct PluginBuildOptions(Copyable, Movable):
         var cache_directory: String,
         var compiler: String = "mojo",
         var mochi_version: String = DEFAULT_MOCHI_VERSION,
-    ):
+    ) raises:
+        # Runtime `/cd` changes the process cwd. Anchor every retained build
+        # path at configuration time so a later source reload observes the
+        # same source tree, cache, compiler, and SDK roots.
+        if cache_directory != "":
+            cache_directory = _absolute_path(cache_directory)
+        if compiler != "":
+            compiler = _stable_executable_path(compiler)
         self.cache_directory = cache_directory^
         self.compiler = compiler^
         self.mochi_version = mochi_version^
@@ -187,7 +201,16 @@ struct PluginBuildOptions(Copyable, Movable):
         self.toolchain_identity = ""
         self.target_identity = ""
 
-    def add_compiler_argument(mut self, var argument: String):
+    def add_compiler_argument(mut self, var argument: String) raises:
+        if argument.startswith("-I") and argument.byte_length() > 2:
+            argument = "-I" + _absolute_path(_byte_suffix(argument, 2))
+        elif (
+            argument != ""
+            and len(self.compiler_arguments) > 0
+            and self.compiler_arguments[len(self.compiler_arguments) - 1]
+            == "-I"
+        ):
+            argument = _absolute_path(argument)
         self.compiler_arguments.append(argument^)
 
     def set_toolchain_identity(mut self, var identity: String):
@@ -384,7 +407,7 @@ def discover_plugin_source(path: String) raises -> Optional[PluginSourceSpec]:
     if path.endswith(".mojo"):
         if not isfile(path):
             raise Error("Mojo plugin source does not exist: " + path)
-        var root = _dirname(path)
+        var root = _normalized_root(_dirname(path))
         var entry = _basename(path)
         _validate_source_path(entry, "direct source")
         var name = _source_stem(entry)
@@ -407,8 +430,7 @@ def discover_plugin_source(path: String) raises -> Optional[PluginSourceSpec]:
 def plugin_build_hash(
     spec: PluginSourceSpec, options: PluginBuildOptions
 ) raises -> String:
-    """Hash every declared source plus all compiler inputs affecting the binary.
-    """
+    """Hash every declared source plus all compiler inputs affecting the binary."""
     _validate_compiler_arguments(options.compiler_arguments)
     return _plugin_build_hash_from_snapshot(
         spec,
@@ -456,21 +478,16 @@ def _plugin_build_hash_from_snapshot(
     # Hash every Mojo dependency below the plugin root and every explicit
     # compiler include. This catches imported helpers and the Mochi SDK even
     # when they are not repeated in a manifest's `sources` list.
-    _hash_mojo_tree(
-        material, plugin_root, "", 0, options.cache_directory
-    )
+    _hash_mojo_tree(material, plugin_root, "", 0, options.cache_directory)
     for include_root in compiler_include_roots:
-        _hash_mojo_tree(
-            material, include_root, "", 0, options.cache_directory
-        )
+        _hash_mojo_tree(material, include_root, "", 0, options.cache_directory)
     return sha256_hex(material)
 
 
 def compiler_command(
     spec: PluginSourceSpec, options: PluginBuildOptions, output_path: String
 ) raises -> PluginExecutable:
-    """Construct the argv-safe Mojo compiler command used by the cache builder.
-    """
+    """Construct the argv-safe Mojo compiler command used by the cache builder."""
     _validate_compiler_arguments(options.compiler_arguments)
     return _compiler_command_for_snapshot(
         spec,
@@ -508,8 +525,7 @@ def _compiler_command_for_snapshot(
 def build_source_plugin(
     spec: PluginSourceSpec, options: PluginBuildOptions
 ) raises -> PreparedPlugin:
-    """Build on cache miss and atomically publish a complete native executable.
-    """
+    """Build on cache miss and atomically publish a complete native executable."""
     if options.cache_directory == "":
         raise Error("plugin build cache directory is empty")
     _validate_compiler_arguments(options.compiler_arguments)
@@ -595,7 +611,7 @@ def prepare_plugin(
     """Prepare source inputs, or preserve a prebuilt executable unchanged."""
     var source = discover_plugin_source(path)
     if not source:
-        return PreparedPlugin(PluginExecutable(path))
+        return PreparedPlugin(PluginExecutable(_stable_executable_path(path)))
     return build_source_plugin(source.value().copy(), options)
 
 
@@ -612,30 +628,25 @@ def _run_compiler(executable: PluginExecutable) raises:
     var command = executable.command()
     if len(command) == 0 or command[0] == "":
         raise Error("compiler command is empty")
-    var pid = external_call["fork", c_pid_t]()
+    var argv = List[Optional[CStringSlice[ImmutAnyOrigin]]](
+        length=len(command) + 1, fill={}
+    )
+    for index in range(len(command)):
+        argv[index] = rebind[CStringSlice[ImmutAnyOrigin]](
+            command[index].as_c_string_slice()
+        )
+    # Compiler diagnostics belong on the host's diagnostic stream, never on
+    # the JSON-RPC/stdout channel used by a surrounding Mochi process.
+    var pid = external_call["mochi_spawn_process", c_pid_t](
+        command[0].as_c_string_slice(),
+        argv.unsafe_ptr(),
+        c_int(-1),
+        c_int(2),
+        c_int(-1),
+    )
     if pid < 0:
-        raise Error("unable to fork Mojo compiler")
-    if pid == 0:
-        if external_call["setpgid", c_int](c_int(0), c_int(0)) != 0:
-            exit(c_int(126))
-        # Compiler diagnostics belong on the host's diagnostic stream, never on
-        # the JSON-RPC/stdout channel used by a surrounding Mochi process.
-        _ = external_call["dup2", c_int](c_int(2), c_int(1))
-        var argv = List[Optional[CStringSlice[ImmutAnyOrigin]]](
-            length=len(command) + 1, fill={}
-        )
-        for index in range(len(command)):
-            argv[index] = rebind[CStringSlice[ImmutAnyOrigin]](
-                command[index].as_c_string_slice()
-            )
-        _ = external_call["execvp", c_int](
-            command[0].as_c_string_slice(), argv.unsafe_ptr()
-        )
-        exit(c_int(127))
-    _ = external_call["setpgid", c_int](c_int(pid), c_int(pid))
-    var deadline = external_call[
-        "mochi_deadline_after_millis", c_long, c_long
-    ](
+        raise Error("unable to spawn Mojo compiler")
+    var deadline = external_call["mochi_deadline_after_millis", c_long, c_long](
         c_long(PLUGIN_COMPILE_TIMEOUT_SECONDS * 1000)
     )
     if deadline < 0:
@@ -662,14 +673,14 @@ def _run_compiler(executable: PluginExecutable) raises:
     ](
         c_int(pid),
         deadline,
-        rebind[Pointer[mut=True, c_int, MutAnyOrigin]](
-            status.unsafe_ptr()
-        ),
+        rebind[Pointer[mut=True, c_int, MutAnyOrigin]](status.unsafe_ptr()),
     )
     if waited == 1:
         raise Error("Mojo compiler exceeded the 120 second deadline")
     if waited != 0:
         raise Error("unable to wait for Mojo compiler")
+    # The C wait retains the leader as a PID/PGID identity anchor, terminates
+    # its remaining descendants, and drains the group before returning.
     if status[0] != 0:
         raise Error(
             "Mojo compiler failed with wait status " + String(status[0])
@@ -712,36 +723,29 @@ def _effective_target_identity(
 def _capture_command(var command: List[String]) raises -> String:
     if len(command) == 0 or command[0] == "":
         raise Error("identity command is empty")
+    var argv = List[Optional[CStringSlice[ImmutAnyOrigin]]](
+        length=len(command) + 1, fill={}
+    )
+    for index in range(len(command)):
+        argv[index] = rebind[CStringSlice[ImmutAnyOrigin]](
+            command[index].as_c_string_slice()
+        )
     var output_fds = List[c_int](length=2, fill=0)
     if external_call["pipe", c_int](output_fds.unsafe_ptr()) != 0:
         raise Error("unable to create compiler identity pipe")
-    var pid = external_call["fork", c_pid_t]()
+    var pid = external_call["mochi_spawn_process", c_pid_t](
+        command[0].as_c_string_slice(),
+        argv.unsafe_ptr(),
+        c_int(-1),
+        output_fds[1],
+        c_int(-1),
+    )
     if pid < 0:
         _ = external_call["close", c_int](output_fds[0])
         _ = external_call["close", c_int](output_fds[1])
-        raise Error("unable to fork compiler identity command")
-    if pid == 0:
-        if external_call["setpgid", c_int](c_int(0), c_int(0)) != 0:
-            exit(c_int(126))
-        _ = external_call["dup2", c_int](output_fds[1], c_int(1))
-        _ = external_call["close", c_int](output_fds[0])
-        _ = external_call["close", c_int](output_fds[1])
-        var argv = List[Optional[CStringSlice[ImmutAnyOrigin]]](
-            length=len(command) + 1, fill={}
-        )
-        for index in range(len(command)):
-            argv[index] = rebind[CStringSlice[ImmutAnyOrigin]](
-                command[index].as_c_string_slice()
-            )
-        _ = external_call["execvp", c_int](
-            command[0].as_c_string_slice(), argv.unsafe_ptr()
-        )
-        exit(c_int(127))
-    _ = external_call["setpgid", c_int](c_int(pid), c_int(pid))
+        raise Error("unable to spawn compiler identity command")
     _ = external_call["close", c_int](output_fds[1])
-    var deadline = external_call[
-        "mochi_deadline_after_millis", c_long, c_long
-    ](
+    var deadline = external_call["mochi_deadline_after_millis", c_long, c_long](
         c_long(PLUGIN_IDENTITY_TIMEOUT_SECONDS * 1000)
     )
     if deadline < 0:
@@ -771,9 +775,7 @@ def _capture_command(var command: List[String]) raises -> String:
             c_long,
         ](
             output_fds[0],
-            rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](
-                buffer.unsafe_ptr()
-            ),
+            rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](buffer.unsafe_ptr()),
             c_size_t(len(buffer)),
             deadline,
         )
@@ -839,9 +841,7 @@ def _capture_command(var command: List[String]) raises -> String:
     ](
         c_int(pid),
         deadline,
-        rebind[Pointer[mut=True, c_int, MutAnyOrigin]](
-            status.unsafe_ptr()
-        ),
+        rebind[Pointer[mut=True, c_int, MutAnyOrigin]](status.unsafe_ptr()),
     )
     if waited == 1:
         raise Error("compiler identity command exceeded the 10 second deadline")
@@ -853,6 +853,7 @@ def _capture_command(var command: List[String]) raises -> String:
             + String(status[0])
         )
     return String(from_utf8=Span(bytes))
+
 
 def _compiler_include_roots(arguments: List[String]) raises -> List[String]:
     """Extract logical compiler include roots in argv order."""
@@ -893,8 +894,7 @@ def _validate_compiler_arguments(arguments: List[String]) raises:
         if _safe_compiler_value_option(argument):
             if index + 1 >= len(arguments) or arguments[index + 1] == "":
                 raise Error(
-                    "plugin compiler option is missing its value: "
-                    + argument
+                    "plugin compiler option is missing its value: " + argument
                 )
             index += 2
             continue
@@ -1084,13 +1084,11 @@ def _stage_mojo_tree(
 ) raises:
     if depth > 64:
         raise Error("plugin include tree exceeds 64 directory levels")
-    var source_directory = (
-        source_root if relative == "" else _join(source_root, relative)
+    var source_directory = source_root if relative == "" else _join(
+        source_root, relative
     )
-    var destination_directory = (
-        destination_root
-        if relative == ""
-        else _join(destination_root, relative)
+    var destination_directory = destination_root if relative == "" else _join(
+        destination_root, relative
     )
     if not isdir(source_directory):
         raise Error(
@@ -1106,9 +1104,7 @@ def _stage_mojo_tree(
     var entries = listdir(source_directory)
     _sort_strings(entries)
     for entry in entries:
-        var child_relative = (
-            entry if relative == "" else relative + "/" + entry
-        )
+        var child_relative = entry if relative == "" else relative + "/" + entry
         var source = _join(source_root, child_relative)
         if isdir(source):
             _stage_mojo_tree(
@@ -1148,9 +1144,7 @@ def _freeze_stage_tree(root: String, relative: String, depth: Int) raises:
     var directory = root if relative == "" else _join(root, relative)
     var entries = listdir(directory)
     for entry in entries:
-        var child_relative = (
-            entry if relative == "" else relative + "/" + entry
-        )
+        var child_relative = entry if relative == "" else relative + "/" + entry
         var child = _join(root, child_relative)
         if isdir(child):
             _freeze_stage_tree(root, child_relative, depth + 1)
@@ -1171,9 +1165,7 @@ def _remove_build_stage(path: String) raises:
     var owned_path = path
     var status = external_call[
         "mochi_remove_plugin_stage", c_int, CStringSlice[ImmutAnyOrigin]
-    ](
-        rebind[CStringSlice[ImmutAnyOrigin]](owned_path.as_c_string_slice())
-    )
+    ](rebind[CStringSlice[ImmutAnyOrigin]](owned_path.as_c_string_slice()))
     if status != 0:
         raise Error("snapshot cleanup failed with status " + String(status))
 
@@ -1199,9 +1191,7 @@ def _hash_mojo_tree(
     var entries = listdir(directory)
     _sort_strings(entries)
     for entry in entries:
-        var child_relative = (
-            entry if relative == "" else relative + "/" + entry
-        )
+        var child_relative = entry if relative == "" else relative + "/" + entry
         var child = _join(root, child_relative)
         if isdir(child):
             _hash_mojo_tree(
@@ -1213,9 +1203,7 @@ def _hash_mojo_tree(
             )
         elif isfile(child) and _is_mojo_build_input(child):
             _hash_field(material, "include_source_path", child_relative)
-            _hash_field(
-                material, "include_source_digest", _file_sha256(child)
-            )
+            _hash_field(material, "include_source_digest", _file_sha256(child))
 
 
 def _sort_strings(mut values: List[String]):
@@ -1245,9 +1233,9 @@ def _is_executable(path: String) -> Bool:
     if not isfile(path):
         return False
     var owned = path
-    return external_call["access", c_int](
-        owned.as_c_string_slice(), c_int(1)
-    ) == 0
+    return (
+        external_call["access", c_int](owned.as_c_string_slice(), c_int(1)) == 0
+    )
 
 
 def _is_mojo_build_input(path: String) -> Bool:
@@ -1293,17 +1281,11 @@ def _same_file(left: String, right: String) raises -> Bool:
         CStringSlice[ImmutAnyOrigin],
         CStringSlice[ImmutAnyOrigin],
     ](
-        rebind[CStringSlice[ImmutAnyOrigin]](
-            owned_left.as_c_string_slice()
-        ),
-        rebind[CStringSlice[ImmutAnyOrigin]](
-            owned_right.as_c_string_slice()
-        ),
+        rebind[CStringSlice[ImmutAnyOrigin]](owned_left.as_c_string_slice()),
+        rebind[CStringSlice[ImmutAnyOrigin]](owned_right.as_c_string_slice()),
     )
     if status < 0:
-        raise Error(
-            "unable to compare plugin build paths: " + String(-status)
-        )
+        raise Error("unable to compare plugin build paths: " + String(-status))
     return status == 1
 
 
@@ -1473,10 +1455,67 @@ def _contains(values: List[String], expected: String) -> Bool:
 def _normalized_root(path: String) raises -> String:
     if path == "":
         raise Error("plugin root is empty")
-    var result = path
+    var result = _absolute_path(path)
     while result.byte_length() > 1 and result.endswith("/"):
         result = _byte_prefix(result, result.byte_length() - 1)
     return result^
+
+
+def _absolute_path(path: String) raises -> String:
+    if path == "":
+        raise Error("path is empty")
+    var owned_path = path
+    var resolved = List[UInt8](length=STABLE_PATH_BUFFER_BYTES, fill=0)
+    var status = external_call[
+        "mochi_absolute_path",
+        c_int,
+        CStringSlice[ImmutAnyOrigin],
+        Pointer[mut=True, UInt8, MutAnyOrigin],
+        c_size_t,
+    ](
+        rebind[CStringSlice[ImmutAnyOrigin]](owned_path.as_c_string_slice()),
+        rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](resolved.unsafe_ptr()),
+        c_size_t(len(resolved)),
+    )
+    if status != 0:
+        raise Error(
+            "unable to anchor path " + path + ": errno " + String(status)
+        )
+    return _path_buffer_string(resolved)
+
+
+def _stable_executable_path(path: String) raises -> String:
+    if path == "":
+        return path
+    var owned_path = path
+    var resolved = List[UInt8](length=STABLE_PATH_BUFFER_BYTES, fill=0)
+    var status = external_call[
+        "mochi_resolve_executable_path",
+        c_int,
+        CStringSlice[ImmutAnyOrigin],
+        Pointer[mut=True, UInt8, MutAnyOrigin],
+        c_size_t,
+    ](
+        rebind[CStringSlice[ImmutAnyOrigin]](owned_path.as_c_string_slice()),
+        rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](resolved.unsafe_ptr()),
+        c_size_t(len(resolved)),
+    )
+    if status == 0:
+        return _path_buffer_string(resolved)
+    # Preserve a not-yet-installed bare command for prebuilt-plugin setups
+    # that never invoke the compiler. Any command found in PATH is anchored.
+    if "/" not in path:
+        return path
+    raise Error(
+        "unable to anchor executable path " + path + ": errno " + String(status)
+    )
+
+
+def _path_buffer_string(buffer: List[UInt8]) -> String:
+    var length = 0
+    while length < len(buffer) and buffer[length] != 0:
+        length += 1
+    return String(unsafe_from_utf8=Span(buffer)[0:length])
 
 
 def _join(root: String, relative: String) -> String:

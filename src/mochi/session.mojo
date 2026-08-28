@@ -125,7 +125,9 @@ struct Session(Copyable, Movable):
     def task_messages(self, task_index: Int) raises -> List[Message]:
         if task_index == 0:
             return self.runtime_messages()
-        if self.subagents.kind != JsonValue.ARRAY or task_index > len(self.subagents.array_value):
+        if self.subagents.kind != JsonValue.ARRAY or task_index > len(
+            self.subagents.array_value
+        ):
             raise Error("task index is out of range")
         var item = self.subagents.array_value[task_index - 1].copy()
         if item.kind != JsonValue.OBJECT:
@@ -203,7 +205,9 @@ struct Session(Copyable, Movable):
             if tag == "header":
                 var version = _required_int(record, "v")
                 if version != LOG_FORMAT_VERSION:
-                    raise Error("unsupported session log version: " + String(version))
+                    raise Error(
+                        "unsupported session log version: " + String(version)
+                    )
                 result.id = _required_string(record, "id")
                 result.model = _required_string(record, "model")
                 result.cwd = _required_string(record, "cwd")
@@ -211,10 +215,20 @@ struct Session(Copyable, Movable):
                 got_header = True
             elif tag == "msg" and record.contains("d"):
                 result.messages.append(record.get("d"))
-            elif tag == "out" and record.contains("id") and record.contains("d"):
-                result.set_output(_required_string(record, "id"), record.get("d"))
-            elif tag == "sub_msg" and record.contains("sub") and record.contains("d"):
-                result.add_subagent_message(_required_string(record, "sub"), record.get("d"))
+            elif (
+                tag == "out" and record.contains("id") and record.contains("d")
+            ):
+                result.set_output(
+                    _required_string(record, "id"), record.get("d")
+                )
+            elif (
+                tag == "sub_msg"
+                and record.contains("sub")
+                and record.contains("d")
+            ):
+                result.add_subagent_message(
+                    _required_string(record, "sub"), record.get("d")
+                )
             elif tag == "meta":
                 if record.contains("title"):
                     result.title = _required_string(record, "title")
@@ -248,6 +262,8 @@ def message_to_json(message: Message) raises -> JsonValue:
         value.set("tool_call_id", JsonValue.string(message.tool_call_id))
     if message.is_error:
         value.set("is_error", JsonValue.boolean(True))
+    if not message.tool_result.is_null():
+        value.set("tool_result", message.tool_result.copy())
     if len(message.tool_calls) > 0:
         var calls = JsonValue.array()
         for call in message.tool_calls:
@@ -268,12 +284,20 @@ def message_from_json(value: JsonValue) raises -> Message:
     )
     if value.contains("name") and not value.get("name").is_null():
         message.name = _required_string(value, "name")
-    if value.contains("tool_call_id") and not value.get("tool_call_id").is_null():
+    if (
+        value.contains("tool_call_id")
+        and not value.get("tool_call_id").is_null()
+    ):
         message.tool_call_id = _required_string(value, "tool_call_id")
     if value.contains("is_error"):
         if value.get("is_error").kind != JsonValue.BOOL:
             raise Error("session message is_error must be a boolean")
         message.is_error = value.get("is_error").bool_value
+    if value.contains("tool_result"):
+        var tool_result = value.get("tool_result")
+        if tool_result.kind != JsonValue.OBJECT:
+            raise Error("session message tool_result must be an object")
+        message.tool_result = tool_result^
     if value.contains("tool_calls"):
         var calls = value.get("tool_calls")
         if calls.kind != JsonValue.ARRAY:
@@ -334,7 +358,11 @@ struct SessionStore(Copyable, Movable):
                     continue
                 if cwd and session.cwd != cwd.value():
                     continue
-                summaries.append(SessionSummary(session.id, session.title, session.updated_at))
+                summaries.append(
+                    SessionSummary(
+                        session.id, session.title, session.updated_at
+                    )
+                )
             except:
                 continue
         for i in range(len(summaries)):
@@ -380,7 +408,9 @@ struct SessionStore(Copyable, Movable):
 
     def _save_index(self, index: JsonValue) raises:
         makedirs(self.directory, exist_ok=True)
-        _atomic_write(self.directory + "/" + CWD_INDEX_FILE, serialize_json(index))
+        _atomic_write(
+            self.directory + "/" + CWD_INDEX_FILE, serialize_json(index)
+        )
 
 
 def _validate_session_id(session_id: String) raises:

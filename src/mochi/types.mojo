@@ -2,6 +2,8 @@
 
 from std.ffi import c_int, external_call
 
+from mochi.json import JsonValue
+
 
 comptime _CancellationHandle = MutPointer[NoneType, MutUntrackedOrigin]
 
@@ -25,6 +27,7 @@ struct Message(Copyable, Movable):
     var tool_call_id: String
     var name: String
     var is_error: Bool
+    var tool_result: JsonValue
 
     def __init__(out self, role: String, content: String):
         self.role = role
@@ -33,6 +36,7 @@ struct Message(Copyable, Movable):
         self.tool_call_id = ""
         self.name = ""
         self.is_error = False
+        self.tool_result = JsonValue.null()
 
     def add_tool_call(mut self, var call: ToolCall):
         self.tool_calls.append(call^)
@@ -105,7 +109,9 @@ struct CancellationToken(Copyable, Movable):
         external_call["mochi_cancellation_cancel", NoneType](self._handle)
 
     def activate_sigint(self):
-        external_call["mochi_cancellation_activate_sigint", NoneType](self._handle)
+        external_call["mochi_cancellation_activate_sigint", NoneType](
+            self._handle
+        )
 
     @staticmethod
     def deactivate_sigint():
@@ -125,9 +131,9 @@ struct CancellationToken(Copyable, Movable):
     def cancel_after(self, milliseconds: Int) raises:
         if milliseconds < 0:
             raise Error("cancellation delay must not be negative")
-        var result = external_call[
-            "mochi_cancellation_cancel_after", c_int
-        ](self._handle, c_int(milliseconds))
+        var result = external_call["mochi_cancellation_cancel_after", c_int](
+            self._handle, c_int(milliseconds)
+        )
         if result != 0:
             raise Error("unable to schedule cancellation")
 

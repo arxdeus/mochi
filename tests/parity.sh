@@ -4,7 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 default_upstream="$root/.slim/clonedeps/repos/tontinton__maki"
 upstream=${MAKI_UPSTREAM:-$default_upstream}
-expected=01d60931f2de41f319d171a74982f35185cd227d
+expected=f6847451b96dc9722c9ad4ba088e6af1e27b5c6a
 
 print_oracle_setup() {
     requested_behavior=${1:-all}
@@ -145,6 +145,13 @@ case "${1:-all}" in
     provider.openai.chat.streaming)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
             providers::openai_compat::tests::parse_sse_text_and_usage -- --exact >/dev/null
+        run_mojo_test tests/provider_test.mojo
+        ;;
+    provider.openai.streamed_error_retry)
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
+            sse_error_payload_status >/dev/null
+        cargo test --manifest-path "$upstream/Cargo.toml" -p maki-providers \
+            parse_sse_error_event >/dev/null
         run_mojo_test tests/provider_test.mojo
         ;;
     provider.anthropic.messages.streaming)
@@ -398,6 +405,7 @@ case "${1:-all}" in
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
             mcp::http::tests::server_negotiated_protocol_version_echoed_after_initialize -- --exact >/dev/null
         run_mojo_test tests/mcp_test.mojo
+        run_mojo_test tests/runtime_test.mojo
         ;;
     mcp.oauth.discovery_pkce)
         cargo test --manifest-path "$upstream/Cargo.toml" -p maki-agent \
@@ -421,7 +429,7 @@ case "${1:-all}" in
         # There are currently no shared fixtures or direct output comparisons.
         mismatches=0
         failed=""
-        behaviors="agent.provider_error.result agent.system_prompt.instructions acp.v1.session.lifecycle config.layered.merge storage.workspace.stores ops.logging.telemetry permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.openai.contract_adapter provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output storage.session.resume_continue cancellation.http.active cancellation.process.active contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
+        behaviors="agent.provider_error.result agent.system_prompt.instructions acp.v1.session.lifecycle config.layered.merge storage.workspace.stores ops.logging.telemetry permissions.deny_precedence permissions.session_generalization storage.session.v2.truncated_tail storage.session.latest_cwd provider.openai.chat.streaming provider.openai.streamed_error_retry provider.openai.contract_adapter provider.anthropic.messages.streaming provider.google.generate.streaming provider.model.catalog_metadata agent.task.structured_output storage.session.resume_continue cancellation.http.active cancellation.process.active contracts.extension.v1 contracts.ui.transcript.v1 contracts.storage.codecs contracts.invocation.fake contracts.provider.fake contracts.domain.adt extension.executable.lifecycle mcp.streamable_http.basic ui.command.catalog ui.command.request_modes ui.input.history ui.input.word_aware_paste ui.picker.filter_navigation ui.mouse.selection ui.terminal.sgr_mouse ui.overlay.modal_gating ui.search.escape_restore ui.search.navigation ui.search.display mcp.oauth.discovery_pkce ops.version.newer"
         count=0
         for behavior in $behaviors; do
             count=$((count + 1))

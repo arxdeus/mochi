@@ -23,6 +23,7 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -34,6 +35,270 @@ enum {
     MOCHI_DEADLINE_ERROR = -1,
     MOCHI_DEADLINE_TIMEOUT = -2,
 };
+
+#if defined(__unix__) || defined(__APPLE__)
+extern char **environ;
+
+static char *mochi_copy_string(const char *value) {
+    size_t length = strlen(value);
+    char *copy = (char *)malloc(length + 1);
+    if (copy != NULL) {
+        memcpy(copy, value, length + 1);
+    }
+    return copy;
+}
+
+static char *mochi_resolve_executable(const char *path) {
+    if (strchr(path, '/') != NULL) {
+        return mochi_copy_string(path);
+    }
+    const char *search_path = getenv("PATH");
+    if (search_path == NULL) {
+        search_path = "/bin:/usr/bin";
+    }
+    size_t path_length = strlen(path);
+    const char *cursor = search_path;
+    for (;;) {
+        const char *separator = strchr(cursor, ':');
+        size_t directory_length = separator == NULL
+            ? strlen(cursor)
+            : (size_t)(separator - cursor);
+        size_t prefix_length = directory_length == 0 ? 1 : directory_length;
+        if (prefix_length <= SIZE_MAX - path_length - 2) {
+            size_t candidate_length = prefix_length + 1 + path_length;
+            char *candidate = (char *)malloc(candidate_length + 1);
+            if (candidate == NULL) {
+                return NULL;
+            }
+            if (directory_length == 0) {
+                candidate[0] = '.';
+            } else {
+                memcpy(candidate, cursor, directory_length);
+            }
+            candidate[prefix_length] = '/';
+            memcpy(candidate + prefix_length + 1, path, path_length + 1);
+            if (access(candidate, X_OK) == 0) {
+                return candidate;
+            }
+            free(candidate);
+        }
+        if (separator == NULL) {
+            break;
+        }
+        cursor = separator + 1;
+    }
+    errno = ENOENT;
+    return NULL;
+}
+
+int mochi_absolute_path(
+    const char *path, char *resolved, size_t resolved_capacity
+) {
+    if (path == NULL || path[0] == '\0' || resolved == NULL ||
+        resolved_capacity == 0) {
+        return EINVAL;
+    }
+    if (path[0] == '/') {
+        size_t length = strlen(path);
+        if (length >= resolved_capacity) {
+            return ENAMETOOLONG;
+        }
+        memcpy(resolved, path, length + 1);
+        return 0;
+    }
+    if (getcwd(resolved, resolved_capacity) == NULL) {
+        return errno == 0 ? EIO : errno;
+    }
+    size_t directory_length = strlen(resolved);
+    size_t path_length = strlen(path);
+    bool needs_separator =
+        directory_length == 0 || resolved[directory_length - 1] != '/';
+    size_t separator_length = needs_separator ? 1 : 0;
+    if (directory_length > SIZE_MAX - separator_length - path_length - 1 ||
+        directory_length + separator_length + path_length >=
+            resolved_capacity) {
+        return ENAMETOOLONG;
+    }
+    if (needs_separator) {
+        resolved[directory_length++] = '/';
+    }
+    memcpy(resolved + directory_length, path, path_length + 1);
+    return 0;
+}
+
+int mochi_resolve_executable_path(
+    const char *path, char *resolved, size_t resolved_capacity
+) {
+    if (path == NULL || path[0] == '\0') {
+        return EINVAL;
+    }
+    char *candidate = mochi_resolve_executable(path);
+    if (candidate == NULL) {
+        return errno == 0 ? ENOENT : errno;
+    }
+    int result = mochi_absolute_path(
+        candidate, resolved, resolved_capacity
+    );
+    free(candidate);
+    return result;
+}
+
+static long mochi_highest_open_descriptor(void) {
+    const char *directory_path =
+#if defined(__linux__)
+        "/proc/self/fd";
+#else
+        "/dev/fd";
+#endif
+    DIR *directory = opendir(directory_path);
+    if (directory == NULL) {
+        return -1;
+    }
+    long highest = -1;
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        long value = 0;
+        const unsigned char *cursor = (const unsigned char *)entry->d_name;
+        if (*cursor < '0' || *cursor > '9') {
+            continue;
+        }
+        while (*cursor >= '0' && *cursor <= '9') {
+            if (value > (LONG_MAX - (*cursor - '0')) / 10) {
+                value = LONG_MAX;
+                break;
+            }
+            value = value * 10 + (*cursor - '0');
+            ++cursor;
+        }
+        if (*cursor == '\0' && value > highest) {
+            highest = value;
+        }
+    }
+    (void)closedir(directory);
+    return highest;
+}
+
+static long mochi_descriptor_limit(void) {
+    long descriptor_limit = sysconf(_SC_OPEN_MAX);
+    if (descriptor_limit < 3) {
+        descriptor_limit = 1024;
+    }
+    struct rlimit limits;
+    if (getrlimit(RLIMIT_NOFILE, &limits) == 0 &&
+        limits.rlim_max != RLIM_INFINITY &&
+        limits.rlim_max > (rlim_t)descriptor_limit) {
+        descriptor_limit = limits.rlim_max > (rlim_t)INT_MAX
+            ? INT_MAX
+            : (long)limits.rlim_max;
+    }
+    long highest = mochi_highest_open_descriptor();
+    if (highest >= descriptor_limit && highest < INT_MAX) {
+        descriptor_limit = highest + 1;
+    }
+    return descriptor_limit > INT_MAX ? INT_MAX : descriptor_limit;
+}
+
+static void mochi_child_close_from(long descriptor_limit) {
+    for (
+        int fd = STDERR_FILENO + 1;
+        fd < (int)descriptor_limit;
+        ++fd
+    ) {
+        while (close(fd) != 0 && errno == EINTR) {
+        }
+    }
+}
+#else
+int mochi_absolute_path(
+    const char *path, char *resolved, size_t resolved_capacity
+) {
+    (void)path;
+    (void)resolved;
+    (void)resolved_capacity;
+    return -1;
+}
+
+int mochi_resolve_executable_path(
+    const char *path, char *resolved, size_t resolved_capacity
+) {
+    (void)path;
+    (void)resolved;
+    (void)resolved_capacity;
+    return -1;
+}
+#endif
+
+int mochi_spawn_process(
+    const char *path,
+    char *const argv[],
+    int stdin_fd,
+    int stdout_fd,
+    int stderr_fd
+) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (path == NULL || path[0] == '\0' || argv == NULL || argv[0] == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    char *resolved_path = mochi_resolve_executable(path);
+    if (resolved_path == NULL) {
+        return -1;
+    }
+
+    /* Resolve the descriptor bound before fork: sysconf is not required to be
+       async-signal-safe, while close(2) is. */
+    long descriptor_limit = mochi_descriptor_limit();
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        free(resolved_path);
+        return -1;
+    }
+    if (pid == 0) {
+        /* After fork this path is deliberately limited to POSIX
+           async-signal-safe operations. */
+        if (setpgid(0, 0) != 0) {
+            _exit(126);
+        }
+        if (stdin_fd >= 0 && stdin_fd != STDIN_FILENO &&
+            dup2(stdin_fd, STDIN_FILENO) < 0) {
+            _exit(126);
+        }
+        if (stdout_fd >= 0 && stdout_fd != STDOUT_FILENO &&
+            dup2(stdout_fd, STDOUT_FILENO) < 0) {
+            _exit(126);
+        }
+        if (stderr_fd >= 0 && stderr_fd != STDERR_FILENO &&
+            dup2(stderr_fd, STDERR_FILENO) < 0) {
+            _exit(126);
+        }
+        mochi_child_close_from(descriptor_limit);
+        execve(resolved_path, argv, environ);
+        _exit(127);
+    }
+    free(resolved_path);
+
+    /* Close the small race in which a caller cancels immediately after spawn.
+       EACCES means the child has already exec'd after establishing its group;
+       ESRCH means it has already exited. */
+    if (setpgid(pid, pid) != 0 && errno != EACCES && errno != ESRCH) {
+        int saved_error = errno;
+        (void)kill(pid, SIGKILL);
+        while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+        }
+        errno = saved_error;
+        return -1;
+    }
+    return (int)pid;
+#else
+    (void)path;
+    (void)argv;
+    (void)stdin_fd;
+    (void)stdout_fd;
+    (void)stderr_fd;
+    return -1;
+#endif
+}
 
 int64_t mochi_deadline_after_millis(int64_t timeout_milliseconds) {
 #if defined(__unix__) || defined(__APPLE__)
@@ -228,26 +493,127 @@ int mochi_fd_read_some_until(
 #endif
 }
 
+int mochi_process_is_alive(int pid_value) {
+#if defined(__unix__) || defined(__APPLE__)
+    pid_t pid = (pid_t)pid_value;
+    if (pid <= 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    siginfo_t child = {0};
+    int observed;
+    do {
+        observed = waitid(
+            P_PID, (id_t)pid, &child, WEXITED | WNOHANG | WNOWAIT
+        );
+    } while (observed != 0 && errno == EINTR);
+    if (observed != 0) {
+        return errno == ECHILD ? 0 : -1;
+    }
+    return child.si_pid == 0 ? 1 : 0;
+#else
+    (void)pid_value;
+    return -1;
+#endif
+}
+
+static int mochi_wait_process_group_gone_until(
+    pid_t pid, int64_t deadline
+) {
+    for (;;) {
+        /* When Mochi is PID 1 or a child subreaper, compiler descendants are
+           adopted here. Reap them so killed zombies cannot pin the group. */
+        for (;;) {
+            int adopted_status = 0;
+            pid_t adopted = waitpid(-pid, &adopted_status, WNOHANG);
+            if (adopted > 0) {
+                continue;
+            }
+            if (adopted < 0 && errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (kill(-pid, 0) != 0) {
+            if (errno == ESRCH) {
+                return 0;
+            }
+            if (errno != EPERM) {
+                return MOCHI_DEADLINE_ERROR;
+            }
+        }
+        int64_t now = mochi_monotonic_millis();
+        if (now < 0) {
+            return MOCHI_DEADLINE_ERROR;
+        }
+        if (now >= deadline) {
+            return MOCHI_DEADLINE_TIMEOUT;
+        }
+        int64_t remaining = deadline - now;
+        struct timespec pause = {
+            .tv_sec = 0,
+            .tv_nsec = (long)(remaining < 10 ? remaining : 10) * 1000000L,
+        };
+        if (nanosleep(&pause, NULL) != 0 && errno != EINTR) {
+            return MOCHI_DEADLINE_ERROR;
+        }
+    }
+}
+
+static int mochi_kill_and_reap_owned_process_group(
+    pid_t pid, int *status, int64_t drain_deadline
+) {
+    int signal_error = 0;
+    if (kill(-pid, SIGKILL) != 0 && errno != ESRCH) {
+        signal_error = errno == 0 ? EIO : errno;
+    }
+    if (kill(pid, SIGKILL) != 0 && errno != ESRCH && signal_error == 0) {
+        signal_error = errno == 0 ? EIO : errno;
+    }
+    int local_status = 0;
+    pid_t waited;
+    do {
+        waited = waitpid(pid, &local_status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != pid) {
+        return MOCHI_DEADLINE_ERROR;
+    }
+    if (status != NULL) {
+        *status = local_status;
+    }
+    if (signal_error != 0) {
+        errno = signal_error;
+        return MOCHI_DEADLINE_ERROR;
+    }
+    return mochi_wait_process_group_gone_until(pid, drain_deadline);
+}
+
 int mochi_kill_process_group_and_wait(int pid_value, int *status) {
 #if defined(__unix__) || defined(__APPLE__)
     pid_t pid = (pid_t)pid_value;
     if (pid <= 0) {
         return -1;
     }
-    (void)kill(-pid, SIGKILL);
-    (void)kill(pid, SIGKILL);
-    int local_status = 0;
-    pid_t waited;
+    /* Establish that PID still names our unreaped child before signaling its
+       process group. This prevents a stale numeric PID/PGID from targeting an
+       unrelated process after reuse. */
+    siginfo_t child = {0};
+    int observed;
     do {
-        waited = waitpid(pid, &local_status, 0);
-    } while (waited < 0 && errno == EINTR);
-    if (waited < 0 && errno != ECHILD) {
+        observed = waitid(
+            P_PID, (id_t)pid, &child, WEXITED | WNOHANG | WNOWAIT
+        );
+    } while (observed != 0 && errno == EINTR);
+    if (observed != 0) {
         return -1;
     }
-    if (status != NULL) {
-        *status = local_status;
+    int64_t drain_deadline = mochi_deadline_after_millis(1000);
+    if (drain_deadline < 0) {
+        return -1;
     }
-    return 0;
+    return mochi_kill_and_reap_owned_process_group(
+        pid, status, drain_deadline
+    ) == 0 ? 0 : -1;
 #else
     (void)pid_value;
     (void)status;
@@ -262,20 +628,22 @@ int mochi_wait_process_until(int pid_value, int64_t deadline, int *status) {
         return -1;
     }
     for (;;) {
-        int local_status = 0;
-        pid_t waited = waitpid(pid, &local_status, WNOHANG);
-        if (waited == pid) {
-            if (status != NULL) {
-                *status = local_status;
-            }
-            return 0;
-        }
-        if (waited < 0 && errno == EINTR) {
-            continue;
-        }
-        if (waited < 0) {
-            (void)mochi_kill_process_group_and_wait(pid_value, status);
+        /* WNOWAIT retains the exited leader as an identity anchor. Descendants
+           are signaled before waitpid releases that PID/PGID for reuse. */
+        siginfo_t child = {0};
+        int observed;
+        do {
+            observed = waitid(
+                P_PID, (id_t)pid, &child, WEXITED | WNOHANG | WNOWAIT
+            );
+        } while (observed != 0 && errno == EINTR);
+        if (observed != 0) {
             return -1;
+        }
+        if (child.si_pid == pid) {
+            return mochi_kill_and_reap_owned_process_group(
+                pid, status, deadline
+            );
         }
         int64_t now = mochi_monotonic_millis();
         if (now < 0) {
@@ -283,16 +651,13 @@ int mochi_wait_process_until(int pid_value, int64_t deadline, int *status) {
             return -1;
         }
         if (now >= deadline) {
-            do {
-                waited = waitpid(pid, &local_status, WNOHANG);
-            } while (waited < 0 && errno == EINTR);
-            if (waited == pid) {
-                if (status != NULL) {
-                    *status = local_status;
-                }
-                return 0;
+            int64_t drain_deadline = mochi_deadline_after_millis(1000);
+            if (drain_deadline < 0) {
+                return -1;
             }
-            (void)mochi_kill_process_group_and_wait(pid_value, status);
+            (void)mochi_kill_and_reap_owned_process_group(
+                pid, status, drain_deadline
+            );
             return 1;
         }
         int64_t remaining = deadline - now;

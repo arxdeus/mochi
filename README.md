@@ -3,7 +3,7 @@
 Mochi is a work in progress toward behavioral parity with the
 [Maki coding agent](https://github.com/tontinton/maki). It is not yet a 1:1 port.
 The parity baseline is Maki commit
-`01d60931f2de41f319d171a74982f35185cd227d`.
+`f6847451b96dc9722c9ad4ba088e6af1e27b5c6a`.
 
 The application core is written in Mojo. The runnable binary also requires the
 small C cancellation shim in `src/mochi/cancellation.c` and the libcurl-backed
@@ -18,8 +18,11 @@ The current tests cover a narrow subset of Maki behavior:
 - deterministic OpenAI-compatible, Anthropic, and Gemini streaming parser fixtures;
 - selected Maki v2 session codec and truncated-tail recovery behavior;
 - MCP stdio/streamable-HTTP protocol and OAuth primitives;
-- the basic runtime/tool loop and ACP session lifecycle; and
-- selected UI reducer, command, picker, search, and mouse behaviors.
+- the basic runtime/tool loop and ACP session lifecycle;
+- Mojo source-plugin compilation, bounded process RPC, cache, and shadow
+  reload; and
+- selected UI reducer, command, picker, search, mouse, and display-cell cursor
+  behaviors.
 
 `tests/parity.sh` runs matching upstream and Mochi assertions independently. It
 does not yet feed shared fixtures to both programs or compare their output, so a
@@ -29,7 +32,7 @@ The explicit missing and partial behaviors are tracked in
 
 ## Build and test
 
-Requires stable Mojo 1.0 and a C compiler. `pixi.toml` pins `mojo-curl` v0.4.2
+Requires stable Mojo 1.0 and a C compiler. `pixi.toml` pins `mojo-curl` v0.4.4
 and vendors a minimal Mojo-1.0-compatible, MIT-derived Floki `Session` adapter.
 
 ```bash

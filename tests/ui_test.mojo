@@ -3,6 +3,7 @@ from std.testing import TestSuite, assert_equal, assert_false, assert_true
 from mochi.types import Message, ToolCall
 from mochi.ui import (
     DocPos,
+    InputCursorLayout,
     ScreenSelection,
     Selection,
     UiAction,
@@ -17,6 +18,7 @@ from mochi.ui import (
     command_matches,
     command_max_args,
     is_builtin_command,
+    _terminal_cell_width,
     command_names,
     transcript_messages,
     search_result_lines,
@@ -97,8 +99,16 @@ def test_extension_command_routes_with_arguments() raises:
     assert_equal(action.name, "/hello")
     assert_equal(action.text, "one two")
 
+    var mixed_case = UiState()
+    mixed_case.set_extension_commands(["/MiXeD"])
+    _ = UiReducer.reduce(mixed_case, UiEvent.edit("/mixed argument"))
+    var mixed_action = UiReducer.reduce(mixed_case, UiEvent.submit())
+    assert_true(mixed_action.is_command())
+    assert_equal(mixed_action.name, "/MiXeD")
+    assert_equal(mixed_action.text, "argument")
+
     var collision = UiState()
-    collision.set_extension_commands(["/reload"])
+    collision.set_extension_commands(["/ReLoAd"])
     _ = UiReducer.reduce(collision, UiEvent.edit("/reload"))
     var builtin = UiReducer.reduce(collision, UiEvent.submit())
     assert_true(builtin.is_command())
@@ -113,9 +123,7 @@ def test_extension_command_routes_with_arguments() raises:
     assert_equal(builtin_with_extra_argument.text, "anything")
 
     _ = UiReducer.reduce(collision, UiEvent.edit("//reload anything"))
-    var double_slash_builtin = UiReducer.reduce(
-        collision, UiEvent.submit()
-    )
+    var double_slash_builtin = UiReducer.reduce(collision, UiEvent.submit())
     assert_true(double_slash_builtin.is_command())
     assert_equal(double_slash_builtin.name, "reload")
     assert_equal(double_slash_builtin.text, "anything")
@@ -344,7 +352,9 @@ def test_command_catalog_and_fuzzy_matches() raises:
     _ = UiReducer.reduce(palette, UiEvent.command_next())
     assert_equal(palette.command_selected, 0)
     _ = UiReducer.reduce(palette, UiEvent.command_next())
-    assert_equal(command_completion(palette.draft, palette.command_selected), "/compact ")
+    assert_equal(
+        command_completion(palette.draft, palette.command_selected), "/compact "
+    )
     assert_equal(command_completion("/cd ~/foo", 0), "/cd ~/foo")
     var maximums = command_max_args()
     assert_equal(maximums[0], 0)
@@ -381,6 +391,133 @@ def test_unicode_editor_cursor_insert_and_delete() raises:
     assert_equal(state.draft, "aéz")
     _ = UiReducer.reduce(state, UiEvent.insert("λ"))
     assert_equal(state.draft, "λaéz")
+
+
+def _visible_input_cursor(layout: InputCursorLayout) raises -> DocPos:
+    assert_true(layout.cursor)
+    return layout.cursor.value().copy()
+
+
+def test_input_cursor_uses_terminal_width_for_wide_and_combining_text() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("a漢b"))
+    var at_end = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(at_end.row, 0)
+    assert_equal(at_end.col, 6)
+
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-1))
+    var after_wide = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(after_wide.col, 5)
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-1))
+    var on_wide = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(on_wide.col, 3)
+
+    # The accent is U+0301, stored separately from `e`, and occupies no cell.
+    _ = UiReducer.reduce(state, UiEvent.edit("éx"))
+    assert_equal(state.draft.count_codepoints(), 3)
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-1))
+    var after_accent = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(after_accent.col, 3)
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-1))
+    var on_accent = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(on_accent.col, 3)
+
+    # U+231A is East Asian Wide in the unicode-width data used by Maki.
+    _ = UiReducer.reduce(state, UiEvent.edit("⌚x"))
+    var after_watch = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(after_watch.col, 5)
+    assert_equal(_terminal_cell_width(0x061C), 0)
+    assert_equal(_terminal_cell_width(0xE0067), 0)
+
+
+def test_input_cursor_wrap_boundaries_belong_to_the_next_row() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("xxxxxxxxxx"))
+    var exact = state.input_cursor_layout(12, 4, True, True)
+    var exact_cursor = _visible_input_cursor(exact)
+    assert_equal(exact.total_rows, 2)
+    assert_equal(exact_cursor.row, 1)
+    assert_equal(exact_cursor.col, 0)
+
+    _ = UiReducer.reduce(state, UiEvent.edit("xxxxxxxxxxx"))
+    var past = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(past.row, 1)
+    assert_equal(past.col, 1)
+
+    _ = UiReducer.reduce(state, UiEvent.edit("xxxxxxxxxxxx"))
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-2))
+    var inside = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(inside.row, 1)
+    assert_equal(inside.col, 0)
+
+    _ = UiReducer.reduce(state, UiEvent.edit("xxxxxxxxxxxxxxxxxxxxxx"))
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-2))
+    var continuation = _visible_input_cursor(
+        state.input_cursor_layout(12, 4, True, True)
+    )
+    assert_equal(continuation.row, 2)
+    assert_equal(continuation.col, 0)
+
+
+def test_input_cursor_scroll_follows_wide_wrap_gap() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("a漢漢漢漢漢"))
+    var after_wrapped_wide = state.input_cursor_layout(12, 1, True, True)
+    var after_cursor = _visible_input_cursor(after_wrapped_wide)
+    assert_equal(after_wrapped_wide.scroll_y, 1)
+    assert_equal(after_cursor.row, 0)
+    assert_equal(after_cursor.col, 2)
+
+    _ = UiReducer.reduce(state, UiEvent.move_cursor(-1))
+    var on_wrapped_wide = state.input_cursor_layout(12, 1, True, True)
+    var on_cursor = _visible_input_cursor(on_wrapped_wide)
+    assert_equal(on_wrapped_wide.scroll_y, 1)
+    assert_equal(on_cursor.row, 0)
+    assert_equal(on_cursor.col, 0)
+
+
+def test_input_cursor_vertical_scroll_and_manual_viewport_visibility() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("a\na\na\na\na\na\na\na\na\na"))
+    var followed = state.input_cursor_layout(12, 4, True, True)
+    var cursor = _visible_input_cursor(followed)
+    assert_equal(followed.total_rows, 10)
+    assert_equal(followed.scroll_y, 6)
+    assert_equal(cursor.row, 3)
+    assert_equal(cursor.col, 3)
+
+    var manual = state.input_cursor_layout(
+        12, 4, True, True, scroll_y=0, follow_cursor=False
+    )
+    assert_equal(manual.scroll_y, 0)
+    assert_false(manual.cursor)
+
+
+def test_only_focused_main_input_exposes_a_cursor() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("hello"))
+    assert_true(state.input_cursor_layout(12, 4, True, True).cursor)
+    assert_false(state.input_cursor_layout(12, 4, False, True).cursor)
+    assert_false(state.input_cursor_layout(12, 4, True, False).cursor)
+
+    _ = UiReducer.reduce(state, UiEvent.search_open())
+    assert_false(state.input_cursor_layout(12, 4, True, True).cursor)
 
 
 def test_paste_adds_spaces_at_word_boundaries() raises:

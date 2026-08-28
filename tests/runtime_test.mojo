@@ -1,8 +1,19 @@
-from std.testing import TestSuite, assert_equal, assert_false, assert_raises, assert_true
+from std.testing import (
+    TestSuite,
+    assert_equal,
+    assert_false,
+    assert_raises,
+    assert_true,
+)
 
 from mochi.http import FlokiTransport
 from mochi.json import JsonValue, parse_json, serialize_json
-from mochi.mcp import McpClient, McpOAuthState, StdioTransport, StreamableHttpTransport
+from mochi.mcp import (
+    McpClient,
+    McpOAuthState,
+    StdioTransport,
+    StreamableHttpTransport,
+)
 from mochi.permissions import (
     PermissionAnswer,
     PermissionEffect,
@@ -53,6 +64,23 @@ def allowed() -> PermissionManager:
     return permissions^
 
 
+def _exited_registered_plugin_executable() raises -> PluginExecutable:
+    var registration = PluginRegistration("dead-candidate", "2.0.0")
+    var handshake = String(handshake_result(1, "dead-candidate").strip())
+    var registered = String(registration_result(2, registration).strip())
+    var protocol = (
+        "(sleep 0.1; IFS= read -r request; printf '%s\\n' '"
+        + handshake
+        + "'; IFS= read -r request; printf '%s\\n' '"
+        + registered
+        + "') & exit 0"
+    )
+    var executable = PluginExecutable("/bin/sh")
+    executable.add_argument("-c")
+    executable.add_argument(protocol^)
+    return executable^
+
+
 def schema() raises -> JsonValue:
     return parse_json(
         '{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}'
@@ -61,7 +89,9 @@ def schema() raises -> JsonValue:
 
 def test_runtime_uses_catalog_model_metadata() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-5.3-codex",
@@ -109,7 +139,9 @@ def test_runtime_accepts_production_provider_dialects() raises:
 
 def test_runtime_provider_api_key_update() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("openai", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("openai", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -164,7 +196,9 @@ def test_runtime_interactive_request_modes() raises:
     assert_false(runtime.tools.workflow)
 
     var unsupported = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -175,7 +209,9 @@ def test_runtime_interactive_request_modes() raises:
 
 def test_queued_input_is_wrapped_and_consumed() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -223,7 +259,10 @@ def test_system_prompt_is_sent_but_not_persisted() raises:
 
 
 def test_request_body_messages_and_tool_definitions() raises:
-    var messages: List[Message] = [Message("system", "help"), Message("user", "read it")]
+    var messages: List[Message] = [
+        Message("system", "help"),
+        Message("user", "read it"),
+    ]
     var assistant = Message("assistant", "checking")
     assistant.add_tool_call(ToolCall("call-1", "read", '{"path":"a.txt"}'))
     messages.append(assistant^)
@@ -241,10 +280,17 @@ def test_request_body_messages_and_tool_definitions() raises:
     var raw_messages = body.get("messages")
     assert_equal(len(raw_messages.array_value), 4)
     assert_equal(
-        raw_messages.array_value[2].get("tool_calls").array_value[0].get("function").get("arguments").string_value,
+        raw_messages.array_value[2]
+        .get("tool_calls")
+        .array_value[0]
+        .get("function")
+        .get("arguments")
+        .string_value,
         '{"path":"a.txt"}',
     )
-    assert_equal(raw_messages.array_value[3].get("tool_call_id").string_value, "call-1")
+    assert_equal(
+        raw_messages.array_value[3].get("tool_call_id").string_value, "call-1"
+    )
     var raw_tool = body.get("tools").array_value[0].copy()
     assert_equal(raw_tool.get("type").string_value, "function")
     assert_equal(raw_tool.get("function").get("name").string_value, "read")
@@ -258,21 +304,41 @@ def test_responses_request_body() raises:
     var output = Message("tool", "contents")
     output.tool_call_id = "call-1"
     messages.append(output^)
-    var definitions: List[ToolDefinition] = [ToolDefinition("read", "Read", schema())]
+    var definitions: List[ToolDefinition] = [
+        ToolDefinition("read", "Read", schema())
+    ]
     var body = build_responses_request_body("gpt-codex", messages, definitions)
     assert_true(body.get("stream").bool_value)
     assert_false(body.get("store").bool_value)
-    assert_equal(body.get("input").array_value[0].get("content").array_value[0].get("type").string_value, "input_text")
-    assert_equal(body.get("input").array_value[2].get("type").string_value, "function_call")
-    assert_equal(body.get("input").array_value[3].get("type").string_value, "function_call_output")
-    assert_equal(body.get("tools").array_value[0].get("name").string_value, "read")
+    assert_equal(
+        body.get("input")
+        .array_value[0]
+        .get("content")
+        .array_value[0]
+        .get("type")
+        .string_value,
+        "input_text",
+    )
+    assert_equal(
+        body.get("input").array_value[2].get("type").string_value,
+        "function_call",
+    )
+    assert_equal(
+        body.get("input").array_value[3].get("type").string_value,
+        "function_call_output",
+    )
+    assert_equal(
+        body.get("tools").array_value[0].get("name").string_value, "read"
+    )
 
 
 def test_scripted_response_updates_multi_turn_state_and_usage() raises:
     var messages: List[Message] = [Message("user", "inspect")]
     var usage = Usage()
     var first = (
-        'data: {"choices":[{"delta":{"content":"checking","tool_calls":[{"index":0,"id":"call-1","function":{"name":"read","arguments":"{\\"path\\":\\"a.txt\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\ndata: [DONE]\n\n'
+        "data:"
+        ' {"choices":[{"delta":{"content":"checking","tool_calls":[{"index":0,"id":"call-1","function":{"name":"read","arguments":"{\\"path\\":\\"a.txt\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}\n\ndata:'
+        " [DONE]\n\n"
     )
     assert_equal(apply_scripted_response(messages, usage, first), "tool_calls")
     assert_equal(len(messages), 2)
@@ -285,7 +351,9 @@ def test_scripted_response_updates_multi_turn_state_and_usage() raises:
     tool.tool_call_id = "call-1"
     messages.append(tool^)
     var second = (
-        'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}\n\ndata: [DONE]\n\n'
+        "data:"
+        ' {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}\n\ndata:'
+        " [DONE]\n\n"
     )
     assert_equal(apply_scripted_response(messages, usage, second), "stop")
     assert_equal(messages[3].content, "done")
@@ -310,18 +378,49 @@ def test_dispatch_permissions_cancellation_and_compaction() raises:
     assert_equal(runtime.messages[0].role, "system")
     assert_equal(runtime.compactions, 1)
 
-    runtime.dispatch(ToolCall("w", "write", '{"path":"blocked","content":"x"}'), CancellationToken())
-    assert_true("Permission denied" in runtime.messages[len(runtime.messages) - 1].content)
+    runtime.dispatch(
+        ToolCall("w", "write", '{"path":"blocked","content":"x"}'),
+        CancellationToken(),
+    )
+    assert_true(
+        "Permission denied"
+        in runtime.messages[len(runtime.messages) - 1].content
+    )
     runtime.permissions = allowed()
     var token = CancellationToken()
     token.cancel()
     runtime.dispatch(ToolCall("r", "read", '{"path":"anything"}'), token)
-    assert_true("cancelled" in runtime.messages[len(runtime.messages) - 1].content)
+    assert_true(
+        "cancelled" in runtime.messages[len(runtime.messages) - 1].content
+    )
+
+
+def test_queued_message_burst_drains_at_one_turn_boundary() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    runtime.queue_input("first")
+    runtime.queue_input("second")
+    runtime.queue_input("third")
+    assert_true(runtime.consume_queued_input())
+    assert_equal(runtime.queued_input_count(), 0)
+    assert_equal(len(runtime.messages), 3)
+    assert_true("first" in runtime.messages[0].content)
+    assert_true("second" in runtime.messages[1].content)
+    assert_true("third" in runtime.messages[2].content)
+    assert_false(runtime.consume_queued_input())
 
 
 def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
     var prompted = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         PermissionManager(),
         "gpt-test",
@@ -344,7 +443,9 @@ def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
     )
 
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         PermissionManager(),
         "gpt-test",
@@ -354,7 +455,9 @@ def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
         ToolCall("first", "bash", '{"command":"printf allowed"}'),
         CancellationToken(),
     )
-    assert_true("allowed" in runtime.messages[len(runtime.messages) - 1].content)
+    assert_true(
+        "allowed" in runtime.messages[len(runtime.messages) - 1].content
+    )
     runtime.dispatch(
         ToolCall("second", "bash", '{"command":"printf again"}'),
         CancellationToken(),
@@ -362,7 +465,9 @@ def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
     assert_true("again" in runtime.messages[len(runtime.messages) - 1].content)
 
     var denied = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         PermissionManager(),
         "gpt-test",
@@ -372,22 +477,28 @@ def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
         ToolCall("deny", "bash", '{"command":"printf blocked"}'),
         CancellationToken(),
     )
-    assert_true("Permission denied" in denied.messages[len(denied.messages) - 1].content)
+    assert_true(
+        "Permission denied" in denied.messages[len(denied.messages) - 1].content
+    )
 
 
 def test_remote_mcp_plugin_registration_and_dispatch() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
     )
     var mcp_tools = parse_json(
-        '[{"name":"remote_search","description":"Search remotely","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}}}]'
+        '[{"name":"remote_search","description":"Search'
+        ' remotely","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}}}]'
     )
     runtime.add_remote_tools("mcp", "search-server", mcp_tools)
     var plugin_tools = parse_json(
-        '[{"name":"remote_format","description":"Format text","parameters":{"type":"object"}}]'
+        '[{"name":"remote_format","description":"Format'
+        ' text","parameters":{"type":"object"}}]'
     )
     runtime.add_remote_tools("plugin", "formatter", plugin_tools)
 
@@ -399,7 +510,11 @@ def test_remote_mcp_plugin_registration_and_dispatch() raises:
         "search-server__remote_search",
     )
     assert_equal(
-        tools.array_value[0].get("function").get("parameters").get("type").string_value,
+        tools.array_value[0]
+        .get("function")
+        .get("parameters")
+        .get("type")
+        .string_value,
         "object",
     )
     assert_equal(
@@ -408,27 +523,40 @@ def test_remote_mcp_plugin_registration_and_dispatch() raises:
     )
 
     runtime.enqueue_remote_result(
-        "search-server__remote_search", ToolResult.success('{"content":"found"}')
+        "search-server__remote_search",
+        ToolResult.success('{"content":"found"}'),
     )
     runtime.enqueue_remote_result(
         "remote_format", ToolResult.success('{"content":"formatted"}')
     )
     runtime.dispatch(
-        ToolCall("remote-1", "search-server__remote_search", '{"query":"mojo"}'),
+        ToolCall(
+            "remote-1", "search-server__remote_search", '{"query":"mojo"}'
+        ),
         CancellationToken(),
     )
-    assert_equal(runtime.messages[len(runtime.messages) - 1].content, '{"content":"found"}')
-    assert_equal(runtime.messages[len(runtime.messages) - 1].tool_call_id, "remote-1")
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1].content,
+        '{"content":"found"}',
+    )
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1].tool_call_id, "remote-1"
+    )
     runtime.dispatch(
         ToolCall("remote-2", "remote_format", '{"text":"mojo"}'),
         CancellationToken(),
     )
-    assert_equal(runtime.messages[len(runtime.messages) - 1].content, '{"content":"formatted"}')
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1].content,
+        '{"content":"formatted"}',
+    )
 
 
 def test_remote_status_lines() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -484,7 +612,9 @@ def test_remote_status_lines() raises:
 
 def test_runtime_reconnects_http_mcp_and_replaces_tools() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -514,7 +644,9 @@ def test_runtime_reconnects_http_mcp_and_replaces_tools() raises:
 
 def test_live_remote_mcp_and_plugin_dispatch() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -526,24 +658,45 @@ def test_live_remote_mcp_and_plugin_dispatch() raises:
     mcp_transport.enqueue_fixture_response(
         '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"found"}]}}'
     )
+    mcp_transport.enqueue_fixture_response(
+        '{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"failed"}],"isError":true}}'
+    )
     runtime.attach_mcp_stdio(
         "search-server", McpClient("search-server"), mcp_transport^
     )
     runtime.dispatch(
-        ToolCall("mcp-call", "search-server__remote_search", '{"query":"mojo"}'),
+        ToolCall(
+            "mcp-call", "search-server__remote_search", '{"query":"mojo"}'
+        ),
         CancellationToken(),
     )
-    assert_true('"text":"found"' in runtime.messages[len(runtime.messages) - 1].content)
+    assert_true(
+        '"text":"found"' in runtime.messages[len(runtime.messages) - 1].content
+    )
+    assert_false(runtime.messages[len(runtime.messages) - 1].is_error)
+    runtime.dispatch(
+        ToolCall(
+            "mcp-error", "search-server__remote_search", '{"query":"bad"}'
+        ),
+        CancellationToken(),
+    )
+    assert_true(
+        '"text":"failed"' in runtime.messages[len(runtime.messages) - 1].content
+    )
+    assert_true(runtime.messages[len(runtime.messages) - 1].is_error)
 
     var plugin_transport = PluginTransport()
     plugin_transport.enqueue_fixture_response(handshake_result(1, "formatter"))
     var registration = PluginRegistration("formatter", "1.0.0")
     registration.tools.append(
         parse_json(
-            '{"name":"remote_format","description":"Format text","inputSchema":{}}'
+            '{"name":"remote_format","description":"Format'
+            ' text","inputSchema":{}}'
         )
     )
-    plugin_transport.enqueue_fixture_response(registration_result(2, registration))
+    plugin_transport.enqueue_fixture_response(
+        registration_result(2, registration)
+    )
     plugin_transport.enqueue_fixture_response(
         invoke_result(
             3,
@@ -552,12 +705,18 @@ def test_live_remote_mcp_and_plugin_dispatch() raises:
             ),
         )
     )
-    plugin_transport.enqueue_fixture_response(shutdown_result(4))
+    plugin_transport.enqueue_fixture_response(
+        invoke_result(
+            4,
+            parse_json(
+                '{"llm_output":"allowed","is_error":false,"annotation":"resolved"}'
+            ),
+        )
+    )
+    plugin_transport.enqueue_fixture_response(shutdown_result(5))
     var plugin = PluginClient(plugin_transport^)
     plugin.connect()
-    runtime.add_remote_tools(
-        "plugin", "formatter", registration.tools.copy()
-    )
+    runtime.add_remote_tools("plugin", "formatter", registration.tools.copy())
     runtime.attach_plugin("formatter", plugin^)
     runtime.dispatch(
         ToolCall("plugin-call", "remote_format", '{"text":"mojo"}'),
@@ -568,12 +727,45 @@ def test_live_remote_mcp_and_plugin_dispatch() raises:
         "formatted",
     )
     assert_true(runtime.messages[len(runtime.messages) - 1].is_error)
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1]
+        .tool_result.get("annotation")
+        .string_value,
+        "fixture",
+    )
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1]
+        .tool_result.get("content")
+        .string_value,
+        "formatted",
+    )
+    runtime.permissions = PermissionManager()
+    runtime.dispatch(
+        ToolCall("plugin-prompt", "remote_format", '{"text":"allowed"}'),
+        CancellationToken(),
+    )
+    var pending = runtime.take_pending_permission()
+    assert_true(pending)
+    assert_equal(
+        runtime.resolve_permission(
+            pending.value(), PermissionAnswer.allow_once()
+        ),
+        "allowed",
+    )
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1]
+        .tool_result.get("annotation")
+        .string_value,
+        "resolved",
+    )
     runtime.shutdown_remotes()
 
 
 def test_mcp_tools_are_namespaced_and_dispatched_by_raw_name() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -605,15 +797,23 @@ def test_mcp_tools_are_namespaced_and_dispatched_by_raw_name() raises:
         ToolCall("alpha-call", "alpha__search", '{"query":"one"}'),
         CancellationToken(),
     )
-    assert_true('"text":"alpha"' in runtime.messages[len(runtime.messages) - 1].content)
+    assert_true(
+        '"text":"alpha"' in runtime.messages[len(runtime.messages) - 1].content
+    )
     runtime.dispatch(
         ToolCall("beta-call", "beta__search", '{"query":"two"}'),
         CancellationToken(),
     )
-    assert_true('"text":"beta"' in runtime.messages[len(runtime.messages) - 1].content)
+    assert_true(
+        '"text":"beta"' in runtime.messages[len(runtime.messages) - 1].content
+    )
 
-    var alpha_request = parse_json(runtime.mcp_stdio_transports[0].fixture_writes[0])
-    var beta_request = parse_json(runtime.mcp_stdio_transports[1].fixture_writes[0])
+    var alpha_request = parse_json(
+        runtime.mcp_stdio_transports[0].fixture_writes[0]
+    )
+    var beta_request = parse_json(
+        runtime.mcp_stdio_transports[1].fixture_writes[0]
+    )
     assert_equal(alpha_request.get("method").string_value, "tools/call")
     assert_equal(beta_request.get("method").string_value, "tools/call")
     assert_equal(alpha_request.get("params").get("name").string_value, "search")
@@ -635,10 +835,14 @@ def test_runtime_task_runs_isolated_child_and_persists_transcript() raises:
     )
     _ = runtime.toggle_workflow()
     runtime.dispatch(
-        ToolCall("task-1", "task", '{"description":"research","prompt":"inspect"}'),
+        ToolCall(
+            "task-1", "task", '{"description":"research","prompt":"inspect"}'
+        ),
         CancellationToken(),
     )
-    assert_equal(runtime.messages[len(runtime.messages) - 1].content, "child summary")
+    assert_equal(
+        runtime.messages[len(runtime.messages) - 1].content, "child summary"
+    )
     assert_equal(runtime.subagent_ids[0], "task-1")
     assert_equal(runtime.subagent_names[0], "research")
     assert_equal(len(runtime.subagent_messages[0]), 2)
@@ -724,7 +928,9 @@ def test_runtime_task_structured_output_retries_and_validates() raises:
 
 def test_runtime_plugin_commands_and_prompt_hints() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -745,19 +951,135 @@ def test_runtime_plugin_commands_and_prompt_hints() raises:
     assert_equal(runtime.plugin_command_names()[0], "/hello")
     runtime.apply_plugin_prompt_hints()
     assert_true("Extension guidance" in runtime.system_prompt)
-    var output = parse_json(runtime.invoke_plugin_command("/hello", "one two"))
+    var output = parse_json(runtime.invoke_plugin_command("HELLO", "one two"))
     assert_equal(output.get("content").string_value, "command ran")
-    var request = RpcMessage.parse(runtime.plugin_clients[0].transport.fixture_writes[2])
+    var request = RpcMessage.parse(
+        runtime.plugin_clients[0].transport.fixture_writes[2]
+    )
     assert_equal(request.payload.get("kind").string_value, "command")
+    assert_equal(request.payload.get("name").string_value, "/hello")
     assert_equal(
         request.payload.get("arguments").get("arguments").string_value,
         "one two",
     )
 
 
+def test_runtime_rejects_builtin_and_cross_plugin_command_conflicts() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var builtin_transport = PluginTransport()
+    builtin_transport.enqueue_fixture_response(
+        handshake_result(1, "builtin-clash")
+    )
+    var builtin_clash = PluginRegistration("builtin-clash", "1.0.0")
+    builtin_clash.commands.append(JsonValue.string("/ReLoAd"))
+    builtin_transport.enqueue_fixture_response(
+        registration_result(2, builtin_clash)
+    )
+    var builtin_client = PluginClient(builtin_transport^)
+    builtin_client.connect()
+    with assert_raises():
+        _ = runtime.install_plugin(builtin_client^)
+    assert_equal(len(runtime.plugin_names), 0)
+
+    var first_transport = PluginTransport()
+    first_transport.enqueue_fixture_response(handshake_result(1, "first"))
+    var first = PluginRegistration("first", "1.0.0")
+    first.commands.append(JsonValue.string("/Deploy"))
+    first_transport.enqueue_fixture_response(registration_result(2, first))
+    first_transport.enqueue_fixture_response(
+        invoke_result(3, parse_json('{"content":"first owner"}'))
+    )
+    var first_client = PluginClient(first_transport^)
+    first_client.connect()
+    _ = runtime.install_plugin(first_client^)
+
+    var second_transport = PluginTransport()
+    second_transport.enqueue_fixture_response(handshake_result(1, "second"))
+    var second = PluginRegistration("second", "1.0.0")
+    second.commands.append(JsonValue.string("deploy"))
+    second_transport.enqueue_fixture_response(registration_result(2, second))
+    var second_client = PluginClient(second_transport^)
+    second_client.connect()
+    with assert_raises():
+        _ = runtime.install_plugin(second_client^)
+
+    assert_equal(len(runtime.plugin_names), 1)
+    assert_equal(runtime.plugin_names[0], "first")
+    assert_equal(runtime.plugin_command_names()[0], "/Deploy")
+    var result = parse_json(runtime.invoke_plugin_command("/DEPLOY", ""))
+    assert_equal(result.get("content").string_value, "first owner")
+    var request = RpcMessage.parse(
+        runtime.plugin_clients[0].transport.fixture_writes[2]
+    )
+    assert_equal(request.payload.get("name").string_value, "/Deploy")
+
+
+def test_runtime_reload_command_conflict_keeps_live_generations() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var first_transport = PluginTransport()
+    first_transport.enqueue_fixture_response(handshake_result(1, "first"))
+    var first_live = PluginRegistration("first", "1.0.0")
+    first_live.commands.append(JsonValue.string("/one"))
+    first_transport.enqueue_fixture_response(registration_result(2, first_live))
+    first_transport.enqueue_fixture_response(handshake_result(1, "first"))
+    var first_candidate = PluginRegistration("first", "2.0.0")
+    first_candidate.commands.append(JsonValue.string("/same"))
+    first_transport.enqueue_fixture_response(
+        registration_result(2, first_candidate)
+    )
+    var first_client = PluginClient(first_transport^)
+    first_client.connect()
+    _ = runtime.install_plugin(first_client^)
+
+    var second_transport = PluginTransport()
+    second_transport.enqueue_fixture_response(handshake_result(1, "second"))
+    var second_live = PluginRegistration("second", "1.0.0")
+    second_live.commands.append(JsonValue.string("/two"))
+    second_transport.enqueue_fixture_response(
+        registration_result(2, second_live)
+    )
+    second_transport.enqueue_fixture_response(handshake_result(1, "second"))
+    var second_candidate = PluginRegistration("second", "2.0.0")
+    second_candidate.commands.append(JsonValue.string("/SAME"))
+    second_transport.enqueue_fixture_response(
+        registration_result(2, second_candidate)
+    )
+    var second_client = PluginClient(second_transport^)
+    second_client.connect()
+    _ = runtime.install_plugin(second_client^)
+
+    with assert_raises():
+        _ = runtime.reload_plugins()
+    assert_equal(
+        runtime.plugin_clients[0].protocol.registration.value().version, "1.0.0"
+    )
+    assert_equal(
+        runtime.plugin_clients[1].protocol.registration.value().version, "1.0.0"
+    )
+    var commands = runtime.plugin_command_names()
+    assert_equal(commands[0], "/one")
+    assert_equal(commands[1], "/two")
+
+
 def test_runtime_rejects_duplicate_plugin_owner_names() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -797,7 +1119,9 @@ def test_runtime_rejects_duplicate_plugin_owner_names() raises:
 
 def test_runtime_reload_replaces_plugin_routes() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -835,7 +1159,9 @@ def test_runtime_reload_replaces_plugin_routes() raises:
 
 def test_runtime_failed_shadow_reload_keeps_routes_and_generation() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -849,7 +1175,7 @@ def test_runtime_failed_shadow_reload_keeps_routes_and_generation() raises:
     transport.enqueue_fixture_response(registration_result(2, registration))
     var client = PluginClient(transport^)
     client.connect()
-    client.executable = Optional(PluginExecutable("/bin/false"))
+    client.executable = Optional(_exited_registered_plugin_executable())
     runtime.add_remote_tools("plugin", "live", registration.tools.copy())
     runtime.attach_plugin("live", client^)
 
@@ -876,12 +1202,16 @@ def test_provider_error_is_visible_in_result() raises:
     var result = runtime.run("hello", CancellationToken())
     assert_equal(result.stop_reason, "provider_error")
     assert_equal(result.text, "Error: fixture failure")
-    assert_equal(result.text, runtime.messages[len(runtime.messages) - 1].content)
+    assert_equal(
+        result.text, runtime.messages[len(runtime.messages) - 1].content
+    )
 
 
 def test_runtime_resume_does_not_append_user_message() raises:
     var runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",
@@ -909,7 +1239,9 @@ def test_runtime_cancellation_max_turn_and_retry_helpers() raises:
     assert_equal(maxed.turns, 0)
 
     var cancelled_runtime = Runtime(
-        OpenAICompatibleProvider(ProviderSpec("scripted", "https://invalid.local")),
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
         ToolRegistry("/tmp"),
         allowed(),
         "gpt-test",

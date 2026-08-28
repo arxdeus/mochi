@@ -8,7 +8,12 @@ from std.testing import (
     assert_true,
 )
 from mochi.json import JsonValue, parse_json
-from mochi.session import Session, SessionStore, message_from_json, message_to_json
+from mochi.session import (
+    Session,
+    SessionStore,
+    message_from_json,
+    message_to_json,
+)
 from mochi.types import Message, ToolCall, Usage
 
 
@@ -39,7 +44,9 @@ def message(role: String, text: String) raises -> JsonValue:
 def test_maki_v2_roundtrip() raises:
     clean()
     var store = SessionStore(TEST_DIR)
-    var session = Session("01965087-4c71-7f00-8000-000000000000", "model", "/project", 10)
+    var session = Session(
+        "01965087-4c71-7f00-8000-000000000000", "model", "/project", 10
+    )
     session.title = "Saved"
     session.updated_at = 20
     session.add_message(message("user", "hello"))
@@ -54,9 +61,36 @@ def test_maki_v2_roundtrip() raises:
     assert_equal(len(loaded.messages), 1)
     assert_equal(loaded.outputs[0].string_value, "done")
     assert_true(loaded.meta.get("fast").bool_value)
-    var first = parse_json(String(open(store.path(session.id), "r").read().split("\n")[0]))
+    var first = parse_json(
+        String(open(store.path(session.id), "r").read().split("\n")[0])
+    )
     assert_equal(first.get("t").string_value, "header")
     assert_equal(first.get("v").int_value, 2)
+
+
+def test_rich_tool_result_metadata_roundtrips() raises:
+    var original = Message("tool", "formatted")
+    original.tool_call_id = "call-rich"
+    original.name = "formatter"
+    original.is_error = True
+    original.tool_result = parse_json(
+        '{"ok":false,"status":1,"content":"formatted","output_kind":"markdown","structured":{"value":1},"annotation":"warning","instructions":[{"path":"AGENTS.md","content":"retry"}],"state":{"attempt":2},"written_path":"out.txt","image":{"media_type":"image/png","data":"aGVsbG8="}}'
+    )
+    var encoded = message_to_json(original)
+    var decoded = message_from_json(encoded)
+    assert_equal(decoded.content, "formatted")
+    assert_true(decoded.is_error)
+    assert_equal(decoded.tool_result.get("annotation").string_value, "warning")
+    assert_equal(decoded.tool_result.get("state").get("attempt").int_value, 2)
+    assert_equal(
+        decoded.tool_result.get("written_path").string_value, "out.txt"
+    )
+    with assert_raises():
+        _ = message_from_json(
+            parse_json(
+                '{"role":"tool","content":"bad","tool_result":"invalid"}'
+            )
+        )
 
 
 def test_session_store_rejects_unsafe_ids_without_path_escape() raises:
@@ -136,7 +170,7 @@ def test_truncated_tail_recovery() raises:
     session.add_message(message("user", "kept"))
     store.save(session)
     with open(store.path(session.id), "a") as file:
-        file.write("{\"t\":\"msg\",\"d\":{\"role\":\"assistant\"")
+        file.write('{"t":"msg","d":{"role":"assistant"')
 
     var loaded = store.load(session.id)
     assert_equal(loaded.title, "Before tail")
@@ -167,7 +201,7 @@ def test_list_and_latest_cwd_index() raises:
     assert_equal(latest.value().id, "new")
 
     with open(TEST_DIR + "/cwd_latest.json", "w") as file:
-        file.write("{\"/project\":\"missing\"}")
+        file.write('{"/project":"missing"}')
     latest = store.latest("/project")
     assert_true(latest)
     assert_equal(latest.value().id, "new")
@@ -192,7 +226,9 @@ def test_runtime_message_codec_and_lifecycle_update() raises:
 
     var session = Session("resume", "old", "/project", 1)
     var messages: List[Message] = [
-        Message("user", "First prompt"), assistant.copy(), result.copy()
+        Message("user", "First prompt"),
+        assistant.copy(),
+        result.copy(),
     ]
     session.update_from_result(messages, Usage(3, 4), "new", 20)
     assert_equal(session.model, "new")

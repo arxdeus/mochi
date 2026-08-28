@@ -30,6 +30,7 @@ from mochi.plugin import (
     registration_result,
     shutdown_result,
 )
+from std.ffi import external_call, get_errno
 
 
 trait PluginHandler:
@@ -87,19 +88,22 @@ struct PluginServer[Handler: PluginHandler & Movable & Deinitable](Movable):
             return error_result(
                 request.id, ERROR_INVALID_REQUEST, "expected JSON-RPC request"
             )
+        var response: String
         if request.method == METHOD_HANDSHAKE:
-            return self._handshake(request)
-        if request.method == METHOD_REGISTER:
-            return self._register(request)
-        if request.method == METHOD_INVOKE:
-            return self._invoke(request)
-        if request.method == METHOD_SHUTDOWN:
-            return self._shutdown(request)
-        return error_result(
-            request.id,
-            ERROR_METHOD_NOT_FOUND,
-            "unknown plugin method: " + request.method,
-        )
+            response = self._handshake(request)
+        elif request.method == METHOD_REGISTER:
+            response = self._register(request)
+        elif request.method == METHOD_INVOKE:
+            response = self._invoke(request)
+        elif request.method == METHOD_SHUTDOWN:
+            response = self._shutdown(request)
+        else:
+            response = error_result(
+                request.id,
+                ERROR_METHOD_NOT_FOUND,
+                "unknown plugin method: " + request.method,
+            )
+        return _bounded_response(request.id, response)
 
     def _handshake(mut self, request: RpcMessage) raises -> String:
         if self.state != Self.NEW:
@@ -263,29 +267,107 @@ def run_stdio[
     """Serve one JSON-RPC document per line on standard input/output."""
     var server = PluginServer[Handler](handler^)
     var reader = FileDescriptor(0)
-    var writer = FileDescriptor(1)
+    var buffered = List[UInt8]()
     while not server.is_closed():
-        var line = _read_line(reader)
+        var line = _read_line(reader, buffered)
         if not line:
             return
         var response = server.handle_line(line.value())
-        writer.write_bytes(response.as_bytes())
+        _write_response(1, response)
 
 
-def _read_line(mut reader: FileDescriptor) raises -> Optional[String]:
-    var result = List[UInt8]()
+def _read_line(
+    mut reader: FileDescriptor,
+    mut buffered: List[UInt8],
+    max_line_bytes: Int = PLUGIN_MAX_LINE_BYTES,
+) raises -> Optional[String]:
+    """Read a bounded line while retaining bytes already read for the next one."""
+    var scan_offset = 0
     while True:
-        var buffer = Array[Byte, 1](fill=0)
-        var count = reader.read_bytes(buffer)
-        if count <= 0:
-            if len(result) == 0:
-                return None
-            return Optional(String(from_utf8=Span(result)))
-        if buffer[0] == 10:
-            return Optional(String(from_utf8=Span(result)))
-        if len(result) >= PLUGIN_MAX_LINE_BYTES:
+        var scan_end = len(buffered)
+        if scan_end > max_line_bytes + 1:
+            scan_end = max_line_bytes + 1
+        for index in range(scan_offset, scan_end):
+            if buffered[index] != UInt8(10):
+                continue
+            if index > max_line_bytes:
+                raise Error("plugin JSON-RPC line exceeds transport limit")
+            var line = List[UInt8]()
+            var remainder = List[UInt8]()
+            for line_index in range(index):
+                line.append(buffered[line_index])
+            for remainder_index in range(index + 1, len(buffered)):
+                remainder.append(buffered[remainder_index])
+            buffered = remainder^
+            return Optional(String(from_utf8=Span(line)))
+        scan_offset = scan_end
+        if scan_offset > max_line_bytes:
             raise Error("plugin JSON-RPC line exceeds transport limit")
-        result.append(UInt8(buffer[0]))
+        var buffer = Array[Byte, 4096](fill=0)
+        var count = reader.read_bytes(buffer)
+        if count < 0:
+            if get_errno().value == 4:
+                continue
+            raise Error("unable to read plugin JSON-RPC request")
+        if count == 0:
+            if len(buffered) == 0:
+                return None
+            var final_line = String(from_utf8=Span(buffered))
+            buffered.clear()
+            return Optional(final_line^)
+        for index in range(count):
+            buffered.append(UInt8(buffer[index]))
+
+
+def _bounded_response(
+    id: Int,
+    response: String,
+    max_line_bytes: Int = PLUGIN_MAX_LINE_BYTES,
+) raises -> String:
+    if response.byte_length() <= max_line_bytes + 1:
+        return response
+    return error_result(
+        id,
+        ERROR_INTERNAL,
+        "plugin JSON-RPC response exceeds transport limit",
+    )
+
+
+def _write_response(fd: Int, response: String) raises:
+    if not response.endswith("\n"):
+        raise Error("plugin JSON-RPC response is missing line framing")
+    if response.byte_length() > PLUGIN_MAX_LINE_BYTES + 1:
+        raise Error("plugin JSON-RPC response exceeds transport limit")
+    _write_all(fd, response)
+
+
+def _write_all(fd: Int, value: String, max_write_bytes: Int = 0) raises:
+    """Write all bytes, retrying interrupts and advancing after short writes."""
+    var bytes = List[UInt8](value.as_bytes())
+    var offset = 0
+    while offset < len(bytes):
+        var pointer = bytes.unsafe_ptr().unsafe_offset(offset)
+        var write_bytes = len(bytes) - offset
+        if max_write_bytes > 0 and write_bytes > max_write_bytes:
+            write_bytes = max_write_bytes
+        var count = external_call[
+            "write",
+            Int,
+            Int,
+            Pointer[mut=True, UInt8, MutAnyOrigin],
+            Int,
+        ](
+            fd,
+            rebind[Pointer[mut=True, UInt8, MutAnyOrigin]](pointer),
+            write_bytes,
+        )
+        if count < 0:
+            if get_errno().value == 4:
+                continue
+            raise Error("unable to write plugin JSON-RPC response")
+        if count == 0:
+            raise Error("plugin JSON-RPC response write made no progress")
+        offset += count
 
 
 def _registration_arrays_are_valid(registration: PluginRegistration) -> Bool:
