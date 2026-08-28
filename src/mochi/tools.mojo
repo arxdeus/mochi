@@ -1,11 +1,15 @@
 """Pure Mojo tool preparation, authorization, and tagged built-in execution."""
 
 from std.ffi import c_int, external_call
-from std.os import listdir, remove
+from std.os import getenv, listdir, remove
 from std.os.path import exists, isdir
 
 from mochi.json import JsonValue, parse_json
-from mochi.permissions import PermissionDecision, PermissionEffect, PermissionManager
+from mochi.permissions import (
+    PermissionDecision,
+    PermissionEffect,
+    PermissionManager,
+)
 
 
 struct PreparedTool(Copyable, Movable):
@@ -80,7 +84,9 @@ struct RemoteToolRouter(Copyable, Movable):
         mut self, metadata: RemoteToolMetadata, raw_name: String = ""
     ) raises:
         if metadata.protocol != "mcp" and metadata.protocol != "plugin":
-            raise Error("unsupported remote tool protocol: " + metadata.protocol)
+            raise Error(
+                "unsupported remote tool protocol: " + metadata.protocol
+            )
         for name in self.names:
             if name == metadata.name:
                 raise Error("duplicate remote tool route: " + metadata.name)
@@ -122,7 +128,9 @@ struct RemoteToolRouter(Copyable, Movable):
                         _ = self.result_names.pop(j)
                         _ = self.results.pop(j)
 
-    def enqueue_result(mut self, var name: String, var result: ToolResult) raises:
+    def enqueue_result(
+        mut self, var name: String, var result: ToolResult
+    ) raises:
         if not self.is_remote(name):
             raise Error("remote tool route is not registered: " + name)
         self.result_names.append(name^)
@@ -184,7 +192,9 @@ struct ToolRegistry(Copyable, Movable):
                 return i
         return -1
 
-    def register(mut self, var name: String, var owner: String = "builtin") raises:
+    def register(
+        mut self, var name: String, var owner: String = "builtin"
+    ) raises:
         var index = self.index_of(name)
         if index >= 0:
             if self.owners[index] != owner:
@@ -209,7 +219,9 @@ struct ToolRegistry(Copyable, Movable):
                 _ = self.names.pop(i)
                 _ = self.owners.pop(i)
 
-    def add_subagent_response(mut self, var prompt: String, var response: String):
+    def add_subagent_response(
+        mut self, var prompt: String, var response: String
+    ):
         """Install a deterministic Mojo-side subagent callback response."""
         self.subagent_prompts.append(prompt^)
         self.subagent_responses.append(response^)
@@ -222,15 +234,24 @@ struct ToolRegistry(Copyable, Movable):
             return path
         return self.cwd + "/" + path
 
-    def prepare(self, name: String, arguments_text: String) raises -> PreparedTool:
+    def prepare(
+        self, name: String, arguments_text: String
+    ) raises -> PreparedTool:
         if self.index_of(name) < 0:
             raise Error("unknown tool: " + name)
         var arguments = parse_json(arguments_text if arguments_text else "{}")
         if arguments.kind != JsonValue.OBJECT:
             raise Error("tool arguments must be an object")
         var prepared = PreparedTool(name, arguments^)
-        if name == "read" or name == "write" or name == "edit" or name == "list":
-            var path = self.resolve_path(_string_arg(prepared.arguments, "path"))
+        if (
+            name == "read"
+            or name == "write"
+            or name == "edit"
+            or name == "list"
+        ):
+            var path = self.resolve_path(
+                _string_arg(prepared.arguments, "path")
+            )
             prepared.arguments.set("path", JsonValue.string(path))
             prepared.add_scope(path)
         elif name == "bash":
@@ -246,13 +267,17 @@ struct ToolRegistry(Copyable, Movable):
             prepared.add_scope(self.owners[self.index_of(name)])
         return prepared^
 
-    def authorize(self, prepared: PreparedTool, permissions: PermissionManager) -> PermissionDecision:
+    def authorize(
+        self, prepared: PreparedTool, permissions: PermissionManager
+    ) -> PermissionDecision:
         return permissions.check(prepared.name, prepared.scopes)
 
     def execute(mut self, prepared: PreparedTool) -> ToolResult:
         try:
             if prepared.name == "read":
-                return ToolResult.success(open(_string_arg(prepared.arguments, "path"), "r").read())
+                return ToolResult.success(
+                    open(_string_arg(prepared.arguments, "path"), "r").read()
+                )
             if prepared.name == "write":
                 return self._write(prepared.arguments)
             if prepared.name == "edit":
@@ -266,7 +291,9 @@ struct ToolRegistry(Copyable, Movable):
             if prepared.name == "task":
                 if not self.workflow:
                     return ToolResult.failure("subagents require workflow mode")
-                return ToolResult.success(self._subagent(_string_arg(prepared.arguments, "prompt")))
+                return ToolResult.success(
+                    self._subagent(_string_arg(prepared.arguments, "prompt"))
+                )
             return ToolResult.failure("unknown tool: " + prepared.name)
         except error:
             return ToolResult.failure("Error: " + String(error))
@@ -276,7 +303,13 @@ struct ToolRegistry(Copyable, Movable):
         var content = _string_arg(arguments, "content")
         with open(path, "w") as file:
             file.write(content)
-        return ToolResult.success("{\"path\":" + _json_quote(path) + ",\"bytes\":" + String(content.byte_length()) + "}")
+        return ToolResult.success(
+            '{"path":'
+            + _json_quote(path)
+            + ',"bytes":'
+            + String(content.byte_length())
+            + "}"
+        )
 
     def _edit(self, arguments: JsonValue) raises -> ToolResult:
         var path = _string_arg(arguments, "path")
@@ -288,7 +321,7 @@ struct ToolRegistry(Copyable, Movable):
         var changed = content.replace(old, replacement)
         with open(path, "w") as file:
             file.write(changed)
-        return ToolResult.success("{\"path\":" + _json_quote(path) + "}")
+        return ToolResult.success('{"path":' + _json_quote(path) + "}")
 
     def _list(self, arguments: JsonValue) raises -> ToolResult:
         var path = _string_arg(arguments, "path")
@@ -306,10 +339,23 @@ struct ToolRegistry(Copyable, Movable):
     def _bash(self, arguments: JsonValue) raises -> ToolResult:
         var command = _string_arg(arguments, "command")
         var pid = external_call["getpid", c_int]()
-        var output_path = "/tmp/mochi-tool-output-" + String(pid) + ".txt"
+        var temp_root = getenv("TMPDIR", "/tmp")
+        if temp_root == "":
+            temp_root = "/tmp"
+        var output_path = (
+            String(temp_root.removesuffix("/"))
+            + "/mochi-tool-output-"
+            + String(pid)
+            + ".txt"
+        )
         var wrapped = (
-            "cd " + _shell_quote(self.cwd) + " && (" + command + ") > "
-            + _shell_quote(output_path) + " 2>&1"
+            "cd "
+            + _shell_quote(self.cwd)
+            + " && ("
+            + command
+            + ") > "
+            + _shell_quote(output_path)
+            + " 2>&1"
         )
         var c_command = wrapped.as_c_string_slice()
         var status = external_call["system", c_int](c_command.unsafe_ptr())
@@ -321,8 +367,11 @@ struct ToolRegistry(Copyable, Movable):
         if status >= 0:
             exit_code = (status >> 8) & 255
         var content = (
-            "{\"exit_code\":" + String(exit_code)
-            + ",\"output\":" + _json_quote(output) + "}"
+            '{"exit_code":'
+            + String(exit_code)
+            + ',"output":'
+            + _json_quote(output)
+            + "}"
         )
         if exit_code == 0:
             return ToolResult.success(content^)
@@ -359,12 +408,21 @@ struct ToolRegistry(Copyable, Movable):
             elif line.startswith("SUBAGENT "):
                 if not self.workflow:
                     raise Error("subagents require workflow mode")
-                output += self._subagent(String(line.removeprefix("SUBAGENT "))) + "\n"
+                output += (
+                    self._subagent(String(line.removeprefix("SUBAGENT ")))
+                    + "\n"
+                )
             else:
                 raise Error("unknown mini-interpreter command: " + line)
             if output.byte_length() > 100000:
                 raise Error("mini-interpreter output limit exceeded")
-        return ToolResult.success("{\"output\":" + _json_quote(output) + ",\"subagents\":" + String(self.subagent_calls) + "}")
+        return ToolResult.success(
+            '{"output":'
+            + _json_quote(output)
+            + ',"subagents":'
+            + String(self.subagent_calls)
+            + "}"
+        )
 
 
 def _string_arg(arguments: JsonValue, key: String) raises -> String:

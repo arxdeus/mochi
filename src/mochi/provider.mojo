@@ -1033,6 +1033,28 @@ def _sse_error_detail_status(detail: JsonValue, fallback: Int) raises -> Int:
     return fallback
 
 
+def _reported_usage_cost(usage: JsonValue) raises -> Optional[Float64]:
+    """Read a provider-reported response cost without rejecting token counts."""
+    if usage.kind != JsonValue.OBJECT or not usage.contains("cost"):
+        return None
+    var raw = usage.get("cost")
+    if raw.kind == JsonValue.FLOAT:
+        return Optional(raw.float_value)
+    if raw.kind == JsonValue.INT:
+        return Optional(Float64(raw.int_value))
+    if raw.kind != JsonValue.STRING:
+        return None
+    try:
+        var parsed = parse_json(String(raw.string_value.strip()))
+        if parsed.kind == JsonValue.FLOAT:
+            return Optional(parsed.float_value)
+        if parsed.kind == JsonValue.INT:
+            return Optional(Float64(parsed.int_value))
+    except:
+        pass
+    return None
+
+
 struct OpenAIStreamParser(Copyable, Movable):
     var sse: SSEParser
     var tools: ToolCallAssembler
@@ -1146,6 +1168,7 @@ struct OpenAIStreamParser(Copyable, Movable):
                         _int_or(response_usage, "input_tokens", 0),
                         _int_or(response_usage, "output_tokens", 0),
                     )
+                    self.usage.cost = _reported_usage_cost(response_usage)
                     events.append(ProviderEvent.usage_event(self.usage))
                 self.stop_reason = "stop"
                 if event_type == "response.incomplete":
@@ -1190,6 +1213,7 @@ struct OpenAIStreamParser(Copyable, Movable):
                         _int_or(raw_usage, "output_tokens", 0),
                     ),
                 )
+                self.usage.cost = _reported_usage_cost(raw_usage)
                 events.append(ProviderEvent.usage_event(self.usage))
             if not root.contains("choices"):
                 continue
@@ -2719,6 +2743,7 @@ def _stream_response(result: ProviderResult) raises -> StreamResponse:
     var usage = TokenUsage(
         result.usage.input_tokens, result.usage.output_tokens, 0, 0
     )
+    usage.cost = result.usage.cost.copy()
     return StreamResponse(
         message^,
         usage^,

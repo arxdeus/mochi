@@ -19,6 +19,7 @@ from mochi.ui import (
     command_max_args,
     is_builtin_command,
     _terminal_cell_width,
+    _terminal_string_width,
     command_names,
     transcript_messages,
     search_result_lines,
@@ -440,6 +441,89 @@ def test_input_cursor_uses_terminal_width_for_wide_and_combining_text() raises:
     assert_equal(after_watch.col, 5)
     assert_equal(_terminal_cell_width(0x061C), 0)
     assert_equal(_terminal_cell_width(0xE0067), 0)
+
+
+def test_input_cursor_collapses_unicode_width_emoji_sequences() raises:
+    var state = UiState()
+
+    # A complete emoji ZWJ sequence occupies two cells, not the sum of its
+    # scalar emoji components. This is UnicodeWidthStr behavior in Maki.
+    _ = UiReducer.reduce(state, UiEvent.edit("👩‍👩‍👧‍👦"))
+    assert_equal(state.draft.count_codepoints(), 7)
+    assert_equal(
+        _visible_input_cursor(state.input_cursor_layout(20, 4, True, True)).col,
+        4,
+    )
+
+    # Emoji modifiers, emoji/text presentation selectors, keycaps, and flags
+    # exercise every compact property table used by the reverse fold.
+    _ = UiReducer.reduce(state, UiEvent.edit("👋🏽"))
+    assert_equal(state.draft.count_codepoints(), 2)
+    assert_equal(
+        _visible_input_cursor(state.input_cursor_layout(20, 4, True, True)).col,
+        4,
+    )
+
+    _ = UiReducer.reduce(state, UiEvent.edit("♥️"))
+    assert_equal(state.draft.count_codepoints(), 2)
+    assert_equal(
+        _visible_input_cursor(state.input_cursor_layout(20, 4, True, True)).col,
+        4,
+    )
+
+    # U+231A WATCH plus U+FE0E TEXT STYLE is one cell.
+    _ = UiReducer.reduce(state, UiEvent.edit("⌚︎"))
+    assert_equal(state.draft.count_codepoints(), 2)
+    assert_equal(
+        _visible_input_cursor(state.input_cursor_layout(20, 4, True, True)).col,
+        3,
+    )
+
+    _ = UiReducer.reduce(state, UiEvent.edit("1️⃣"))
+    assert_equal(state.draft.count_codepoints(), 3)
+    assert_equal(
+        _visible_input_cursor(state.input_cursor_layout(20, 4, True, True)).col,
+        4,
+    )
+
+    _ = UiReducer.reduce(state, UiEvent.edit("🇺🇸"))
+    assert_equal(state.draft.count_codepoints(), 2)
+    assert_equal(
+        _visible_input_cursor(state.input_cursor_layout(20, 4, True, True)).col,
+        4,
+    )
+
+    # Merely containing a ZWJ is insufficient: invalid components must retain
+    # their independent scalar widths.
+    _ = UiReducer.reduce(state, UiEvent.edit("A‍💻"))
+    assert_equal(state.draft.count_codepoints(), 3)
+    assert_equal(
+        _visible_input_cursor(state.input_cursor_layout(20, 4, True, True)).col,
+        5,
+    )
+
+
+def test_emoji_string_width_does_not_change_scalar_wrap_rows() raises:
+    var state = UiState()
+    _ = UiReducer.reduce(state, UiEvent.edit("👩‍💻x"))
+    var layout = state.input_cursor_layout(6, 4, True, True)
+    var cursor = _visible_input_cursor(layout)
+    assert_equal(layout.total_rows, 2)
+    assert_equal(cursor.row, 1)
+    assert_equal(cursor.col, 1)
+
+    # The exact unicode-width tag sub-automaton accepts 3-6 tag letters before
+    # CANCEL TAG and can then participate as the left side of a ZWJ sequence.
+    var tagged: List[Int] = [
+        0x1F3F4,
+        0xE0067,
+        0xE0062,
+        0xE0065,
+        0xE007F,
+        0x200D,
+        0x1F4BB,
+    ]
+    assert_equal(_terminal_string_width(tagged, 0, len(tagged)), 2)
 
 
 def test_input_cursor_wrap_boundaries_belong_to_the_next_row() raises:

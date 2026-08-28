@@ -1335,7 +1335,7 @@
       "owner": "mochi_ui",
       "status": "partial",
       "description": "Place the real terminal cursor on the rendered input cell so display-width wrapping and IME preedit anchoring match current Maki.",
-      "gap": "Mochi now computes and emits a physical display-cell cursor across wrapping, wide and combining text, vertical scroll, and search input. The remaining gap is a shared pseudo-terminal coordinate oracle, string-level emoji/ZWJ width collapsing, and real IME validation in the full-screen/concurrent-session UI.",
+      "gap": "Mochi now computes and emits a physical display-cell cursor across wrapping, wide and combining text, vertical scroll, search input, and UnicodeWidthStr-compatible emoji/ZWJ/modifier/variation/keycap/flag/tag sequences. It implements only the emoji-related branch of unicode-width's reverse string-width automaton; non-emoji reverse states and some scalar width-table entries (including U+0600-U+0604, U+17A4, U+17D8, and CRLF handling) remain unmatched. A shared pseudo-terminal coordinate oracle and real IME validation in the full-screen/concurrent-session UI are also missing.",
       "upstream_refs": [
         "maki-ui/src/components/input.rs:InputBox::view",
         "maki-ui/src/components/input.rs:wrap_line",
@@ -1350,10 +1350,11 @@
       ],
       "parity_criteria": [
         "Compute cursor row and column in terminal display cells across wrapping, wide Unicode, combining text, and viewport changes.",
+        "Match the non-emoji states and CRLF behavior of unicode-width's reverse string-width automaton, not only emoji-sequence folding.",
         "Park the real terminal cursor on the visible cursor cell so macOS and other IMEs anchor preedit text correctly.",
         "Verify cursor coordinates in a pseudo-terminal against shared width/wrap fixtures."
       ],
-      "verification": "Focused layout tests cover cursor coordinates and renderer integration emits the terminal cursor, but there is not yet a shared PTY/IME oracle."
+      "verification": "Focused layout and renderer tests cover physical coordinates plus Unicode 17 emoji-sequence folding while retaining Mochi's existing scalar wrap rows. They do not prove exact scalar width-table parity, the full non-emoji reverse automaton, CRLF parity, or a shared PTY/IME oracle."
     },
     {
       "id": "agent.queue.message_burst",
@@ -1411,22 +1412,26 @@
       "owner": "mochi_provider",
       "status": "partial",
       "description": "Prefer the exact non-zero response cost reported by OpenRouter over static requested-model pricing.",
-      "gap": "Mochi parses token counts and can estimate list cost, but Usage and TokenUsage do not carry the per-response OpenRouter cost field or its non-accumulating semantics.",
+      "gap": "The parser and domain model now preserve one exact reported response cost, prefer it over list pricing, and clear it on accumulation. Runtime aggregation clears the ephemeral bill, while the session format has no per-turn stored-cost field, so the exact OpenRouter charge is not yet persisted or displayed end to end. The parity harness also has no independently executed upstream cost oracle.",
       "upstream_refs": [
         "maki-providers/src/model.rs:TokenUsage::billed_cost",
         "maki-providers/src/providers/openai_compat.rs"
       ],
       "mojo_refs": [
+        "src/mochi/types.mojo:Usage.cost",
         "src/mochi/provider.mojo:OpenAIStreamParser",
-        "src/mochi/domain.mojo:TokenUsage",
-        "src/mochi/domain.mojo:ModelPricing"
+        "src/mochi/domain.mojo:TokenUsage.cost",
+        "src/mochi/domain.mojo:Model.billed_cost",
+        "tests/provider_test.mojo:test_openrouter_reported_cost_is_lenient_and_preserves_counts",
+        "tests/provider_test.mojo:test_reported_cost_billing_and_accumulation_semantics"
       ],
       "parity_criteria": [
         "Parse a positive cost from each OpenRouter usage chunk without losing token counts.",
         "Prefer the reported response cost for billing while retaining list-cost fallback.",
-        "Clear rather than sum ephemeral response costs when usage values are accumulated."
+        "Clear rather than sum ephemeral response costs when usage values are accumulated.",
+        "Settle and persist the exact per-turn bill before runtime/session accumulation clears the response-scoped field."
       ],
-      "verification": "No reported-cost field or oracle exists in Mochi."
+      "verification": "Focused provider tests prove lenient parsing, response-snapshot replacement, positive-bill preference, list-price fallback, accumulation clearing, fetch-usage visibility, and domain propagation. Stored per-turn billing and an independently executed upstream oracle remain missing."
     },
     {
       "id": "ui.btw.thinking_style",
@@ -1500,9 +1505,9 @@
       "id": "extensions.session_end.lifecycle",
       "area": "extensions",
       "owner": "mochi_extensions",
-      "status": "missing",
+      "status": "partial",
       "description": "Deliver a bounded SessionEnd event on every TUI, ACP, and headless session teardown path before session-owned resources are reaped.",
-      "gap": "Mochi has no plugin event or session-context protocol, so Mojo plugins cannot observe reset, load, delete, shutdown, ACP replacement/EOF, or headless completion. It also cannot await a suspending teardown callback without blocking the UI or ACP executor.",
+      "gap": "Mochi now exposes a versioned Mojo SDK SessionEnd hook, filters advertised subscriptions, and dispatches it with the exact prior session ID on its existing /new, /clear, terminal/headless completion, ACP replacement/load, and ACP EOF paths. Handlers are synchronous rather than suspendable, ACP input may pause for the bounded two-second grace period, and Mochi has neither Maki's tab delete/load surface nor session-owned jobs to order after the callback.",
       "upstream_refs": [
         "maki-lua/src/api/autocmd.rs:SessionEnd",
         "maki-lua/src/loader.rs:EventHandle::end_session",
@@ -1510,17 +1515,23 @@
         "maki-ui/src/app/session.rs"
       ],
       "mojo_refs": [
-        "src/mochi/plugin.mojo:PluginProtocol",
-        "src/mochi/runtime.mojo:Runtime",
-        "src/mochi/acp.mojo",
-        "src/mochi/main.mojo"
+        "src/mochi/plugin.mojo:PluginProtocol.session_end",
+        "src/mochi/plugin_sdk.mojo:PluginHandler.session_end",
+        "src/mochi/runtime.mojo:Runtime.end_plugin_session",
+        "src/mochi/acp.mojo:AcpRuntimeServer._end_active_session",
+        "src/mochi/main.mojo",
+        "tests/plugin_test.mojo:test_versioned_session_end_wire_and_bounds",
+        "tests/plugin_sdk_test.mojo:test_session_end_validation_and_handler_error_are_recoverable",
+        "tests/runtime_test.mojo:test_runtime_session_end_filters_subscriptions_and_isolates_errors",
+        "tests/runtime_test.mojo:test_runtime_session_end_uses_one_shared_grace_period",
+        "tests/acp_test.mojo:test_runtime_server_dispatches_session_end_before_replace_and_shutdown"
       ],
       "parity_criteria": [
         "Expose a versioned Mojo SDK SessionEnd callback carrying the session being left behind.",
         "Fire it exactly once on reset, load, delete, shutdown, ACP replace/EOF, and headless completion before owned resource cleanup.",
         "Bound and await suspending handlers without deadlocking UI shutdown or pausing ACP input."
       ],
-      "verification": "No plugin lifecycle callback or shared teardown-path oracle exists in Mochi."
+      "verification": "Protocol, SDK, runtime, ACP, and live-process tests prove exact payloads, validation, subscription filtering, recoverable handler failures, ACP replacement/shutdown dispatch, broadcast-before-await sibling delivery, one shared two-second slow-handler grace period, and batch cleanup of timed-out processes. No source-plugin E2E exercises SessionEnd; async callbacks, job ordering, absent TUI tab paths, and a shared upstream oracle remain open."
     },
     {
       "id": "extensions.jobs.async_runtime",

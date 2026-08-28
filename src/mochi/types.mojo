@@ -44,14 +44,21 @@ struct Message(Copyable, Movable):
 
 @fieldwise_init
 struct Usage(Copyable, Movable):
-    """Token counts accumulated across provider turns."""
+    """Token counts plus an optional bill for exactly one provider response."""
 
     var input_tokens: Int
     var output_tokens: Int
+    var cost: Optional[Float64]
 
     def __init__(out self):
         self.input_tokens = 0
         self.output_tokens = 0
+        self.cost = None
+
+    def __init__(out self, input_tokens: Int, output_tokens: Int):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cost = None
 
     def total_tokens(self) -> Int:
         return self.input_tokens + self.output_tokens
@@ -59,6 +66,9 @@ struct Usage(Copyable, Movable):
     def add(mut self, other: Self):
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
+        # A reported cost covers one response, while this value now covers
+        # multiple responses. Summing a partial set would look authoritative.
+        self.cost = None
 
 
 @fieldwise_init

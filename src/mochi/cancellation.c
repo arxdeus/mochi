@@ -428,6 +428,14 @@ static ssize_t mochi_write_without_sigpipe(
 }
 #endif
 
+int64_t mochi_monotonic_millis_now(void) {
+#if defined(__unix__) || defined(__APPLE__)
+    return mochi_monotonic_millis();
+#else
+    return -1;
+#endif
+}
+
 int mochi_fd_write_all_until(
     int fd, const void *data, size_t length, int64_t deadline
 ) {
@@ -617,6 +625,151 @@ int mochi_kill_process_group_and_wait(int pid_value, int *status) {
 #else
     (void)pid_value;
     (void)status;
+    return -1;
+#endif
+}
+
+int mochi_kill_process_groups_and_wait(int *pid_values, size_t count) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (pid_values == NULL || count == 0 || count > (size_t)INT_MAX) {
+        return -1;
+    }
+    unsigned char *state = (unsigned char *)calloc(count, sizeof(unsigned char));
+    if (state == NULL) {
+        return -1;
+    }
+    int failed = 0;
+
+    /* Validate every identity while each unreaped child still anchors its PID,
+       then signal all groups before polling any one of them. PID entries stay
+       positive until their leader has been reaped and its group is gone. */
+    for (size_t index = 0; index < count; ++index) {
+        pid_t pid = (pid_t)pid_values[index];
+        if (pid <= 0) {
+            failed = 1;
+            continue;
+        }
+        siginfo_t child = {0};
+        int observed;
+        do {
+            observed = waitid(
+                P_PID, (id_t)pid, &child, WEXITED | WNOHANG | WNOWAIT
+            );
+        } while (observed != 0 && errno == EINTR);
+        if (observed != 0) {
+            failed = 1;
+            continue;
+        }
+        state[index] = 1;
+    }
+    for (size_t index = 0; index < count; ++index) {
+        if (state[index] == 0) {
+            continue;
+        }
+        pid_t pid = (pid_t)pid_values[index];
+        if (kill(-pid, SIGKILL) != 0 && errno != ESRCH) {
+            failed = 1;
+        }
+        if (kill(pid, SIGKILL) != 0 && errno != ESRCH) {
+            failed = 1;
+        }
+    }
+
+    int64_t drain_deadline = mochi_deadline_after_millis(1000);
+    if (drain_deadline < 0) {
+        free(state);
+        return -1;
+    }
+    for (;;) {
+        for (size_t index = 0; index < count; ++index) {
+            if (state[index] != 1) {
+                continue;
+            }
+            pid_t pid = (pid_t)pid_values[index];
+            int status = 0;
+            pid_t waited;
+            do {
+                waited = waitpid(pid, &status, WNOHANG);
+            } while (waited < 0 && errno == EINTR);
+            if (waited == pid) {
+                state[index] = 2;
+            } else if (waited < 0) {
+                /* No identity is transferred on a failed reap. */
+                failed = 1;
+                state[index] = 0;
+            }
+        }
+        for (size_t index = 0; index < count; ++index) {
+            if (state[index] != 2) {
+                continue;
+            }
+            pid_t pid = (pid_t)pid_values[index];
+            for (;;) {
+                int adopted_status = 0;
+                pid_t adopted = waitpid(-pid, &adopted_status, WNOHANG);
+                if (adopted > 0) {
+                    continue;
+                }
+                if (adopted < 0 && errno == EINTR) {
+                    continue;
+                }
+                break;
+            }
+            if (kill(-pid, 0) != 0) {
+                if (errno != ESRCH) {
+                    failed = 1;
+                }
+                /* The leader is already reaped, so its numeric PID can no
+                   longer remain a safe ownership token. */
+                pid_values[index] = -1;
+                state[index] = 0;
+            }
+        }
+
+        bool pending = false;
+        for (size_t index = 0; index < count; ++index) {
+            if (state[index] != 0) {
+                pending = true;
+                break;
+            }
+        }
+        if (!pending) {
+            break;
+        }
+        int64_t now = mochi_monotonic_millis();
+        if (now < 0 || now >= drain_deadline) {
+            failed = 1;
+            for (size_t index = 0; index < count; ++index) {
+                if (state[index] != 2) {
+                    continue;
+                }
+                pid_values[index] = -1;
+                state[index] = 0;
+            }
+            break;
+        }
+        int64_t remaining = drain_deadline - now;
+        struct timespec pause = {
+            .tv_sec = 0,
+            .tv_nsec = (long)(remaining < 10 ? remaining : 10) * 1000000L,
+        };
+        if (nanosleep(&pause, NULL) != 0 && errno != EINTR) {
+            failed = 1;
+            for (size_t index = 0; index < count; ++index) {
+                if (state[index] != 2) {
+                    continue;
+                }
+                pid_values[index] = -1;
+                state[index] = 0;
+            }
+            break;
+        }
+    }
+    free(state);
+    return failed == 0 ? 0 : -1;
+#else
+    (void)pid_values;
+    (void)count;
     return -1;
 #endif
 }

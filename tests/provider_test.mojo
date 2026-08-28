@@ -15,6 +15,7 @@ from mochi.domain import (
     ModelPricing,
     ModelTier,
     ThinkingSupport,
+    TokenUsage,
 )
 from mochi.http import HttpRequest, HttpResponse, MockTransport
 from mochi.json import JsonValue, parse_json
@@ -24,7 +25,7 @@ from mochi.provider_contract import (
     RequestOptions,
     ThinkingConfig,
 )
-from mochi.types import CancellationToken, ProviderEvent, ToolCall
+from mochi.types import CancellationToken, ProviderEvent, ToolCall, Usage
 from mochi.provider import (
     AnthropicProviderAdapterWithTransport,
     AnthropicProviderSpec,
@@ -521,6 +522,124 @@ def test_eof_flushed_stream_error_updates_provider_status() raises:
         )
     assert_equal(provider.last_http_status(), 529)
     assert_true(RetryState.retryable_status(provider.last_http_status()))
+
+
+def _openrouter_usage(cost_literal: String) raises -> Usage:
+    var parser = OpenAIStreamParser()
+    _ = parser.feed(
+        'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":10,"cost":'
+        + cost_literal
+        + "}}\n\n"
+    )
+    return parser.usage.copy()
+
+
+def _assert_cost(got: Float64, expected: Float64) raises:
+    assert_true(got > expected - 0.000000000001)
+    assert_true(got < expected + 0.000000000001)
+
+
+def test_openrouter_reported_cost_is_lenient_and_preserves_counts() raises:
+    var numeric = _openrouter_usage("0.00045")
+    assert_equal(numeric.input_tokens, 100)
+    assert_equal(numeric.output_tokens, 10)
+    _assert_cost(numeric.cost.value(), 0.00045)
+
+    var quoted = _openrouter_usage('"0.00045"')
+    assert_equal(quoted.input_tokens, 100)
+    assert_equal(quoted.output_tokens, 10)
+    _assert_cost(quoted.cost.value(), 0.00045)
+
+    var malformed_string = _openrouter_usage('"free"')
+    assert_equal(malformed_string.input_tokens, 100)
+    assert_equal(malformed_string.output_tokens, 10)
+    assert_false(malformed_string.cost)
+
+    var unknown_shape = _openrouter_usage('{"usd":0.00045}')
+    assert_equal(unknown_shape.input_tokens, 100)
+    assert_equal(unknown_shape.output_tokens, 10)
+    assert_false(unknown_shape.cost)
+
+    var missing = _openrouter_usage("null")
+    assert_equal(missing.input_tokens, 100)
+    assert_equal(missing.output_tokens, 10)
+    assert_false(missing.cost)
+
+
+def test_openrouter_cost_is_one_response_snapshot_not_a_chunk_sum() raises:
+    var parser = OpenAIStreamParser()
+    _ = parser.feed(
+        'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":1,"cost":0.0002}}\n\n'
+    )
+    _ = parser.feed(
+        'data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":2,"cost":0.0003}}\n\n'
+    )
+    assert_equal(parser.usage.input_tokens, 20)
+    assert_equal(parser.usage.output_tokens, 2)
+    _assert_cost(parser.usage.cost.value(), 0.0003)
+
+    _ = parser.feed(
+        'data: {"choices":[],"usage":{"prompt_tokens":30,"completion_tokens":3}}\n\n'
+    )
+    assert_equal(parser.usage.input_tokens, 30)
+    assert_equal(parser.usage.output_tokens, 3)
+    assert_false(parser.usage.cost)
+
+
+def test_reported_cost_billing_and_accumulation_semantics() raises:
+    var model = Model(
+        "router-model",
+        "openrouter",
+        ModelTier.medium(),
+        ModelFamily.generic(),
+        ThinkingSupport.no(),
+        None,
+        ModelPricing(2.0, 0.0, 0.0, 0.0),
+        None,
+        128000,
+    )
+    var response_usage = TokenUsage(1000000, 0, 0, 0)
+    response_usage.cost = Optional(0.00045)
+    assert_equal(model.billed_cost(response_usage).value(), 0.00045)
+
+    response_usage.cost = Optional(0.0)
+    assert_equal(model.billed_cost(response_usage).value(), 2.0)
+    model.pricing = ModelPricing()
+    response_usage.cost = Optional(0.00045)
+    assert_equal(model.billed_cost(response_usage).value(), 0.00045)
+
+    var next_usage = TokenUsage(2, 3, 4, 5)
+    next_usage.cost = Optional(0.0002)
+    response_usage.add(next_usage)
+    assert_equal(response_usage.input, 1000002)
+    assert_equal(response_usage.output, 3)
+    assert_equal(response_usage.cache_creation, 4)
+    assert_equal(response_usage.cache_read, 5)
+    assert_false(response_usage.cost)
+
+    var legacy = Usage(10, 1)
+    legacy.cost = Optional(0.0001)
+    var legacy_next = Usage(20, 2)
+    legacy_next.cost = Optional(0.0002)
+    legacy.add(legacy_next)
+    assert_equal(legacy.input_tokens, 30)
+    assert_equal(legacy.output_tokens, 3)
+    assert_false(legacy.cost)
+
+
+def test_openrouter_cost_reaches_domain_stream_response() raises:
+    var provider = OpenAICompatibleProvider(
+        ProviderSpec("openrouter", "https://invalid.local")
+    )
+    var result = provider.parse_response_body(
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":10,"cost":"0.00045"}}\n\n'
+        "data: [DONE]\n\n"
+    )
+    _assert_cost(provider.fetch_usage().cost.value(), 0.00045)
+    var response = _stream_response(result)
+    assert_equal(response.usage.input, 100)
+    assert_equal(response.usage.output, 10)
+    _assert_cost(response.usage.cost.value(), 0.00045)
 
 
 def test_oauth_state_and_refresh_request() raises:

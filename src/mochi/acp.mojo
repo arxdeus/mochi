@@ -123,7 +123,9 @@ struct AcpSession(Copyable, Movable):
             raise Error("ACP handler requires a request")
         if request.method == "initialize":
             var result = JsonValue.object()
-            result.set("protocolVersion", JsonValue.integer(ACP_PROTOCOL_VERSION))
+            result.set(
+                "protocolVersion", JsonValue.integer(ACP_PROTOCOL_VERSION)
+            )
             var capabilities = JsonValue.object()
             capabilities.set("loadSession", JsonValue.boolean(True))
             capabilities.set("promptCapabilities", JsonValue.object())
@@ -131,7 +133,9 @@ struct AcpSession(Copyable, Movable):
             self.initialized = True
             return AcpMessage.response(request.id, result^)
         if not self.initialized:
-            return AcpMessage.failure(request.id, -32002, "ACP is not initialized")
+            return AcpMessage.failure(
+                request.id, -32002, "ACP is not initialized"
+            )
         if request.method == "session/new" or request.method == "session/load":
             var id = _string(request.payload, "sessionId")
             if not self._has_session(id):
@@ -146,7 +150,9 @@ struct AcpSession(Copyable, Movable):
         if request.method == "session/prompt":
             var id = _string(request.payload, "sessionId")
             if not self._has_session(id):
-                return AcpMessage.failure(request.id, -32004, "unknown ACP session")
+                return AcpMessage.failure(
+                    request.id, -32004, "unknown ACP session"
+                )
             var result = JsonValue.object()
             result.set("stopReason", JsonValue.string("end_turn"))
             return AcpMessage.response(request.id, result^)
@@ -191,8 +197,15 @@ struct AcpRuntimeServer:
                 output.append(self.protocol.handle(request))
                 return output^
             var id = self._new_session_id(request.payload)
+            if id == "":
+                raise Error("ACP session id must not be empty")
+            if self._session_index(id) >= 0:
+                raise Error("ACP session already exists: " + id)
             var cwd = _optional_string(request.payload, "cwd", ".")
             var session = Session(id, self.runtime.model, cwd, self.now_ms)
+            # Do not tear down the live session until the replacement payload
+            # has been completely validated and constructed.
+            self._end_active_session()
             self.sessions.append(session^)
             self.active_session_id = id
             self.runtime.set_messages(List[Message]())
@@ -210,6 +223,7 @@ struct AcpRuntimeServer:
                 return output^
             var id = _string(request.payload, "sessionId")
             var session = self.store.load(id)
+            self._end_active_session()
             self._replace_session(session.copy())
             self.active_session_id = id
             self.runtime.set_messages(session.runtime_messages())
@@ -228,10 +242,17 @@ struct AcpRuntimeServer:
             var index = self._session_index(id)
             if index < 0:
                 output.append(
-                    AcpMessage.failure(request.id, -32004, "unknown ACP session")
+                    AcpMessage.failure(
+                        request.id, -32004, "unknown ACP session"
+                    )
                 )
                 return output^
             var prompt = _prompt_text(request.payload)
+            if self.active_session_id != id:
+                self._end_active_session()
+                self.runtime.set_messages(
+                    self.sessions[index].runtime_messages()
+                )
             var cancel = CancellationToken()
             self.active_session_id = id
             self.active_cancel = Optional(cancel.copy())
@@ -279,7 +300,14 @@ struct AcpRuntimeServer:
     def shutdown(mut self):
         if self.active_cancel:
             self.active_cancel.value().cancel()
+        self._end_active_session()
         self.runtime.shutdown_remotes()
+
+    def _end_active_session(mut self):
+        if self.active_session_id == "":
+            return
+        _ = self.runtime.end_plugin_session(self.active_session_id)
+        self.active_session_id = ""
 
     def _new_session_id(self, payload: JsonValue) raises -> String:
         if payload.contains("sessionId"):
@@ -300,7 +328,9 @@ struct AcpRuntimeServer:
             self.sessions.append(session^)
 
 
-def _optional_string(value: JsonValue, key: String, fallback: String) raises -> String:
+def _optional_string(
+    value: JsonValue, key: String, fallback: String
+) raises -> String:
     if not value.contains(key):
         return fallback
     return _string(value, key)
@@ -344,7 +374,9 @@ def _history_update(messages: List[Message]) raises -> JsonValue:
     return update^
 
 
-def session_update(session_id: String, var update: JsonValue) raises -> AcpMessage:
+def session_update(
+    session_id: String, var update: JsonValue
+) raises -> AcpMessage:
     var params = JsonValue.object()
     params.set("sessionId", JsonValue.string(session_id))
     params.set("update", update^)
@@ -354,9 +386,15 @@ def session_update(session_id: String, var update: JsonValue) raises -> AcpMessa
 def permission_options() raises -> JsonValue:
     var options = JsonValue.array()
     options.append(_permission_option("allow_once", "Allow once", "allow_once"))
-    options.append(_permission_option("allow_always", "Allow always", "allow_always"))
-    options.append(_permission_option("reject_once", "Reject once", "reject_once"))
-    options.append(_permission_option("reject_always", "Reject always", "reject_always"))
+    options.append(
+        _permission_option("allow_always", "Allow always", "allow_always")
+    )
+    options.append(
+        _permission_option("reject_once", "Reject once", "reject_once")
+    )
+    options.append(
+        _permission_option("reject_always", "Reject always", "reject_always")
+    )
     return options^
 
 
@@ -367,9 +405,7 @@ def permission_answer(response: AcpMessage) -> PermissionAnswer:
         var outcome = response.payload.get("outcome")
         if _optional_string(outcome, "outcome", "") != "selected":
             return PermissionAnswer.deny()
-        var option = _optional_string(
-            outcome.get("option"), "optionId", ""
-        )
+        var option = _optional_string(outcome.get("option"), "optionId", "")
         if option == "allow_once":
             return PermissionAnswer.allow_once()
         if option == "allow_always":
@@ -379,7 +415,9 @@ def permission_answer(response: AcpMessage) -> PermissionAnswer:
     return PermissionAnswer.deny()
 
 
-def _permission_option(id: String, name: String, kind: String) raises -> JsonValue:
+def _permission_option(
+    id: String, name: String, kind: String
+) raises -> JsonValue:
     var option = JsonValue.object()
     option.set("optionId", JsonValue.string(id))
     option.set("name", JsonValue.string(name))

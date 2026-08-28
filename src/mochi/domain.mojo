@@ -249,18 +249,38 @@ struct TokenUsage(Copyable, Movable):
     var output: Int
     var cache_creation: Int
     var cache_read: Int
+    # What exactly one response cost, when reported by the provider. This is
+    # deliberately omitted from persistence and cleared by accumulation.
+    var cost: Optional[Float64]
 
     def __init__(out self):
         self.input = 0
         self.output = 0
         self.cache_creation = 0
         self.cache_read = 0
+        self.cost = None
+
+    def __init__(
+        out self,
+        input: Int,
+        output: Int,
+        cache_creation: Int,
+        cache_read: Int,
+    ):
+        self.input = input
+        self.output = output
+        self.cache_creation = cache_creation
+        self.cache_read = cache_read
+        self.cost = None
 
     def add(mut self, other: Self):
         self.input += other.input
         self.output += other.output
         self.cache_creation += other.cache_creation
         self.cache_read += other.cache_read
+        # Only some responses report their bill. A running subtotal of those
+        # bills would be incomplete while looking like the whole total.
+        self.cost = None
 
     def input_tokens(self) -> Int:
         return self.input + self.cache_creation + self.cache_read
@@ -603,6 +623,12 @@ struct Model(Copyable, Movable):
             return None
         return self.pricing.cost(usage)
 
+    def billed_cost(self, usage: TokenUsage) -> Optional[Float64]:
+        """Prefer a positive provider bill, otherwise estimate from the table."""
+        if usage.cost and usage.cost.value() > 0.0:
+            return usage.cost.value()
+        return self.list_cost(usage)
+
 
 struct MochiError(Copyable, Movable):
     comptime API = 0
@@ -712,10 +738,14 @@ struct MochiError(Copyable, Movable):
 def domain_message_to_json(message: DomainMessage) raises -> JsonValue:
     var value = JsonValue.object()
     value.set(
-        "role", JsonValue.string("assistant" if message.role.is_assistant() else "user")
+        "role",
+        JsonValue.string(
+            "assistant" if message.role.is_assistant() else "user"
+        ),
     )
     value.set(
-        "kind", JsonValue.string("observation" if message.is_observation() else "turn")
+        "kind",
+        JsonValue.string("observation" if message.is_observation() else "turn"),
     )
     var blocks = JsonValue.array()
     for block in message.content:
@@ -731,7 +761,9 @@ def domain_message_to_json(message: DomainMessage) raises -> JsonValue:
         blocks.append(item^)
     value.set("content", blocks^)
     if message.display_text:
-        value.set("display_text", JsonValue.string(message.display_text.value()))
+        value.set(
+            "display_text", JsonValue.string(message.display_text.value())
+        )
     return value^
 
 

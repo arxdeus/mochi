@@ -15,14 +15,23 @@ or Mojo-only final binary.
 The current tests cover a narrow subset of Maki behavior:
 
 - typed domain and provider contract fixtures;
-- deterministic OpenAI-compatible, Anthropic, and Gemini streaming parser fixtures;
+- deterministic OpenAI-compatible, Anthropic, and Gemini streaming parser
+  fixtures, including streamed-error classification and response-scoped
+  OpenRouter reported-cost parsing;
 - selected Maki v2 session codec and truncated-tail recovery behavior;
 - MCP stdio/streamable-HTTP protocol and OAuth primitives;
 - the basic runtime/tool loop and ACP session lifecycle;
-- Mojo source-plugin compilation, bounded process RPC, cache, and shadow
-  reload; and
-- selected UI reducer, command, picker, search, mouse, and display-cell cursor
-  behaviors.
+- Mojo source-plugin compilation, bounded process RPC, cache, shadow reload,
+  and synchronous bounded `SessionEnd` delivery on the currently implemented
+  teardown paths; and
+- selected UI reducer, command, picker, search, mouse, and emoji-sequence
+  display-cell cursor behaviors.
+
+Those claims remain deliberately narrow. Reported OpenRouter cost is not yet
+persisted or displayed end to end; `SessionEnd` is not an async callback and
+does not cover Maki's absent tab/job lifecycle; and cursor width does not yet
+implement the non-emoji branches of `unicode-width`'s reverse string-width
+automaton (including CRLF handling) or a shared PTY/IME coordinate oracle.
 
 `tests/parity.sh` runs matching upstream and Mochi assertions independently. It
 does not yet feed shared fixtures to both programs or compare their output, so a

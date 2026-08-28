@@ -5,10 +5,14 @@ from mochi.plugin import (
     ERROR_INVALID_REQUEST,
     ERROR_INVALID_STATE,
     ERROR_INVOKE,
+    ERROR_LIFECYCLE,
     ERROR_METHOD_NOT_FOUND,
     ERROR_PARSE,
     ERROR_PROTOCOL,
+    EVENT_SESSION_END,
     METHOD_HANDSHAKE,
+    METHOD_LIFECYCLE,
+    PLUGIN_LIFECYCLE_VERSION,
     PluginProtocol,
     PluginRegistration,
     RpcMessage,
@@ -27,18 +31,23 @@ from std.testing import TestSuite, assert_equal, assert_raises, assert_true
 
 struct EchoHandler(Movable, PluginHandler):
     var invokes: Int
+    var session_ends: List[String]
     var stopped: Bool
     var fail_invoke: Bool
+    var fail_session_end: Bool
     var invalid_registration: Bool
 
     def __init__(
         out self,
         fail_invoke: Bool = False,
+        fail_session_end: Bool = False,
         invalid_registration: Bool = False,
     ):
         self.invokes = 0
+        self.session_ends = List[String]()
         self.stopped = False
         self.fail_invoke = fail_invoke
+        self.fail_session_end = fail_session_end
         self.invalid_registration = invalid_registration
 
     def registration(self) raises -> PluginRegistration:
@@ -50,6 +59,7 @@ struct EchoHandler(Movable, PluginHandler):
             )
         )
         registration.commands.append(parse_json('{"name":"hello"}'))
+        registration.events.append(JsonValue.string(EVENT_SESSION_END))
         if self.invalid_registration:
             registration.tools = JsonValue.object()
         return registration^
@@ -65,6 +75,11 @@ struct EchoHandler(Movable, PluginHandler):
         result.set("name", JsonValue.string(name))
         result.set("arguments", arguments^)
         return result^
+
+    def session_end(mut self, session_id: String) raises:
+        if self.fail_session_end:
+            raise Error("scripted SessionEnd failure")
+        self.session_ends.append(session_id)
 
     def shutdown(mut self) raises:
         self.stopped = True
@@ -111,6 +126,15 @@ def test_server_lifecycle_matches_host_protocol() raises:
     assert_equal(result.get("name").string_value, "echo")
     assert_equal(result.get("arguments").get("text").string_value, "hello")
     assert_equal(server.handler.invokes, 1)
+
+    var exact_session_id = "4ERx9WqLhY3JpN7dV2kM"
+    host.accept_session_end(
+        server.handle_line(host.session_end(exact_session_id))
+    )
+    assert_true(host.is_ready())
+    assert_true(server.is_ready())
+    assert_equal(len(server.handler.session_ends), 1)
+    assert_equal(server.handler.session_ends[0], exact_session_id)
 
     host.accept_shutdown(server.handle_line(host.shutdown()))
     assert_true(server.is_closed())
@@ -194,6 +218,53 @@ def test_parse_response_registration_and_handler_errors() raises:
     var request = host.invoke("tool", "echo", JsonValue.object())
     assert_equal(_error_code(failing.handle_line(request)), ERROR_INVOKE)
     assert_true(failing.is_ready())
+
+
+def test_session_end_validation_and_handler_error_are_recoverable() raises:
+    var server = PluginServer[EchoHandler](EchoHandler(fail_session_end=True))
+    var host = PluginProtocol()
+    host.accept_handshake(server.handle_line(host.handshake()))
+    host.accept_registration(server.handle_line(host.registration_request()))
+
+    var failed_request = host.session_end("session-one")
+    var failed_response = server.handle_line(failed_request)
+    assert_equal(_error_code(failed_response), ERROR_LIFECYCLE)
+    with assert_raises():
+        host.accept_session_end(failed_response)
+    assert_true(host.is_ready())
+    assert_true(server.is_ready())
+
+    server.handler.fail_session_end = False
+    host.accept_session_end(server.handle_line(host.session_end("session-two")))
+    assert_true(host.is_ready())
+    assert_equal(server.handler.session_ends[0], "session-two")
+
+    var wrong_version = JsonValue.object()
+    wrong_version.set(
+        "version", JsonValue.integer(PLUGIN_LIFECYCLE_VERSION + 1)
+    )
+    wrong_version.set("event", JsonValue.string(EVENT_SESSION_END))
+    var data = JsonValue.object()
+    data.set("session_id", JsonValue.string("session-three"))
+    wrong_version.set("data", data^)
+    var invalid = RpcMessage.request(99, METHOD_LIFECYCLE, wrong_version^)
+    assert_equal(
+        _error_code(server.handle_line(invalid.to_line())), ERROR_PROTOCOL
+    )
+    assert_true(server.is_ready())
+
+    var extra = JsonValue.object()
+    extra.set("version", JsonValue.integer(PLUGIN_LIFECYCLE_VERSION))
+    extra.set("event", JsonValue.string(EVENT_SESSION_END))
+    data = JsonValue.object()
+    data.set("session_id", JsonValue.string("session-four"))
+    data.set("unexpected", JsonValue.boolean(True))
+    extra.set("data", data^)
+    invalid = RpcMessage.request(100, METHOD_LIFECYCLE, extra^)
+    assert_equal(
+        _error_code(server.handle_line(invalid.to_line())), ERROR_INVALID_PARAMS
+    )
+    assert_true(server.is_ready())
 
 
 def test_stdio_reader_batches_and_retains_following_lines() raises:

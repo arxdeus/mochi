@@ -12,14 +12,19 @@ from mochi.plugin import (
     ERROR_INVALID_REQUEST,
     ERROR_INVALID_STATE,
     ERROR_INVOKE,
+    ERROR_LIFECYCLE,
     ERROR_METHOD_NOT_FOUND,
     ERROR_PARSE,
     ERROR_PROTOCOL,
+    EVENT_SESSION_END,
     METHOD_HANDSHAKE,
     METHOD_INVOKE,
+    METHOD_LIFECYCLE,
     METHOD_REGISTER,
     METHOD_SHUTDOWN,
+    PLUGIN_LIFECYCLE_VERSION,
     PLUGIN_MAX_LINE_BYTES,
+    PLUGIN_MAX_SESSION_ID_BYTES,
     PLUGIN_PROTOCOL,
     PLUGIN_PROTOCOL_VERSION,
     PluginRegistration,
@@ -28,6 +33,7 @@ from mochi.plugin import (
     handshake_result,
     invoke_result,
     registration_result,
+    session_end_result,
     shutdown_result,
 )
 from std.ffi import external_call, get_errno
@@ -43,6 +49,10 @@ trait PluginHandler:
         mut self, kind: String, name: String, var arguments: JsonValue
     ) raises -> JsonValue:
         ...
+
+    def session_end(mut self, session_id: String) raises:
+        """Observe teardown for the exact session being left behind."""
+        _ = session_id
 
     def shutdown(mut self) raises:
         ...
@@ -95,6 +105,8 @@ struct PluginServer[Handler: PluginHandler & Movable & Deinitable](Movable):
             response = self._register(request)
         elif request.method == METHOD_INVOKE:
             response = self._invoke(request)
+        elif request.method == METHOD_LIFECYCLE:
+            response = self._lifecycle(request)
         elif request.method == METHOD_SHUTDOWN:
             response = self._shutdown(request)
         else:
@@ -233,6 +245,83 @@ struct PluginServer[Handler: PluginHandler & Movable & Deinitable](Movable):
                 request.id, ERROR_INVOKE, "plugin invocation failed"
             )
         return invoke_result(request.id, result^)
+
+    def _lifecycle(mut self, request: RpcMessage) raises -> String:
+        if self.state != Self.READY:
+            return self._state_error(request.id, METHOD_LIFECYCLE)
+        if request.payload.kind != JsonValue.OBJECT:
+            return error_result(
+                request.id,
+                ERROR_INVALID_PARAMS,
+                "lifecycle params must be an object",
+            )
+        if (
+            len(request.payload.object_keys) != 3
+            or not request.payload.contains("version")
+            or not request.payload.contains("event")
+            or not request.payload.contains("data")
+        ):
+            return error_result(
+                request.id,
+                ERROR_INVALID_PARAMS,
+                "lifecycle params must contain only version, event, and data",
+            )
+        var version = request.payload.get("version")
+        if version.kind != JsonValue.INT:
+            return error_result(
+                request.id,
+                ERROR_INVALID_PARAMS,
+                "lifecycle version must be an integer",
+            )
+        if version.int_value != PLUGIN_LIFECYCLE_VERSION:
+            return error_result(
+                request.id,
+                ERROR_PROTOCOL,
+                "lifecycle protocol version mismatch",
+            )
+        var event = request.payload.get("event")
+        if event.kind != JsonValue.STRING:
+            return error_result(
+                request.id,
+                ERROR_INVALID_PARAMS,
+                "lifecycle event must be a string",
+            )
+        if event.string_value != EVENT_SESSION_END:
+            return error_result(
+                request.id,
+                ERROR_METHOD_NOT_FOUND,
+                "unsupported plugin lifecycle event: " + event.string_value,
+            )
+        var data = request.payload.get("data")
+        if (
+            data.kind != JsonValue.OBJECT
+            or len(data.object_keys) != 1
+            or not data.contains("session_id")
+        ):
+            return error_result(
+                request.id,
+                ERROR_INVALID_PARAMS,
+                "SessionEnd data must contain only session_id",
+            )
+        var session_id = data.get("session_id")
+        if (
+            session_id.kind != JsonValue.STRING
+            or session_id.string_value == ""
+            or session_id.string_value.byte_length()
+            > PLUGIN_MAX_SESSION_ID_BYTES
+        ):
+            return error_result(
+                request.id,
+                ERROR_INVALID_PARAMS,
+                "SessionEnd session_id is empty or exceeds its byte limit",
+            )
+        try:
+            self.handler.session_end(session_id.string_value)
+        except:
+            return error_result(
+                request.id, ERROR_LIFECYCLE, "plugin SessionEnd handler failed"
+            )
+        return session_end_result(request.id)
 
     def _shutdown(mut self, request: RpcMessage) raises -> String:
         if self.state != Self.READY:

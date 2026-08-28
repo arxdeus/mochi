@@ -1,11 +1,16 @@
 from mochi.json import JsonValue, parse_json
 from mochi.plugin import (
+    ERROR_LIFECYCLE,
     ERROR_INVOKE,
     ERROR_INVALID_PARAMS,
+    EVENT_SESSION_END,
     METHOD_HANDSHAKE,
     METHOD_INVOKE,
+    METHOD_LIFECYCLE,
     METHOD_REGISTER,
     METHOD_SHUTDOWN,
+    PLUGIN_LIFECYCLE_VERSION,
+    PLUGIN_MAX_SESSION_ID_BYTES,
     PLUGIN_PROTOCOL_VERSION,
     PluginClient,
     PluginExecutable,
@@ -19,6 +24,7 @@ from mochi.plugin import (
     normalize_plugin_command_name,
     plugin_command_key,
     registration_result,
+    session_end_result,
     shutdown_result,
 )
 from std.ffi import c_int, c_long, external_call
@@ -460,6 +466,74 @@ def test_plugin_command_identity_and_token_validation() raises:
     duplicate.commands.append(JsonValue.string("hello"))
     with assert_raises():
         _ = duplicate.to_json()
+
+
+def _ready_protocol() raises -> PluginProtocol:
+    var protocol = PluginProtocol()
+    var handshake = RpcMessage.parse(protocol.handshake())
+    protocol.accept_handshake(handshake_result(handshake.id))
+    var register = RpcMessage.parse(protocol.registration_request())
+    var registration = PluginRegistration("lifecycle", "1.0.0")
+    registration.events.append(JsonValue.string(EVENT_SESSION_END))
+    protocol.accept_registration(registration_result(register.id, registration))
+    return protocol^
+
+
+def test_versioned_session_end_wire_and_bounds() raises:
+    var protocol = _ready_protocol()
+    var exact_session_id = "4ERx9WqLhY3JpN7dV2kM"
+    var request = RpcMessage.parse(protocol.session_end(exact_session_id))
+    assert_equal(request.method, METHOD_LIFECYCLE)
+    assert_equal(len(request.payload.object_keys), 3)
+    assert_equal(
+        request.payload.get("version").int_value, PLUGIN_LIFECYCLE_VERSION
+    )
+    assert_equal(request.payload.get("event").string_value, EVENT_SESSION_END)
+    var data = request.payload.get("data")
+    assert_equal(len(data.object_keys), 1)
+    assert_equal(data.get("session_id").string_value, exact_session_id)
+    protocol.accept_session_end(session_end_result(request.id))
+    assert_true(protocol.is_ready())
+
+    with assert_raises():
+        _ = protocol.session_end("")
+    assert_true(protocol.is_ready())
+    var oversized = String("")
+    for _ in range(PLUGIN_MAX_SESSION_ID_BYTES + 1):
+        oversized += "x"
+    with assert_raises():
+        _ = protocol.session_end(oversized)
+    assert_true(protocol.is_ready())
+
+
+def test_session_end_handler_error_is_recoverable_for_same_client() raises:
+    var transport = PluginTransport()
+    transport.enqueue_fixture_response(handshake_result(1, "lifecycle"))
+    var registration = PluginRegistration("lifecycle", "1.0.0")
+    registration.events.append(JsonValue.string(EVENT_SESSION_END))
+    transport.enqueue_fixture_response(registration_result(2, registration))
+    transport.enqueue_fixture_response(
+        error_result(3, ERROR_LIFECYCLE, "scripted SessionEnd failure")
+    )
+    transport.enqueue_fixture_response(session_end_result(4))
+    var client = PluginClient(transport^)
+    client.connect()
+    with assert_raises():
+        client.session_end("session-one")
+    assert_true(client.is_ready())
+    client.session_end("session-two")
+    assert_true(client.is_ready())
+
+    var first = RpcMessage.parse(client.transport.fixture_writes[2])
+    var second = RpcMessage.parse(client.transport.fixture_writes[3])
+    assert_equal(
+        first.payload.get("data").get("session_id").string_value,
+        "session-one",
+    )
+    assert_equal(
+        second.payload.get("data").get("session_id").string_value,
+        "session-two",
+    )
 
 
 def main() raises:

@@ -1,3 +1,4 @@
+from std.ffi import c_long, external_call
 from std.testing import (
     TestSuite,
     assert_equal,
@@ -21,14 +22,18 @@ from mochi.permissions import (
     PermissionRule,
 )
 from mochi.plugin import (
+    ERROR_LIFECYCLE,
+    EVENT_SESSION_END,
     PluginClient,
     PluginExecutable,
     PluginRegistration,
     PluginTransport,
     RpcMessage,
+    error_result,
     handshake_result,
     invoke_result,
     registration_result,
+    session_end_result,
     shutdown_result,
 )
 from mochi.provider_contract import ThinkingConfig
@@ -75,6 +80,34 @@ def _exited_registered_plugin_executable() raises -> PluginExecutable:
         + registered
         + "') & exit 0"
     )
+    var executable = PluginExecutable("/bin/sh")
+    executable.add_argument("-c")
+    executable.add_argument(protocol^)
+    return executable^
+
+
+def _session_end_plugin_executable(
+    plugin_name: String, respond: Bool = False
+) raises -> PluginExecutable:
+    var registration = PluginRegistration(plugin_name, "1.0.0")
+    registration.events.append(JsonValue.string(EVENT_SESSION_END))
+    var handshake = String(handshake_result(1, plugin_name).strip())
+    var registered = String(registration_result(2, registration).strip())
+    var protocol = (
+        "IFS= read -r request; printf '%s\\n' '"
+        + handshake
+        + "'; IFS= read -r request; printf '%s\\n' '"
+        + registered
+        + "'; IFS= read -r request"
+    )
+    if respond:
+        protocol += (
+            "; printf '%s\\n' '"
+            + String(session_end_result(3).strip())
+            + "'; cat >/dev/null"
+        )
+    else:
+        protocol += "; sleep 10"
     var executable = PluginExecutable("/bin/sh")
     executable.add_argument("-c")
     executable.add_argument(protocol^)
@@ -421,7 +454,7 @@ def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
         OpenAICompatibleProvider(
             ProviderSpec("scripted", "https://invalid.local")
         ),
-        ToolRegistry("/tmp"),
+        ToolRegistry("."),
         PermissionManager(),
         "gpt-test",
     )
@@ -446,7 +479,7 @@ def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
         OpenAICompatibleProvider(
             ProviderSpec("scripted", "https://invalid.local")
         ),
-        ToolRegistry("/tmp"),
+        ToolRegistry("."),
         PermissionManager(),
         "gpt-test",
     )
@@ -468,7 +501,7 @@ def test_permission_prompt_answers_execute_and_persist_session_allow() raises:
         OpenAICompatibleProvider(
             ProviderSpec("scripted", "https://invalid.local")
         ),
-        ToolRegistry("/tmp"),
+        ToolRegistry("."),
         PermissionManager(),
         "gpt-test",
     )
@@ -1186,6 +1219,115 @@ def test_runtime_failed_shadow_reload_keeps_routes_and_generation() raises:
     assert_true(runtime.plugin_clients[0].is_ready())
     assert_true(runtime.remote.is_remote("live_tool"))
     assert_equal(runtime.remote_endpoint("live_tool"), "live")
+
+
+def test_runtime_session_end_filters_subscriptions_and_isolates_errors() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+
+    var good_transport = PluginTransport()
+    good_transport.enqueue_fixture_response(handshake_result(1, "good"))
+    var good_registration = PluginRegistration("good", "1.0.0")
+    good_registration.events.append(JsonValue.string(EVENT_SESSION_END))
+    good_transport.enqueue_fixture_response(
+        registration_result(2, good_registration)
+    )
+    good_transport.enqueue_fixture_response(session_end_result(3))
+    good_transport.enqueue_fixture_response(session_end_result(4))
+    var good = PluginClient(good_transport^)
+    good.connect()
+    runtime.attach_plugin("good", good^)
+
+    var ignored_transport = PluginTransport()
+    ignored_transport.enqueue_fixture_response(handshake_result(1, "ignored"))
+    var ignored_registration = PluginRegistration("ignored", "1.0.0")
+    ignored_transport.enqueue_fixture_response(
+        registration_result(2, ignored_registration)
+    )
+    var ignored = PluginClient(ignored_transport^)
+    ignored.connect()
+    runtime.attach_plugin("ignored", ignored^)
+
+    var failing_transport = PluginTransport()
+    failing_transport.enqueue_fixture_response(handshake_result(1, "failing"))
+    var failing_registration = PluginRegistration("failing", "1.0.0")
+    failing_registration.events.append(JsonValue.string(EVENT_SESSION_END))
+    failing_transport.enqueue_fixture_response(
+        registration_result(2, failing_registration)
+    )
+    failing_transport.enqueue_fixture_response(
+        error_result(3, ERROR_LIFECYCLE, "scripted failure")
+    )
+    failing_transport.enqueue_fixture_response(session_end_result(4))
+    var failing = PluginClient(failing_transport^)
+    failing.connect()
+    runtime.attach_plugin("failing", failing^)
+
+    var errors = runtime.end_plugin_session("session-one")
+    assert_equal(len(errors), 1)
+    assert_true("failing" in errors[0])
+    assert_equal(len(runtime.plugin_clients[0].transport.fixture_writes), 3)
+    assert_equal(len(runtime.plugin_clients[1].transport.fixture_writes), 2)
+    assert_equal(len(runtime.plugin_clients[2].transport.fixture_writes), 3)
+    assert_true(runtime.plugin_clients[2].is_ready())
+
+    var first = RpcMessage.parse(
+        runtime.plugin_clients[0].transport.fixture_writes[2]
+    )
+    assert_equal(
+        first.payload.get("data").get("session_id").string_value,
+        "session-one",
+    )
+
+    errors = runtime.end_plugin_session("session-two")
+    assert_equal(len(errors), 0)
+    assert_true(runtime.plugin_clients[0].is_ready())
+    assert_true(runtime.plugin_clients[2].is_ready())
+
+
+def test_runtime_session_end_uses_one_shared_grace_period() raises:
+    var runtime = Runtime(
+        OpenAICompatibleProvider(
+            ProviderSpec("scripted", "https://invalid.local")
+        ),
+        ToolRegistry("/tmp"),
+        allowed(),
+        "gpt-test",
+    )
+    var first = PluginClient.launch(
+        _session_end_plugin_executable("silent-first")
+    )
+    runtime.attach_plugin("silent-first", first^)
+    var second = PluginClient.launch(
+        _session_end_plugin_executable("silent-second")
+    )
+    runtime.attach_plugin("silent-second", second^)
+    var responsive = PluginClient.launch(
+        _session_end_plugin_executable("responsive-third", True)
+    )
+    runtime.attach_plugin("responsive-third", responsive^)
+
+    var started = external_call["mochi_monotonic_millis_now", c_long]()
+    var errors = runtime.end_plugin_session("shared-deadline")
+    var elapsed = (
+        external_call["mochi_monotonic_millis_now", c_long]() - started
+    )
+    assert_equal(len(errors), 2)
+    assert_true(elapsed >= 1500)
+    assert_true(elapsed < 3500)
+    assert_equal(Int(runtime.plugin_clients[0].transport.pid), -1)
+    assert_equal(Int(runtime.plugin_clients[1].transport.pid), -1)
+    assert_equal(Int(runtime.plugin_clients[0].transport.read_fd), -1)
+    assert_equal(Int(runtime.plugin_clients[1].transport.read_fd), -1)
+    assert_true(runtime.plugin_clients[2].is_ready())
+    assert_true(runtime.plugin_clients[2].transport.pid > 0)
+    runtime.plugin_clients[2].cancel()
 
 
 def test_provider_error_is_visible_in_result() raises:

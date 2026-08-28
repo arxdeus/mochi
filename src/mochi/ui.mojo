@@ -7,6 +7,34 @@ from mochi.types import Message
 
 comptime UI_TRANSCRIPT_VERSION = 1
 
+# Emoji-related states from unicode-width 0.2.2's reverse string-width
+# automaton. Maki uses UnicodeWidthChar for wrapping but UnicodeWidthStr for
+# the cursor span, so these states intentionally affect only cursor columns.
+comptime _WIDTH_DEFAULT = 0
+comptime _WIDTH_EMOJI_MODIFIER = 1
+comptime _WIDTH_REGIONAL_INDICATOR = 2
+comptime _WIDTH_SEVERAL_REGIONAL_INDICATORS = 3
+comptime _WIDTH_EMOJI_PRESENTATION = 4
+comptime _WIDTH_ZWJ_EMOJI_PRESENTATION = 5
+comptime _WIDTH_VS16_ZWJ_EMOJI_PRESENTATION = 6
+comptime _WIDTH_KEYCAP_ZWJ_EMOJI_PRESENTATION = 7
+comptime _WIDTH_VS16_KEYCAP_ZWJ_EMOJI_PRESENTATION = 8
+comptime _WIDTH_REGIONAL_INDICATOR_ZWJ_PRESENTATION = 9
+comptime _WIDTH_EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION = 10
+comptime _WIDTH_ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION = 11
+comptime _WIDTH_TAG_END_ZWJ_EMOJI_PRESENTATION = 12
+comptime _WIDTH_TAG_D1_END_ZWJ_EMOJI_PRESENTATION = 13
+comptime _WIDTH_TAG_D2_END_ZWJ_EMOJI_PRESENTATION = 14
+comptime _WIDTH_TAG_D3_END_ZWJ_EMOJI_PRESENTATION = 15
+comptime _WIDTH_TAG_A1_END_ZWJ_EMOJI_PRESENTATION = 16
+comptime _WIDTH_TAG_A2_END_ZWJ_EMOJI_PRESENTATION = 17
+comptime _WIDTH_TAG_A3_END_ZWJ_EMOJI_PRESENTATION = 18
+comptime _WIDTH_TAG_A4_END_ZWJ_EMOJI_PRESENTATION = 19
+comptime _WIDTH_TAG_A5_END_ZWJ_EMOJI_PRESENTATION = 20
+comptime _WIDTH_TAG_A6_END_ZWJ_EMOJI_PRESENTATION = 21
+comptime _WIDTH_VARIATION_SELECTOR_15 = 22
+comptime _WIDTH_VARIATION_SELECTOR_16 = 23
+
 
 @fieldwise_init
 struct UiRect(Copyable, Equatable, Movable):
@@ -1527,7 +1555,7 @@ def _input_cursor_layout(
     var row_width = max(1, width - 2)
     var viewport_height = max(1, height)
     var cursor_index = min(max(0, cursor), draft.count_codepoints())
-    var widths = List[Int]()
+    var codepoints = List[Int]()
     var consumed = 0
     var total_rows = 0
     var cursor_visual_row = 0
@@ -1541,27 +1569,29 @@ def _input_cursor_layout(
             var owns_cursor = (
                 not found_cursor
                 and local_cursor >= 0
-                and local_cursor <= len(widths)
+                and local_cursor <= len(codepoints)
             )
             var metrics = _wrapped_line_metrics(
-                widths, row_width, local_cursor, exposed and owns_cursor
+                codepoints, row_width, local_cursor, exposed and owns_cursor
             )
             if owns_cursor:
                 cursor_visual_row = total_rows + metrics[1]
                 cursor_col = metrics[2]
                 found_cursor = True
             total_rows += metrics[0]
-            consumed += len(widths) + 1
-            widths.clear()
+            consumed += len(codepoints) + 1
+            codepoints.clear()
         else:
-            widths.append(_terminal_cell_width(value))
+            codepoints.append(value)
 
     var local_cursor = cursor_index - consumed
     var owns_cursor = (
-        not found_cursor and local_cursor >= 0 and local_cursor <= len(widths)
+        not found_cursor
+        and local_cursor >= 0
+        and local_cursor <= len(codepoints)
     )
     var metrics = _wrapped_line_metrics(
-        widths, row_width, local_cursor, exposed and owns_cursor
+        codepoints, row_width, local_cursor, exposed and owns_cursor
     )
     if owns_cursor:
         cursor_visual_row = total_rows + metrics[1]
@@ -1594,7 +1624,7 @@ def _input_cursor_layout(
 
 
 def _wrapped_line_metrics(
-    widths: List[Int],
+    codepoints: List[Int],
     row_width: Int,
     cursor_x: Int,
     cursor_visible: Bool,
@@ -1603,8 +1633,8 @@ def _wrapped_line_metrics(
     # fits. Dividing accumulated display width by row width does not.
     var starts: List[Int] = [0]
     var row_col = 0
-    for i in range(len(widths)):
-        var cell_width = widths[i]
+    for i in range(len(codepoints)):
+        var cell_width = _terminal_cell_width(codepoints[i])
         if row_col + cell_width > row_width and row_col > 0:
             starts.append(i)
             row_col = 0
@@ -1612,7 +1642,7 @@ def _wrapped_line_metrics(
     # A reversed software cursor consumes one cell. At the end of a full row
     # it belongs to a new empty row, exactly as in Maki.
     if cursor_visible and row_col + 1 > row_width:
-        starts.append(len(widths))
+        starts.append(len(codepoints))
 
     var cursor_row = 0
     var cursor_start = 0
@@ -1623,9 +1653,10 @@ def _wrapped_line_metrics(
                 cursor_start = starts[row]
     var cursor_col = 2 if cursor_row == 0 else 0
     if cursor_visible:
-        var cursor_end = min(max(cursor_start, cursor_x), len(widths))
-        for i in range(cursor_start, cursor_end):
-            cursor_col += widths[i]
+        var cursor_end = min(max(cursor_start, cursor_x), len(codepoints))
+        cursor_col += _terminal_string_width(
+            codepoints, cursor_start, cursor_end
+        )
     return (len(starts), cursor_row, cursor_col)
 
 
@@ -1633,9 +1664,604 @@ def _terminal_cell_width(codepoint: Int) -> Int:
     # Maki uses unicode-width and falls back to one cell for control codepoints.
     if _is_zero_width_codepoint(codepoint):
         return 0
+    # unicode-width deliberately treats each regional indicator as one cell;
+    # a valid pair therefore remains two cells before any ZWJ collapsing.
+    if _in_codepoint_range(codepoint, 0x1F1E6, 0x1F1FF):
+        return 1
     if _is_wide_codepoint(codepoint):
         return 2
     return 1
+
+
+def _terminal_string_width(codepoints: List[Int], start: Int, end: Int) -> Int:
+    """Width of one row prefix using Maki's emoji UnicodeWidthStr rules.
+
+    Row ownership remains scalar-width based. Only the completed substring
+    before the cursor is folded here, matching tui-textarea's cursor overlay.
+    """
+    var first = min(max(0, start), len(codepoints))
+    var last = min(max(first, end), len(codepoints))
+    var cells = 0
+    var next_state = _WIDTH_DEFAULT
+    for offset in range(last - first):
+        var cp = codepoints[last - 1 - offset]
+        var step = _terminal_string_width_step(cp, next_state)
+        cells += step[0]
+        next_state = step[1]
+    return cells
+
+
+def _terminal_string_width_step(cp: Int, next_state: Int) -> Tuple[Int, Int]:
+    var state = next_state
+
+    if (
+        state == _WIDTH_VARIATION_SELECTOR_16
+        or state == _WIDTH_VS16_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_VS16_KEYCAP_ZWJ_EMOJI_PRESENTATION
+    ):
+        if _starts_emoji_presentation_sequence(cp):
+            var width = 2
+            if (
+                state == _WIDTH_VS16_ZWJ_EMOJI_PRESENTATION
+                or state == _WIDTH_VS16_KEYCAP_ZWJ_EMOJI_PRESENTATION
+            ):
+                width = 0
+            return (width, _WIDTH_EMOJI_PRESENTATION)
+        state = _WIDTH_DEFAULT
+
+    if state != _WIDTH_DEFAULT:
+        if cp == 0xFE0F:
+            if state == _WIDTH_ZWJ_EMOJI_PRESENTATION:
+                return (0, _WIDTH_VS16_ZWJ_EMOJI_PRESENTATION)
+            if state == _WIDTH_KEYCAP_ZWJ_EMOJI_PRESENTATION:
+                return (0, _WIDTH_VS16_KEYCAP_ZWJ_EMOJI_PRESENTATION)
+            return (0, _WIDTH_VARIATION_SELECTOR_16)
+        if cp == 0xFE0E:
+            return (0, _WIDTH_VARIATION_SELECTOR_15)
+        if state == _WIDTH_VARIATION_SELECTOR_15:
+            if _starts_non_ideographic_text_presentation_sequence(cp):
+                return (1, _WIDTH_DEFAULT)
+            state = _WIDTH_DEFAULT
+
+        if state == _WIDTH_EMOJI_MODIFIER and _is_emoji_modifier_base(cp):
+            return (0, _WIDTH_EMOJI_PRESENTATION)
+
+        if (
+            state == _WIDTH_REGIONAL_INDICATOR
+            or state == _WIDTH_SEVERAL_REGIONAL_INDICATORS
+        ) and _in_codepoint_range(cp, 0x1F1E6, 0x1F1FF):
+            return (1, _WIDTH_SEVERAL_REGIONAL_INDICATORS)
+
+        if cp == 0x200D and (
+            state == _WIDTH_EMOJI_PRESENTATION
+            or state == _WIDTH_SEVERAL_REGIONAL_INDICATORS
+            or state == _WIDTH_EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION
+            or state == _WIDTH_ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION
+            or state == _WIDTH_EMOJI_MODIFIER
+        ):
+            return (0, _WIDTH_ZWJ_EMOJI_PRESENTATION)
+        if state == _WIDTH_ZWJ_EMOJI_PRESENTATION and cp == 0x20E3:
+            return (0, _WIDTH_KEYCAP_ZWJ_EMOJI_PRESENTATION)
+        if state == _WIDTH_VS16_KEYCAP_ZWJ_EMOJI_PRESENTATION and (
+            cp == 0x23 or cp == 0x2A or _in_codepoint_range(cp, 0x30, 0x39)
+        ):
+            return (0, _WIDTH_EMOJI_PRESENTATION)
+        if state == _WIDTH_ZWJ_EMOJI_PRESENTATION and _in_codepoint_range(
+            cp, 0x1F1E6, 0x1F1FF
+        ):
+            return (1, _WIDTH_REGIONAL_INDICATOR_ZWJ_PRESENTATION)
+        if (
+            state == _WIDTH_REGIONAL_INDICATOR_ZWJ_PRESENTATION
+            or state == _WIDTH_ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION
+        ) and _in_codepoint_range(cp, 0x1F1E6, 0x1F1FF):
+            return (-1, _WIDTH_EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION)
+        if (
+            state == _WIDTH_EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION
+            and _in_codepoint_range(cp, 0x1F1E6, 0x1F1FF)
+        ):
+            return (3, _WIDTH_ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION)
+        if state == _WIDTH_ZWJ_EMOJI_PRESENTATION and _in_codepoint_range(
+            cp, 0x1F3FB, 0x1F3FF
+        ):
+            return (0, _WIDTH_EMOJI_MODIFIER)
+
+        var tag_step = _terminal_emoji_tag_width_step(cp, state)
+        if tag_step[1] != _WIDTH_DEFAULT:
+            return tag_step
+
+        if (
+            state == _WIDTH_ZWJ_EMOJI_PRESENTATION
+            and _is_default_emoji_presentation(cp)
+        ):
+            return (0, _WIDTH_EMOJI_PRESENTATION)
+
+    if cp == 0xFE0F:
+        return (0, _WIDTH_VARIATION_SELECTOR_16)
+    if cp == 0xFE0E:
+        return (0, _WIDTH_VARIATION_SELECTOR_15)
+    if _in_codepoint_range(cp, 0x1F1E6, 0x1F1FF):
+        return (1, _WIDTH_REGIONAL_INDICATOR)
+    if _in_codepoint_range(cp, 0x1F3FB, 0x1F3FF):
+        return (2, _WIDTH_EMOJI_MODIFIER)
+    if _is_default_emoji_presentation(cp):
+        return (2, _WIDTH_EMOJI_PRESENTATION)
+    return (_terminal_cell_width(cp), _WIDTH_DEFAULT)
+
+
+def _terminal_emoji_tag_width_step(cp: Int, state: Int) -> Tuple[Int, Int]:
+    if state == _WIDTH_ZWJ_EMOJI_PRESENTATION and cp == 0xE007F:
+        return (0, _WIDTH_TAG_END_ZWJ_EMOJI_PRESENTATION)
+    if state == _WIDTH_TAG_END_ZWJ_EMOJI_PRESENTATION and _in_codepoint_range(
+        cp, 0xE0061, 0xE007A
+    ):
+        return (0, _WIDTH_TAG_A1_END_ZWJ_EMOJI_PRESENTATION)
+    if (
+        state == _WIDTH_TAG_A1_END_ZWJ_EMOJI_PRESENTATION
+        and _in_codepoint_range(cp, 0xE0061, 0xE007A)
+    ):
+        return (0, _WIDTH_TAG_A2_END_ZWJ_EMOJI_PRESENTATION)
+    if (
+        state == _WIDTH_TAG_A2_END_ZWJ_EMOJI_PRESENTATION
+        and _in_codepoint_range(cp, 0xE0061, 0xE007A)
+    ):
+        return (0, _WIDTH_TAG_A3_END_ZWJ_EMOJI_PRESENTATION)
+    if (
+        state == _WIDTH_TAG_A3_END_ZWJ_EMOJI_PRESENTATION
+        and _in_codepoint_range(cp, 0xE0061, 0xE007A)
+    ):
+        return (0, _WIDTH_TAG_A4_END_ZWJ_EMOJI_PRESENTATION)
+    if (
+        state == _WIDTH_TAG_A4_END_ZWJ_EMOJI_PRESENTATION
+        and _in_codepoint_range(cp, 0xE0061, 0xE007A)
+    ):
+        return (0, _WIDTH_TAG_A5_END_ZWJ_EMOJI_PRESENTATION)
+    if (
+        state == _WIDTH_TAG_A5_END_ZWJ_EMOJI_PRESENTATION
+        and _in_codepoint_range(cp, 0xE0061, 0xE007A)
+    ):
+        return (0, _WIDTH_TAG_A6_END_ZWJ_EMOJI_PRESENTATION)
+    if (
+        state == _WIDTH_TAG_END_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_TAG_A1_END_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_TAG_A2_END_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_TAG_A3_END_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_TAG_A4_END_ZWJ_EMOJI_PRESENTATION
+    ) and _in_codepoint_range(cp, 0xE0030, 0xE0039):
+        return (0, _WIDTH_TAG_D1_END_ZWJ_EMOJI_PRESENTATION)
+    if (
+        state == _WIDTH_TAG_D1_END_ZWJ_EMOJI_PRESENTATION
+        and _in_codepoint_range(cp, 0xE0030, 0xE0039)
+    ):
+        return (0, _WIDTH_TAG_D2_END_ZWJ_EMOJI_PRESENTATION)
+    if (
+        state == _WIDTH_TAG_D2_END_ZWJ_EMOJI_PRESENTATION
+        and _in_codepoint_range(cp, 0xE0030, 0xE0039)
+    ):
+        return (0, _WIDTH_TAG_D3_END_ZWJ_EMOJI_PRESENTATION)
+    if cp == 0x1F3F4 and (
+        state == _WIDTH_TAG_A3_END_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_TAG_A4_END_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_TAG_A5_END_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_TAG_A6_END_ZWJ_EMOJI_PRESENTATION
+        or state == _WIDTH_TAG_D3_END_ZWJ_EMOJI_PRESENTATION
+    ):
+        return (0, _WIDTH_EMOJI_PRESENTATION)
+    return (0, _WIDTH_DEFAULT)
+
+
+# Unicode 17 properties generated by unicode-width 0.2.2. Keeping the
+# exact property boundaries prevents invalid ZWJ strings from collapsing.
+def _is_default_emoji_presentation(cp: Int) -> Bool:
+    if cp < 0x231A:
+        return False
+    return (
+        _in_codepoint_range(cp, 0x231A, 0x231B)
+        or _in_codepoint_range(cp, 0x23E9, 0x23EC)
+        or cp == 0x23F0
+        or cp == 0x23F3
+        or _in_codepoint_range(cp, 0x25FD, 0x25FE)
+        or _in_codepoint_range(cp, 0x2614, 0x2615)
+        or _in_codepoint_range(cp, 0x2648, 0x2653)
+        or cp == 0x267F
+        or cp == 0x2693
+        or cp == 0x26A1
+        or _in_codepoint_range(cp, 0x26AA, 0x26AB)
+        or _in_codepoint_range(cp, 0x26BD, 0x26BE)
+        or _in_codepoint_range(cp, 0x26C4, 0x26C5)
+        or cp == 0x26CE
+        or cp == 0x26D4
+        or cp == 0x26EA
+        or _in_codepoint_range(cp, 0x26F2, 0x26F3)
+        or cp == 0x26F5
+        or cp == 0x26FA
+        or cp == 0x26FD
+        or cp == 0x2705
+        or _in_codepoint_range(cp, 0x270A, 0x270B)
+        or cp == 0x2728
+        or cp == 0x274C
+        or cp == 0x274E
+        or _in_codepoint_range(cp, 0x2753, 0x2755)
+        or cp == 0x2757
+        or _in_codepoint_range(cp, 0x2795, 0x2797)
+        or cp == 0x27B0
+        or cp == 0x27BF
+        or _in_codepoint_range(cp, 0x2B1B, 0x2B1C)
+        or cp == 0x2B50
+        or cp == 0x2B55
+        or cp == 0x1F004
+        or cp == 0x1F0CF
+        or cp == 0x1F18E
+        or _in_codepoint_range(cp, 0x1F191, 0x1F19A)
+        or cp == 0x1F201
+        or cp == 0x1F21A
+        or cp == 0x1F22F
+        or _in_codepoint_range(cp, 0x1F232, 0x1F236)
+        or _in_codepoint_range(cp, 0x1F238, 0x1F23A)
+        or _in_codepoint_range(cp, 0x1F250, 0x1F251)
+        or _in_codepoint_range(cp, 0x1F300, 0x1F320)
+        or _in_codepoint_range(cp, 0x1F32D, 0x1F335)
+        or _in_codepoint_range(cp, 0x1F337, 0x1F37C)
+        or _in_codepoint_range(cp, 0x1F37E, 0x1F393)
+        or _in_codepoint_range(cp, 0x1F3A0, 0x1F3CA)
+        or _in_codepoint_range(cp, 0x1F3CF, 0x1F3D3)
+        or _in_codepoint_range(cp, 0x1F3E0, 0x1F3F0)
+        or cp == 0x1F3F4
+        or _in_codepoint_range(cp, 0x1F3F8, 0x1F3FA)
+        or _in_codepoint_range(cp, 0x1F400, 0x1F43E)
+        or cp == 0x1F440
+        or _in_codepoint_range(cp, 0x1F442, 0x1F4FC)
+        or _in_codepoint_range(cp, 0x1F4FF, 0x1F53D)
+        or _in_codepoint_range(cp, 0x1F54B, 0x1F54E)
+        or _in_codepoint_range(cp, 0x1F550, 0x1F567)
+        or cp == 0x1F57A
+        or _in_codepoint_range(cp, 0x1F595, 0x1F596)
+        or cp == 0x1F5A4
+        or _in_codepoint_range(cp, 0x1F5FB, 0x1F64F)
+        or _in_codepoint_range(cp, 0x1F680, 0x1F6C5)
+        or cp == 0x1F6CC
+        or _in_codepoint_range(cp, 0x1F6D0, 0x1F6D2)
+        or _in_codepoint_range(cp, 0x1F6D5, 0x1F6D8)
+        or _in_codepoint_range(cp, 0x1F6DC, 0x1F6DF)
+        or _in_codepoint_range(cp, 0x1F6EB, 0x1F6EC)
+        or _in_codepoint_range(cp, 0x1F6F4, 0x1F6FC)
+        or _in_codepoint_range(cp, 0x1F7E0, 0x1F7EB)
+        or cp == 0x1F7F0
+        or _in_codepoint_range(cp, 0x1F90C, 0x1F93A)
+        or _in_codepoint_range(cp, 0x1F93C, 0x1F945)
+        or _in_codepoint_range(cp, 0x1F947, 0x1F9FF)
+        or _in_codepoint_range(cp, 0x1FA70, 0x1FA7C)
+        or _in_codepoint_range(cp, 0x1FA80, 0x1FA8A)
+        or _in_codepoint_range(cp, 0x1FA8E, 0x1FAC6)
+        or cp == 0x1FAC8
+        or _in_codepoint_range(cp, 0x1FACD, 0x1FADC)
+        or _in_codepoint_range(cp, 0x1FADF, 0x1FAEA)
+        or _in_codepoint_range(cp, 0x1FAEF, 0x1FAF8)
+    )
+
+
+def _starts_emoji_presentation_sequence(cp: Int) -> Bool:
+    return (
+        cp == 0x23
+        or cp == 0x2A
+        or _in_codepoint_range(cp, 0x30, 0x39)
+        or cp == 0xA9
+        or cp == 0xAE
+        or cp == 0x203C
+        or cp == 0x2049
+        or cp == 0x2122
+        or cp == 0x2139
+        or _in_codepoint_range(cp, 0x2194, 0x2199)
+        or _in_codepoint_range(cp, 0x21A9, 0x21AA)
+        or _in_codepoint_range(cp, 0x231A, 0x231B)
+        or cp == 0x2328
+        or cp == 0x23CF
+        or _in_codepoint_range(cp, 0x23E9, 0x23F3)
+        or _in_codepoint_range(cp, 0x23F8, 0x23FA)
+        or cp == 0x24C2
+        or _in_codepoint_range(cp, 0x25AA, 0x25AB)
+        or cp == 0x25B6
+        or cp == 0x25C0
+        or _in_codepoint_range(cp, 0x25FB, 0x25FE)
+        or _in_codepoint_range(cp, 0x2600, 0x2604)
+        or cp == 0x260E
+        or cp == 0x2611
+        or _in_codepoint_range(cp, 0x2614, 0x2615)
+        or cp == 0x2618
+        or cp == 0x261D
+        or cp == 0x2620
+        or _in_codepoint_range(cp, 0x2622, 0x2623)
+        or cp == 0x2626
+        or cp == 0x262A
+        or _in_codepoint_range(cp, 0x262E, 0x262F)
+        or _in_codepoint_range(cp, 0x2638, 0x263A)
+        or cp == 0x2640
+        or cp == 0x2642
+        or _in_codepoint_range(cp, 0x2648, 0x2653)
+        or _in_codepoint_range(cp, 0x265F, 0x2660)
+        or cp == 0x2663
+        or _in_codepoint_range(cp, 0x2665, 0x2666)
+        or cp == 0x2668
+        or cp == 0x267B
+        or _in_codepoint_range(cp, 0x267E, 0x267F)
+        or _in_codepoint_range(cp, 0x2692, 0x2697)
+        or cp == 0x2699
+        or _in_codepoint_range(cp, 0x269B, 0x269C)
+        or _in_codepoint_range(cp, 0x26A0, 0x26A1)
+        or cp == 0x26A7
+        or _in_codepoint_range(cp, 0x26AA, 0x26AB)
+        or _in_codepoint_range(cp, 0x26B0, 0x26B1)
+        or _in_codepoint_range(cp, 0x26BD, 0x26BE)
+        or _in_codepoint_range(cp, 0x26C4, 0x26C5)
+        or cp == 0x26C8
+        or _in_codepoint_range(cp, 0x26CE, 0x26CF)
+        or cp == 0x26D1
+        or _in_codepoint_range(cp, 0x26D3, 0x26D4)
+        or _in_codepoint_range(cp, 0x26E9, 0x26EA)
+        or _in_codepoint_range(cp, 0x26F0, 0x26F5)
+        or _in_codepoint_range(cp, 0x26F7, 0x26FA)
+        or cp == 0x26FD
+        or cp == 0x2702
+        or cp == 0x2705
+        or _in_codepoint_range(cp, 0x2708, 0x270D)
+        or cp == 0x270F
+        or cp == 0x2712
+        or cp == 0x2714
+        or cp == 0x2716
+        or cp == 0x271D
+        or cp == 0x2721
+        or cp == 0x2728
+        or _in_codepoint_range(cp, 0x2733, 0x2734)
+        or cp == 0x2744
+        or cp == 0x2747
+        or cp == 0x274C
+        or cp == 0x274E
+        or _in_codepoint_range(cp, 0x2753, 0x2755)
+        or cp == 0x2757
+        or _in_codepoint_range(cp, 0x2763, 0x2764)
+        or _in_codepoint_range(cp, 0x2795, 0x2797)
+        or cp == 0x27A1
+        or cp == 0x27B0
+        or cp == 0x27BF
+        or _in_codepoint_range(cp, 0x2934, 0x2935)
+        or _in_codepoint_range(cp, 0x2B05, 0x2B07)
+        or _in_codepoint_range(cp, 0x2B1B, 0x2B1C)
+        or cp == 0x2B50
+        or cp == 0x2B55
+        or cp == 0x3030
+        or cp == 0x303D
+        or cp == 0x3297
+        or cp == 0x3299
+        or cp == 0x1F004
+        or _in_codepoint_range(cp, 0x1F170, 0x1F171)
+        or _in_codepoint_range(cp, 0x1F17E, 0x1F17F)
+        or cp == 0x1F202
+        or cp == 0x1F21A
+        or cp == 0x1F22F
+        or cp == 0x1F237
+        or _in_codepoint_range(cp, 0x1F30D, 0x1F30F)
+        or cp == 0x1F315
+        or cp == 0x1F31C
+        or cp == 0x1F321
+        or _in_codepoint_range(cp, 0x1F324, 0x1F32C)
+        or cp == 0x1F336
+        or cp == 0x1F378
+        or cp == 0x1F37D
+        or cp == 0x1F393
+        or _in_codepoint_range(cp, 0x1F396, 0x1F397)
+        or _in_codepoint_range(cp, 0x1F399, 0x1F39B)
+        or _in_codepoint_range(cp, 0x1F39E, 0x1F39F)
+        or cp == 0x1F3A7
+        or _in_codepoint_range(cp, 0x1F3AC, 0x1F3AE)
+        or cp == 0x1F3C2
+        or cp == 0x1F3C4
+        or cp == 0x1F3C6
+        or _in_codepoint_range(cp, 0x1F3CA, 0x1F3CE)
+        or _in_codepoint_range(cp, 0x1F3D4, 0x1F3E0)
+        or cp == 0x1F3ED
+        or cp == 0x1F3F3
+        or cp == 0x1F3F5
+        or cp == 0x1F3F7
+        or cp == 0x1F408
+        or cp == 0x1F415
+        or cp == 0x1F41F
+        or cp == 0x1F426
+        or cp == 0x1F43F
+        or _in_codepoint_range(cp, 0x1F441, 0x1F442)
+        or _in_codepoint_range(cp, 0x1F446, 0x1F449)
+        or _in_codepoint_range(cp, 0x1F44D, 0x1F44E)
+        or cp == 0x1F453
+        or cp == 0x1F46A
+        or cp == 0x1F47D
+        or cp == 0x1F4A3
+        or cp == 0x1F4B0
+        or cp == 0x1F4B3
+        or cp == 0x1F4BB
+        or cp == 0x1F4BF
+        or cp == 0x1F4CB
+        or cp == 0x1F4DA
+        or cp == 0x1F4DF
+        or _in_codepoint_range(cp, 0x1F4E4, 0x1F4E6)
+        or _in_codepoint_range(cp, 0x1F4EA, 0x1F4ED)
+        or cp == 0x1F4F7
+        or _in_codepoint_range(cp, 0x1F4F9, 0x1F4FB)
+        or cp == 0x1F4FD
+        or cp == 0x1F508
+        or cp == 0x1F50D
+        or _in_codepoint_range(cp, 0x1F512, 0x1F513)
+        or _in_codepoint_range(cp, 0x1F549, 0x1F54A)
+        or _in_codepoint_range(cp, 0x1F550, 0x1F567)
+        or _in_codepoint_range(cp, 0x1F56F, 0x1F570)
+        or _in_codepoint_range(cp, 0x1F573, 0x1F579)
+        or cp == 0x1F587
+        or _in_codepoint_range(cp, 0x1F58A, 0x1F58D)
+        or cp == 0x1F590
+        or cp == 0x1F5A5
+        or cp == 0x1F5A8
+        or _in_codepoint_range(cp, 0x1F5B1, 0x1F5B2)
+        or cp == 0x1F5BC
+        or _in_codepoint_range(cp, 0x1F5C2, 0x1F5C4)
+        or _in_codepoint_range(cp, 0x1F5D1, 0x1F5D3)
+        or _in_codepoint_range(cp, 0x1F5DC, 0x1F5DE)
+        or cp == 0x1F5E1
+        or cp == 0x1F5E3
+        or cp == 0x1F5E8
+        or cp == 0x1F5EF
+        or cp == 0x1F5F3
+        or cp == 0x1F5FA
+        or cp == 0x1F610
+        or cp == 0x1F687
+        or cp == 0x1F68D
+        or cp == 0x1F691
+        or cp == 0x1F694
+        or cp == 0x1F698
+        or cp == 0x1F6AD
+        or cp == 0x1F6B2
+        or _in_codepoint_range(cp, 0x1F6B9, 0x1F6BA)
+        or cp == 0x1F6BC
+        or cp == 0x1F6CB
+        or _in_codepoint_range(cp, 0x1F6CD, 0x1F6CF)
+        or _in_codepoint_range(cp, 0x1F6E0, 0x1F6E5)
+        or cp == 0x1F6E9
+        or cp == 0x1F6F0
+        or cp == 0x1F6F3
+    )
+
+
+def _is_emoji_modifier_base(cp: Int) -> Bool:
+    if cp < 0x261D:
+        return False
+    return (
+        cp == 0x261D
+        or cp == 0x26F9
+        or _in_codepoint_range(cp, 0x270A, 0x270D)
+        or cp == 0x1F385
+        or _in_codepoint_range(cp, 0x1F3C2, 0x1F3C4)
+        or cp == 0x1F3C7
+        or _in_codepoint_range(cp, 0x1F3CA, 0x1F3CC)
+        or _in_codepoint_range(cp, 0x1F442, 0x1F443)
+        or _in_codepoint_range(cp, 0x1F446, 0x1F450)
+        or _in_codepoint_range(cp, 0x1F466, 0x1F478)
+        or cp == 0x1F47C
+        or _in_codepoint_range(cp, 0x1F481, 0x1F483)
+        or _in_codepoint_range(cp, 0x1F485, 0x1F487)
+        or cp == 0x1F48F
+        or cp == 0x1F491
+        or cp == 0x1F4AA
+        or _in_codepoint_range(cp, 0x1F574, 0x1F575)
+        or cp == 0x1F57A
+        or cp == 0x1F590
+        or _in_codepoint_range(cp, 0x1F595, 0x1F596)
+        or _in_codepoint_range(cp, 0x1F645, 0x1F647)
+        or _in_codepoint_range(cp, 0x1F64B, 0x1F64F)
+        or cp == 0x1F6A3
+        or _in_codepoint_range(cp, 0x1F6B4, 0x1F6B6)
+        or cp == 0x1F6C0
+        or cp == 0x1F6CC
+        or cp == 0x1F90C
+        or cp == 0x1F90F
+        or _in_codepoint_range(cp, 0x1F918, 0x1F91F)
+        or cp == 0x1F926
+        or _in_codepoint_range(cp, 0x1F930, 0x1F939)
+        or _in_codepoint_range(cp, 0x1F93C, 0x1F93E)
+        or cp == 0x1F977
+        or _in_codepoint_range(cp, 0x1F9B5, 0x1F9B6)
+        or _in_codepoint_range(cp, 0x1F9B8, 0x1F9B9)
+        or cp == 0x1F9BB
+        or _in_codepoint_range(cp, 0x1F9CD, 0x1F9CF)
+        or _in_codepoint_range(cp, 0x1F9D1, 0x1F9DD)
+        or _in_codepoint_range(cp, 0x1FAC3, 0x1FAC5)
+        or _in_codepoint_range(cp, 0x1FAF0, 0x1FAF8)
+    )
+
+
+def _starts_non_ideographic_text_presentation_sequence(cp: Int) -> Bool:
+    if cp < 0x231A:
+        return False
+    return (
+        _in_codepoint_range(cp, 0x231A, 0x231B)
+        or _in_codepoint_range(cp, 0x23E9, 0x23EC)
+        or cp == 0x23F0
+        or cp == 0x23F3
+        or _in_codepoint_range(cp, 0x25FD, 0x25FE)
+        or _in_codepoint_range(cp, 0x2614, 0x2615)
+        or _in_codepoint_range(cp, 0x2648, 0x2653)
+        or cp == 0x267F
+        or cp == 0x2693
+        or cp == 0x26A1
+        or _in_codepoint_range(cp, 0x26AA, 0x26AB)
+        or _in_codepoint_range(cp, 0x26BD, 0x26BE)
+        or _in_codepoint_range(cp, 0x26C4, 0x26C5)
+        or cp == 0x26CE
+        or cp == 0x26D4
+        or cp == 0x26EA
+        or _in_codepoint_range(cp, 0x26F2, 0x26F3)
+        or cp == 0x26F5
+        or cp == 0x26FA
+        or cp == 0x26FD
+        or cp == 0x2705
+        or _in_codepoint_range(cp, 0x270A, 0x270B)
+        or cp == 0x2728
+        or cp == 0x274C
+        or cp == 0x274E
+        or _in_codepoint_range(cp, 0x2753, 0x2755)
+        or cp == 0x2757
+        or _in_codepoint_range(cp, 0x2795, 0x2797)
+        or cp == 0x27B0
+        or cp == 0x27BF
+        or _in_codepoint_range(cp, 0x2B1B, 0x2B1C)
+        or cp == 0x2B50
+        or cp == 0x2B55
+        or cp == 0x1F004
+        or _in_codepoint_range(cp, 0x1F30D, 0x1F30F)
+        or cp == 0x1F315
+        or cp == 0x1F31C
+        or cp == 0x1F378
+        or cp == 0x1F393
+        or cp == 0x1F3A7
+        or _in_codepoint_range(cp, 0x1F3AC, 0x1F3AE)
+        or cp == 0x1F3C2
+        or cp == 0x1F3C4
+        or cp == 0x1F3C6
+        or cp == 0x1F3CA
+        or cp == 0x1F3E0
+        or cp == 0x1F3ED
+        or cp == 0x1F408
+        or cp == 0x1F415
+        or cp == 0x1F41F
+        or cp == 0x1F426
+        or cp == 0x1F442
+        or _in_codepoint_range(cp, 0x1F446, 0x1F449)
+        or _in_codepoint_range(cp, 0x1F44D, 0x1F44E)
+        or cp == 0x1F453
+        or cp == 0x1F46A
+        or cp == 0x1F47D
+        or cp == 0x1F4A3
+        or cp == 0x1F4B0
+        or cp == 0x1F4B3
+        or cp == 0x1F4BB
+        or cp == 0x1F4BF
+        or cp == 0x1F4CB
+        or cp == 0x1F4DA
+        or cp == 0x1F4DF
+        or _in_codepoint_range(cp, 0x1F4E4, 0x1F4E6)
+        or _in_codepoint_range(cp, 0x1F4EA, 0x1F4ED)
+        or cp == 0x1F4F7
+        or _in_codepoint_range(cp, 0x1F4F9, 0x1F4FB)
+        or cp == 0x1F508
+        or cp == 0x1F50D
+        or _in_codepoint_range(cp, 0x1F512, 0x1F513)
+        or _in_codepoint_range(cp, 0x1F550, 0x1F567)
+        or cp == 0x1F610
+        or cp == 0x1F687
+        or cp == 0x1F68D
+        or cp == 0x1F691
+        or cp == 0x1F694
+        or cp == 0x1F698
+        or cp == 0x1F6AD
+        or cp == 0x1F6B2
+        or _in_codepoint_range(cp, 0x1F6B9, 0x1F6BA)
+        or cp == 0x1F6BC
+    )
 
 
 def _in_codepoint_range(codepoint: Int, first: Int, last: Int) -> Bool:

@@ -20,14 +20,19 @@ from mochi.json import JsonValue, parse_json, serialize_json
 
 comptime PLUGIN_PROTOCOL = "mochi.plugin"
 comptime PLUGIN_PROTOCOL_VERSION = 1
+comptime PLUGIN_LIFECYCLE_VERSION = 1
 comptime JSONRPC_VERSION = "2.0"
 comptime PLUGIN_MAX_LINE_BYTES = 8 * 1024 * 1024
+comptime PLUGIN_MAX_SESSION_ID_BYTES = 256
 comptime PLUGIN_REQUEST_TIMEOUT_SECONDS = 60
+comptime PLUGIN_SESSION_END_TIMEOUT_SECONDS = 2
 
 comptime METHOD_HANDSHAKE = "plugin/handshake"
 comptime METHOD_REGISTER = "plugin/register"
 comptime METHOD_INVOKE = "plugin/invoke"
+comptime METHOD_LIFECYCLE = "plugin/lifecycle"
 comptime METHOD_SHUTDOWN = "plugin/shutdown"
+comptime EVENT_SESSION_END = "SessionEnd"
 
 comptime ERROR_PARSE = -32700
 comptime ERROR_INVALID_REQUEST = -32600
@@ -37,6 +42,7 @@ comptime ERROR_INTERNAL = -32603
 comptime ERROR_PROTOCOL = -32001
 comptime ERROR_INVALID_STATE = -32002
 comptime ERROR_INVOKE = -32003
+comptime ERROR_LIFECYCLE = -32004
 
 
 struct PluginRegistration(Copyable, Movable):
@@ -227,6 +233,24 @@ struct PluginTransport(Movable):
         self.fixture_responses.append(line^)
 
     def send_line(mut self, line: String) raises -> String:
+        if self.request_timeout_seconds <= 0:
+            raise Error("plugin request deadline must be positive")
+        var deadline = external_call[
+            "mochi_deadline_after_millis", c_long, c_long
+        ](c_long(self.request_timeout_seconds * 1000))
+        if deadline < 0:
+            raise Error("unable to create plugin request deadline")
+        return self.send_line_until(line, deadline)
+
+    def send_line_until(
+        mut self, line: String, deadline: c_long
+    ) raises -> String:
+        """Use one caller-owned absolute deadline across serial requests."""
+        self.write_line_until(line, deadline)
+        return self.receive_line_until(deadline)
+
+    def write_line_until(mut self, line: String, deadline: c_long) raises:
+        """Write one complete frame without waiting for its response."""
         var framed = line
         if not framed.endswith("\n"):
             framed += "\n"
@@ -234,15 +258,9 @@ struct PluginTransport(Movable):
             raise Error("plugin JSON-RPC line exceeds transport limit")
         if self.fixture_mode:
             self.fixture_writes.append(framed)
-        if len(self.fixture_responses) != 0:
-            return self.fixture_responses.pop(0)
+            return
         if self.write_fd < 0 or self.read_fd < 0:
             raise Error("plugin transport is not connected")
-        if self.request_timeout_seconds <= 0:
-            raise Error("plugin request deadline must be positive")
-        var deadline = external_call[
-            "mochi_deadline_after_millis", c_long, c_long
-        ](c_long(self.request_timeout_seconds * 1000))
         if deadline < 0:
             raise Error("unable to create plugin request deadline")
         var write_status = external_call[
@@ -262,9 +280,32 @@ struct PluginTransport(Movable):
             raise Error("plugin request deadline exceeded")
         if write_status != 0:
             raise Error("unable to write plugin request")
+
+    def receive_line_until(mut self, deadline: c_long) raises -> String:
+        """Wait for one response after a separately written request."""
+        if len(self.fixture_responses) != 0:
+            return self.fixture_responses.pop(0)
+        if self.fixture_mode:
+            raise Error("plugin fixture response is unavailable")
         return self.read_line(deadline)
 
+    def try_receive_line_until(
+        mut self, deadline: c_long
+    ) raises -> Optional[String]:
+        """Return no value when this response is not ready by the slice deadline."""
+        if len(self.fixture_responses) != 0:
+            return Optional(self.fixture_responses.pop(0))
+        if self.fixture_mode:
+            return None
+        return self.try_read_line(deadline)
+
     def read_line(mut self, deadline: c_long) raises -> String:
+        var line = self.try_read_line(deadline)
+        if line:
+            return line.value().copy()
+        raise Error("plugin request deadline exceeded")
+
+    def try_read_line(mut self, deadline: c_long) raises -> Optional[String]:
         if self.read_fd < 0:
             raise Error("plugin transport is not connected")
         while True:
@@ -281,7 +322,7 @@ struct PluginTransport(Movable):
                     remainder.append(self.read_buffer[index])
                 self.read_buffer = remainder^
                 self.read_scan_offset = 0
-                return String(from_utf8=Span(line))
+                return Optional(String(from_utf8=Span(line)))
             if len(self.read_buffer) > PLUGIN_MAX_LINE_BYTES:
                 raise Error("plugin JSON-RPC line exceeds transport limit")
             self.read_scan_offset = len(self.read_buffer)
@@ -302,7 +343,7 @@ struct PluginTransport(Movable):
                 deadline,
             )
             if count == -2:
-                raise Error("plugin request deadline exceeded")
+                return None
             if count < 0:
                 raise Error("unable to read plugin response")
             if count == 0:
@@ -313,27 +354,37 @@ struct PluginTransport(Movable):
     def cancel(mut self):
         self._cleanup()
 
-    def _cleanup(mut self):
+    def prepare_batch_cancel(mut self) -> c_int:
+        """Close the pipes while retaining PID ownership until reap succeeds."""
         if self.write_fd >= 0:
             _ = close(c_int(self.write_fd))
             self.write_fd = -1
         if self.read_fd >= 0:
             _ = close(c_int(self.read_fd))
             self.read_fd = -1
-        if self.pid > 0:
+        return c_int(self.pid)
+
+    def complete_batch_cancel(mut self, result: c_int):
+        if result < 0:
+            self.pid = -1
+
+    def _cleanup(mut self):
+        var pid = self.prepare_batch_cancel()
+        if pid > 0:
             var status = List[c_int](length=1, fill=0)
-            _ = external_call[
+            var cleaned = external_call[
                 "mochi_kill_process_group_and_wait",
                 c_int,
                 c_int,
                 Pointer[mut=True, c_int, MutAnyOrigin],
             ](
-                c_int(self.pid),
+                pid,
                 rebind[Pointer[mut=True, c_int, MutAnyOrigin]](
                     status.unsafe_ptr()
                 ),
             )
-            self.pid = -1
+            if cleaned == 0:
+                self.pid = -1
 
 
 struct RpcError(Copyable, Movable):
@@ -468,6 +519,7 @@ struct PluginProtocol(Copyable, Movable):
     comptime SHUTDOWN_PENDING = 5
     comptime CLOSED = 6
     comptime FAILED = 7
+    comptime LIFECYCLE_PENDING = 8
 
     var state: Int
     var next_id: Int
@@ -528,6 +580,29 @@ struct PluginProtocol(Copyable, Movable):
         var result = self._accept_result(line, recover_state=Self.READY)
         self.state = Self.READY
         return result^
+
+    def session_end(mut self, session_id: String) raises -> String:
+        """Build one versioned SessionEnd request for the exact session ID."""
+        self._require_state(Self.READY, "SessionEnd")
+        _validate_session_id(session_id)
+        var data = JsonValue.object()
+        data.set("session_id", JsonValue.string(session_id))
+        var params = JsonValue.object()
+        params.set("version", JsonValue.integer(PLUGIN_LIFECYCLE_VERSION))
+        params.set("event", JsonValue.string(EVENT_SESSION_END))
+        params.set("data", data^)
+        self.state = Self.LIFECYCLE_PENDING
+        return self._request(METHOD_LIFECYCLE, params^).to_line()
+
+    def accept_session_end(mut self, line: String) raises:
+        self._require_state(Self.LIFECYCLE_PENDING, "SessionEnd response")
+        # Handler failures are recoverable: teardown orchestration may report
+        # the failure while keeping this generation usable for later calls.
+        var result = self._accept_result(line, recover_state=Self.READY)
+        if not result.is_null():
+            self.state = Self.FAILED
+            raise Error("plugin SessionEnd response must be null")
+        self.state = Self.READY
 
     def shutdown(mut self) raises -> String:
         self._require_state(Self.READY, "shutdown")
@@ -677,6 +752,54 @@ struct PluginClient(Movable):
                 self.cancel()
             raise err
 
+    def session_end(mut self, session_id: String) raises:
+        """Deliver one bounded SessionEnd request and await its acknowledgement."""
+        var deadline = external_call[
+            "mochi_deadline_after_millis", c_long, c_long
+        ](c_long(PLUGIN_SESSION_END_TIMEOUT_SECONDS * 1000))
+        if deadline < 0:
+            raise Error("unable to create plugin SessionEnd deadline")
+        self.session_end_until(session_id, deadline)
+
+    def session_end_until(
+        mut self, session_id: String, deadline: c_long
+    ) raises:
+        """Deliver SessionEnd within a caller-owned shared absolute deadline."""
+        try:
+            self.begin_session_end_until(session_id, deadline)
+            self.finish_session_end_until(deadline)
+        except err:
+            if not self.protocol.is_ready():
+                self.cancel()
+            raise err
+
+    def begin_session_end_until(
+        mut self, session_id: String, deadline: c_long
+    ) raises:
+        """Broadcast SessionEnd without serially waiting for this owner."""
+        self.transport.write_line_until(
+            self.protocol.session_end(session_id), deadline
+        )
+
+    def finish_session_end_until(mut self, deadline: c_long) raises:
+        var response = self.transport.receive_line_until(deadline)
+        self.protocol.accept_session_end(response)
+
+    def try_finish_session_end_until(mut self, deadline: c_long) raises -> Bool:
+        var response = self.transport.try_receive_line_until(deadline)
+        if not response:
+            return False
+        self.protocol.accept_session_end(response.value())
+        return True
+
+    def prepare_batch_cancel(mut self) -> c_int:
+        if self.protocol.state != PluginProtocol.CLOSED:
+            self.protocol.state = PluginProtocol.FAILED
+        return self.transport.prepare_batch_cancel()
+
+    def complete_batch_cancel(mut self, result: c_int):
+        self.transport.complete_batch_cancel(result)
+
     def shutdown(mut self) raises:
         try:
             var response = self.transport.send_line(self.protocol.shutdown())
@@ -712,6 +835,10 @@ def registration_result(
 
 def invoke_result(id: Int, var result: JsonValue) raises -> String:
     return RpcMessage.result(id, result^).to_line()
+
+
+def session_end_result(id: Int) raises -> String:
+    return RpcMessage.result(id, JsonValue.null()).to_line()
 
 
 def shutdown_result(id: Int) raises -> String:
@@ -759,6 +886,15 @@ def _validate_tool_name(value: String) raises:
             valid = valid or (byte >= 48 and byte <= 57)
         if not valid:
             raise Error("invalid plugin tool name: " + value)
+
+
+def _validate_session_id(value: String) raises:
+    if value == "" or value.byte_length() > PLUGIN_MAX_SESSION_ID_BYTES:
+        raise Error(
+            "plugin session ID must contain 1 to "
+            + String(PLUGIN_MAX_SESSION_ID_BYTES)
+            + " UTF-8 bytes"
+        )
 
 
 def normalize_plugin_command_name(value: String) raises -> String:

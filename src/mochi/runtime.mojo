@@ -1,6 +1,6 @@
 """Live, pure-Mojo OpenAI-compatible multi-turn agent runtime."""
 
-from std.ffi import c_int, external_call
+from std.ffi import c_int, c_long, c_size_t, external_call
 
 from mochi.domain import (
     ContentBlock,
@@ -45,6 +45,8 @@ from mochi.provider_contract import (
     ThinkingConfig,
 )
 from mochi.plugin import (
+    EVENT_SESSION_END,
+    PLUGIN_SESSION_END_TIMEOUT_SECONDS,
     PluginClient,
     PluginRegistration,
     plugin_command_key,
@@ -149,6 +151,19 @@ def _validate_plugin_ownership(
                     )
             command_keys.append(key^)
             command_owners.append(owner.copy())
+
+
+def _plugin_advertises_event(
+    registration: PluginRegistration, event: String
+) -> Bool:
+    """Match only explicit string capabilities from negotiated metadata."""
+    for advertised in registration.events.array_value:
+        if (
+            advertised.kind == JsonValue.STRING
+            and advertised.string_value == event
+        ):
+            return True
+    return False
 
 
 @fieldwise_init
@@ -769,6 +784,112 @@ struct Runtime:
         if hints != "":
             self.plugin_prompt_suffix = "\n\n" + hints
             self.system_prompt += self.plugin_prompt_suffix
+
+    def end_plugin_session(mut self, session_id: String) -> List[String]:
+        """Broadcast to every subscriber, then await one shared grace period."""
+        var errors = List[String]()
+        var pending = List[Int]()
+        var failed = List[Int]()
+        var deadline = external_call[
+            "mochi_deadline_after_millis", c_long, c_long
+        ](c_long(PLUGIN_SESSION_END_TIMEOUT_SECONDS * 1000))
+        if deadline < 0:
+            errors.append("unable to create shared SessionEnd deadline")
+            return errors^
+        for i in range(len(self.plugin_clients)):
+            if not self.plugin_clients[i].protocol.registration:
+                continue
+            var registration = (
+                self.plugin_clients[i].protocol.registration.value().copy()
+            )
+            if not _plugin_advertises_event(registration, EVENT_SESSION_END):
+                continue
+            try:
+                self.plugin_clients[i].begin_session_end_until(
+                    session_id, deadline
+                )
+                pending.append(i)
+            except error:
+                errors.append(registration.name + ": " + String(error))
+                if not self.plugin_clients[i].is_ready():
+                    failed.append(i)
+
+        # Responses are sampled in short rotating slices. A silent or
+        # trickle-writing owner therefore cannot consume the whole shared
+        # deadline before a ready sibling is observed.
+        while len(pending) != 0:
+            var now = external_call["mochi_monotonic_millis_now", c_long]()
+            if now < 0 or now >= deadline:
+                for index in pending:
+                    var registration = (
+                        self.plugin_clients[index]
+                        .protocol.registration.value()
+                        .copy()
+                    )
+                    errors.append(
+                        registration.name
+                        + ": plugin SessionEnd deadline exceeded"
+                    )
+                    failed.append(index)
+                pending = List[Int]()
+                break
+            var slice_ms = min(10, max(1, Int(deadline - now) // len(pending)))
+            var slice_deadline = external_call[
+                "mochi_deadline_after_millis", c_long, c_long
+            ](c_long(slice_ms))
+            if slice_deadline < 0:
+                for index in pending:
+                    failed.append(index)
+                errors.append("unable to create SessionEnd response slice")
+                pending = List[Int]()
+                break
+            if slice_deadline > deadline:
+                slice_deadline = deadline
+            var index = pending.pop(0)
+            try:
+                if self.plugin_clients[index].try_finish_session_end_until(
+                    slice_deadline
+                ):
+                    continue
+                pending.append(index)
+            except error:
+                var registration = (
+                    self.plugin_clients[index]
+                    .protocol.registration.value()
+                    .copy()
+                )
+                errors.append(registration.name + ": " + String(error))
+                if not self.plugin_clients[index].is_ready():
+                    failed.append(index)
+
+        # Close every failed transport first, then signal/reap all process
+        # groups as one batch. PID ownership transfers only after each reap.
+        var pids = List[c_int]()
+        var process_indices = List[Int]()
+        for index in failed:
+            var pid = self.plugin_clients[index].prepare_batch_cancel()
+            if pid > 0:
+                pids.append(pid)
+                process_indices.append(index)
+        if len(pids) != 0:
+            var cleanup = external_call[
+                "mochi_kill_process_groups_and_wait",
+                c_int,
+                Pointer[mut=True, c_int, MutAnyOrigin],
+                c_size_t,
+            ](
+                rebind[Pointer[mut=True, c_int, MutAnyOrigin]](
+                    pids.unsafe_ptr()
+                ),
+                c_size_t(len(pids)),
+            )
+            for offset in range(len(pids)):
+                self.plugin_clients[
+                    process_indices[offset]
+                ].complete_batch_cancel(pids[offset])
+            if cleanup != 0:
+                errors.append("plugin SessionEnd process cleanup failed")
+        return errors^
 
     def reload_plugins(mut self) raises -> Int:
         # Build and negotiate every candidate before mutating any live owner.

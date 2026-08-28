@@ -85,6 +85,7 @@ from mochi.ui import (
     UiReducer,
     UiState,
     _terminal_cell_width,
+    _terminal_string_width,
     command_completion,
     command_help_lines,
     command_matches,
@@ -316,8 +317,12 @@ def main() raises:
                 config.output_format,
             )
     except error:
+        for lifecycle_error in runtime.end_plugin_session(session.id):
+            print("Plugin SessionEnd failed:", lifecycle_error)
         runtime.shutdown_remotes()
         raise error
+    for lifecycle_error in runtime.end_plugin_session(session.id):
+        print("Plugin SessionEnd failed:", lifecycle_error)
     runtime.shutdown_remotes()
 
 
@@ -417,6 +422,30 @@ def _run_acp(config: CliConfig, cwd: String, paths: StoragePaths) raises:
     )
     for definition in standard_tool_definitions():
         runtime.add_tool(definition.copy())
+    # ACP shares the same trusted Mojo plugin runtime as headless/TUI modes.
+    # Diagnostics cannot be printed on stdout because it is the JSON-RPC wire.
+    for path in config.plugins:
+        try:
+            var build_options = PluginBuildOptions(
+                paths.cache + "/mojo-plugins",
+                getenv("MOCHI_MOJO_COMPILER", "mojo"),
+                VERSION,
+            )
+            var sdk_path = getenv("MOCHI_PLUGIN_SDK_PATH", "")
+            if sdk_path != "":
+                build_options.add_compiler_argument("-I")
+                build_options.add_compiler_argument(sdk_path)
+            var prepared = prepare_plugin(path, build_options)
+            var client = PluginClient.launch(prepared.executable.copy())
+            _ = runtime.install_plugin(
+                client^,
+                prepared.source.copy(),
+                Optional(build_options.copy()) if prepared.source else None,
+            )
+        except:
+            # One malformed owner must not prevent ACP from serving siblings.
+            pass
+    runtime.apply_plugin_prompt_hints()
     var server = AcpRuntimeServer(
         runtime^, SessionStore(paths.state + "/sessions"), _now_ms()
     )
@@ -511,6 +540,16 @@ def _new_session(model: String, cwd: String) raises -> Session:
     var now = _now_ms()
     var id = SessionRef.from_id(MakiId.generate()).as_str()
     return Session(id^, model, cwd, now)
+
+
+def _replace_interactive_session(
+    mut runtime: Runtime, mut session: Session, var replacement: Session
+) -> List[String]:
+    """Commit one already-constructed replacement after ending the old session."""
+    var lifecycle_errors = runtime.end_plugin_session(session.id)
+    session = replacement^
+    runtime.set_messages(List[Message]())
+    return lifecycle_errors^
 
 
 def _run_prompt(
@@ -659,8 +698,14 @@ def _interactive(
                 else:
                     print("Nothing to compact.")
             elif action.name == "new" or action.name == "clear":
-                session = _new_session(runtime.model, session.cwd)
-                runtime.set_messages(List[Message]())
+                # Construction may fail (for example while generating an ID),
+                # so finish it before announcing that the old session ended.
+                var replacement = _new_session(runtime.model, session.cwd)
+                var lifecycle_errors = _replace_interactive_session(
+                    runtime, session, replacement^
+                )
+                for lifecycle_error in lifecycle_errors:
+                    print("Plugin SessionEnd failed:", lifecycle_error)
                 ui = _interactive_ui_state(
                     history.entries,
                     runtime.messages,
@@ -1709,29 +1754,28 @@ def _append_terminal_input_line(
 
 def _terminal_clip(value: String, width: Int) -> String:
     var result = String("")
-    var cells = 0
+    var codepoints = List[Int]()
     for part in value.codepoint_slices():
         var codepoint = 0
         for cp in part.codepoints():
             codepoint = Int(cp.to_u32())
             break
-        var part_width = _terminal_cell_width(codepoint)
-        if cells + part_width > max(0, width):
+        codepoints.append(codepoint)
+        if _terminal_string_width(codepoints, 0, len(codepoints)) > max(
+            0, width
+        ):
             break
         result += String(part)
-        cells += part_width
     return result^
 
 
 def _terminal_text_width(value: String) -> Int:
-    var cells = 0
+    var codepoints = List[Int]()
     for part in value.codepoint_slices():
-        var codepoint = 0
         for cp in part.codepoints():
-            codepoint = Int(cp.to_u32())
+            codepoints.append(Int(cp.to_u32()))
             break
-        cells += _terminal_cell_width(codepoint)
-    return cells
+    return _terminal_string_width(codepoints, 0, len(codepoints))
 
 
 def _search_cursor_column(query: String, width: Int) -> Int:
